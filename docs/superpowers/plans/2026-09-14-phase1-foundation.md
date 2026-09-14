@@ -544,6 +544,8 @@ def recover_names(archive) -> list[str]:
 `src/wc3mcp/mpq/reader.py`:
 ```python
 """Tolerant read-only MPQ access (protected Warcraft III maps included)."""
+from __future__ import annotations  # Archive.list() would shadow builtin list in later annotations
+
 import bz2
 import struct
 import zlib
@@ -1222,6 +1224,8 @@ CascRootFile_TVFS.cpp) and wowdev.wiki TACT; verified against Warcraft III 3.0.0
 
 Paths are returned as stored: '/' between folders, ':' when entering a nested VFS
 (e.g. "War3.w3mod:_HD.w3mod:Units/Human/Footman/Footman.mdx"). Lookup is case-insensitive; '\\' == '/'."""
+from __future__ import annotations  # Storage.list() would shadow builtin list in later annotations
+
 import bisect
 import fnmatch
 import os
