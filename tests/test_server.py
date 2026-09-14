@@ -57,6 +57,23 @@ def test_data_tools():
     assert common["path"] == "War3.w3mod:Scripts/common.j" and common["truncated"]
 
 
+def test_tool_calls_are_logged_to_file(tmp_path):
+    log_path = server.setup_logging()
+    try:
+        src = tmp_path / "m.w3x"
+        src.write_bytes(write_archive({"a.txt": b"1"}))
+        payload(call("map_open", {"path": str(src)}))
+        assert call("map_status", {"path": str(tmp_path / "missing.w3x")}).isError
+        for handler in server.log.handlers:
+            handler.flush()
+        text = log_path.read_text("utf-8")
+        assert "map_open ok" in text and "map_status error not_open" in text
+    finally:
+        for handler in list(server.log.handlers):
+            server.log.removeHandler(handler)
+            handler.close()
+
+
 def test_stdio_server_starts(tmp_path):
     env = {**os.environ, "PYTHONPATH": str(Path(server.__file__).parents[1]), "WC3MCP_HOME": str(tmp_path / "home")}
     params = StdioServerParameters(command=sys.executable, args=["-m", "wc3mcp.server"], env=env)

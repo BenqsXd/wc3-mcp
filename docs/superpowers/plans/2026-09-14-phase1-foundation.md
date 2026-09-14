@@ -2827,11 +2827,20 @@ def data_file(path: str, encoding: Literal["text", "base64", "hex"] = "text", of
     return {"path": full, **_encode(data, encoding, offset, length)}
 
 
+def setup_logging() -> Path:
+    """Tool-call log file. FastMCP() already installed a root handler, so logging.basicConfig would be a no-op."""
+    path = config.home() / "logs" / "wc3mcp.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not any(isinstance(h, logging.FileHandler) and Path(h.baseFilename) == path for h in log.handlers):
+        handler = logging.FileHandler(path, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        log.addHandler(handler)
+    log.setLevel(logging.INFO)
+    return path
+
+
 def main() -> None:
-    logs = config.home() / "logs"
-    logs.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(filename=logs / "wc3mcp.log", level=logging.INFO,
-                        format="%(asctime)s %(levelname)s %(message)s")
+    setup_logging()
     mcp.run()
 
 
