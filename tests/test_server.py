@@ -15,7 +15,8 @@ from wc3mcp.mpq.reader import Archive
 from wc3mcp.mpq.writer import write_archive
 
 EXPECTED = {"map_open", "map_close", "map_save", "map_status", "map_file_read", "map_file_write", "map_snapshot",
-            "data_search", "data_get", "data_file", "info_get", "info_edit", "imports_edit"}
+            "data_search", "data_get", "data_file", "info_get", "info_edit", "imports_edit",
+            "objdata_list", "objdata_get", "objdata_edit"}
 
 
 def call(name: str, args: dict):
@@ -103,3 +104,25 @@ def test_info_and_import_tools(tmp_path):
     assert {"path": "war3mapImported/t.txt", "flag": 29, "size": 2} in listed["imports"]
     err = call("info_edit", {"path": path, "ops": [{"op": "set", "path": "players[99].name", "value": "x"}]})
     assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "bad_op"
+
+
+@needs_install
+def test_object_data_tools(tmp_path):
+    maps = ladder_maps()
+    if not maps:
+        pytest.skip("no ladder maps in Documents")
+    src = tmp_path / maps[0].name
+    src.write_bytes(maps[0].read_bytes())
+    path = str(src)
+    payload(call("map_open", {"path": path}))
+    created = payload(call("objdata_edit", {"path": path, "kind": "unit", "balance": None, "ops": [
+        {"op": "create", "base": "hfoo", "set": {"Name": "Tool Guard", "HP": 555}}]}))["created"]
+    assert created == ["h000"]
+    doc = payload(call("objdata_get", {"path": path, "kind": "unit", "id": "h000", "fields": ["uhpm"],
+                                       "balance": None}))
+    assert doc["fields"]["uhpm"]["value"] == 555 and doc["name"] == "Tool Guard"
+    listed = payload(call("objdata_list", {"path": path, "kind": "unit", "custom_only": True, "balance": None}))
+    assert [o["id"] for o in listed["objects"]] == ["h000"]
+    err = call("objdata_edit", {"path": path, "kind": "unit", "balance": None,
+                                "ops": [{"op": "set", "id": "h000", "set": {"nope": 1}}]})
+    assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "unknown_field"

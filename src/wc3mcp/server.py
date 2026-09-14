@@ -16,6 +16,7 @@ from .errors import ToolError
 from .gamedata.catalog import Catalog
 from .ops import imports as imports_ops
 from .ops import info as info_ops
+from .ops import objdata as objdata_ops
 from .project.workspace import MapProject
 
 log = logging.getLogger("wc3mcp")
@@ -26,6 +27,7 @@ mcp = FastMCP("wc3", instructions=(
 
 Kind = Literal["unit", "item", "ability", "buff", "upgrade", "destructible", "doodad", "tile", "cliff", "water",
                "sound", "model", "icon", "file"]
+ObjectKind = Literal["unit", "item", "destructible", "doodad", "ability", "buff", "upgrade"]
 MAX_READ = 1024 * 1024
 _projects: dict[str, MapProject] = {}
 _catalogs: dict[tuple, Catalog] = {}
@@ -212,6 +214,31 @@ def imports_edit(path: str, ops: list[dict] | None = None) -> dict:
     {"op": "add", "path": "war3mapImported/icon.blp", "source": "C:/local/icon.blp"} (or "content_base64"),
     {"op": "remove", "path": "war3mapImported/icon.blp"}. Without ops it only lists. Batches apply all-or-nothing."""
     return imports_ops.imports_edit(_project(path), ops or [])
+
+
+@_tool
+def objdata_list(path: str, kind: ObjectKind, custom_only: bool = False, balance: str | None = "Custom_V1") -> dict:
+    """Custom and modified objects of one kind in an open map (the Object Editor's left pane): id, base id,
+    custom flag, number of modifications and display name."""
+    return objdata_ops.objdata_list(_project(path), _catalog("enUS", balance, True), kind, custom_only)
+
+
+@_tool
+def objdata_get(path: str, kind: ObjectKind, id: str, fields: list[str] | None = None,
+                balance: str | None = "Custom_V1") -> dict:
+    """One object as the Object Editor shows it: base game values merged with this map's modifications. Each field
+    has raw code, name, type, value (or per-level values) and whether the map modifies it. fields filters by raw code,
+    field name or display-name substring."""
+    return objdata_ops.objdata_get(_project(path), _catalog("enUS", balance, True), kind, id, fields)
+
+
+@_tool
+def objdata_edit(path: str, kind: ObjectKind, ops: list[dict], balance: str | None = "Custom_V1") -> dict:
+    """Create and change objects with an all-or-nothing batch: {"op": "create", "base": "hfoo", "set": {"Name":
+    "Guard", "HP": 500}} (id optional, allocated like the editor), {"op": "set", "id": "h000", "set": {"Hbz1":
+    {"1": 7, "2": 9}}} (per-level fields take level keys), {"op": "reset", "id": "h000", "fields": ["uhpm"]},
+    {"op": "delete", "id": "h000"}. Fields accept raw codes, field names or display names."""
+    return objdata_ops.objdata_edit(_project(path), _catalog("enUS", balance, True), kind, ops)
 
 
 def setup_logging() -> Path:
