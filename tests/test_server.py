@@ -1,0 +1,70 @@
+import asyncio
+import json
+import os
+import sys
+from pathlib import Path
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from mcp.shared.memory import create_connected_server_and_client_session
+
+from corpus import needs_install
+from wc3mcp import server
+from wc3mcp.mpq.reader import Archive
+from wc3mcp.mpq.writer import write_archive
+
+EXPECTED = {"map_open", "map_close", "map_save", "map_status", "map_file_read", "map_file_write", "map_snapshot",
+            "data_search", "data_get", "data_file"}
+
+
+def call(name: str, args: dict):
+    async def run():
+        async with create_connected_server_and_client_session(server.mcp._mcp_server) as client:
+            return await client.call_tool(name, args)
+    return asyncio.run(run())
+
+
+def payload(result) -> dict:
+    assert not result.isError, result.content[0].text
+    return json.loads(result.content[0].text)
+
+
+def test_tools_are_registered():
+    assert EXPECTED <= {t.name for t in asyncio.run(server.mcp.list_tools())}
+
+
+def test_map_tools_end_to_end(tmp_path):
+    src = tmp_path / "m.w3x"
+    src.write_bytes(write_archive({"war3map.j": b"old"}))
+    path = str(src)
+    assert payload(call("map_open", {"path": path}))["file_count"] == 1
+    payload(call("map_file_write", {"path": path, "name": "war3map.j", "content": "new"}))
+    assert payload(call("map_save", {"path": path}))["saved"]
+    assert payload(call("map_file_read", {"path": path, "name": "war3map.j"}))["content"] == "new"
+    assert Archive.open(src).read("war3map.j") == b"new"
+    payload(call("map_close", {"path": path}))
+    err = call("map_status", {"path": path})
+    assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "not_open"
+
+
+@needs_install
+def test_data_tools():
+    hits = payload(call("data_search", {"kind": "unit", "query": "archmage", "balance": None}))["results"]
+    assert "Hamg" in [h["id"] for h in hits]
+    got = payload(call("data_get", {"kind": "ability", "id": "AHbz", "fields": ["Hbz1"], "balance": None}))
+    assert got["fields"]["Hbz1"]["values"] == ["6", "8", "10"]
+    common = payload(call("data_file", {"path": "Scripts/common.j", "length": 200}))
+    assert common["path"] == "War3.w3mod:Scripts/common.j" and common["truncated"]
+
+
+def test_stdio_server_starts(tmp_path):
+    env = {**os.environ, "PYTHONPATH": str(Path(server.__file__).parents[1]), "WC3MCP_HOME": str(tmp_path / "home")}
+    params = StdioServerParameters(command=sys.executable, args=["-m", "wc3mcp.server"], env=env)
+
+    async def run():
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                return {t.name for t in (await session.list_tools()).tools}
+
+    assert EXPECTED <= asyncio.run(run())

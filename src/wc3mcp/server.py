@@ -1,0 +1,199 @@
+"""wc3-mcp MCP server. Phase 1: map working copies and game data."""
+import base64
+import functools
+import json
+import logging
+import time
+from pathlib import Path
+from typing import Literal
+
+from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError as McpToolError
+
+from . import config
+from .casc.storage import open_storage
+from .errors import ToolError
+from .gamedata.catalog import Catalog
+from .project.workspace import MapProject
+
+log = logging.getLogger("wc3mcp")
+mcp = FastMCP("wc3", instructions=(
+    "Warcraft III map making. map_open copies a map into a private working copy; change files there; map_save "
+    "backs up the original and replaces it atomically. The game install is read-only. Look up units, abilities, "
+    "items, buffs, upgrades, doodads, destructibles, terrain, sounds and assets with data_search / data_get."))
+
+Kind = Literal["unit", "item", "ability", "buff", "upgrade", "destructible", "doodad", "tile", "cliff", "water",
+               "sound", "model", "icon", "file"]
+MAX_READ = 1024 * 1024
+_projects: dict[str, MapProject] = {}
+_catalogs: dict[tuple, Catalog] = {}
+_storage = None
+
+
+def _brief(kwargs: dict) -> str:
+    return json.dumps({k: (v[:80] + "..." if isinstance(v, str) and len(v) > 80 else v) for k, v in kwargs.items()},
+                      default=str)
+
+
+def _tool(fn):
+    """Register `fn` as a tool; log each call; expose ToolError as structured MCP error text."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        try:
+            result = fn(*args, **kwargs)
+        except ToolError as e:
+            log.info("%s error %s %s", fn.__name__, e.code, _brief(kwargs))
+            raise McpToolError(json.dumps(e.to_dict())) from e
+        except Exception:
+            log.exception("%s crashed %s", fn.__name__, _brief(kwargs))
+            raise
+        log.info("%s ok %.0fms %s", fn.__name__, (time.perf_counter() - start) * 1000, _brief(kwargs))
+        return result
+    return mcp.tool()(wrapper)
+
+
+def _key(path: str) -> str:
+    return str(Path(path).resolve()).lower()
+
+
+def _project(path: str) -> MapProject:
+    p = _projects.get(_key(path))
+    if p is None:
+        raise ToolError("not_open", f"map is not open: {path}", hint="call map_open first")
+    return p
+
+
+def _catalog(locale: str, balance: str | None, hd: bool) -> Catalog:
+    global _storage
+    if _storage is None:
+        root = config.install_root()
+        if not (root / ".build.info").is_file():
+            raise ToolError("no_install", f"Warcraft III install not found at {root}", hint="set WC3MCP_INSTALL")
+        _storage = open_storage(root)
+    key = (locale, balance, hd)
+    if key not in _catalogs:
+        _catalogs[key] = Catalog(_storage, locale=locale, balance=balance, hd=hd)
+    return _catalogs[key]
+
+
+def _encode(data: bytes, encoding: str, offset: int, length: int) -> dict:
+    chunk = data[max(offset, 0):max(offset, 0) + max(0, min(length, MAX_READ))]
+    if encoding == "text":
+        content = chunk.decode("utf-8", "replace")
+    elif encoding == "base64":
+        content = base64.b64encode(chunk).decode("ascii")
+    else:
+        content = chunk.hex()
+    return {"size": len(data), "offset": offset, "length": len(chunk), "encoding": encoding, "content": content,
+            "truncated": max(offset, 0) + len(chunk) < len(data)}
+
+
+@_tool
+def map_open(path: str) -> dict:
+    """Open a Warcraft III map (.w3x/.w3m archive or map folder) into a private working copy.
+    Re-opening resumes unsaved edits. Returns the map status."""
+    p = MapProject.open(path)
+    _projects[_key(path)] = p
+    return p.status()
+
+
+@_tool
+def map_close(path: str, discard: bool = False) -> dict:
+    """Close an open map. Refuses while there are unsaved edits unless discard=true."""
+    result = _project(path).close(discard)
+    del _projects[_key(path)]
+    return result
+
+
+@_tool
+def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"] | None = None,
+             force: bool = False) -> dict:
+    """Save the working copy. By default backs up the original and replaces it atomically. dest/format write a
+    copy elsewhere (mpq archive or map folder). Refuses if the original changed on disk since opening unless
+    force=true."""
+    return _project(path).save(dest=dest, format=format, force=force)
+
+
+@_tool
+def map_status(path: str, include_files: bool = True) -> dict:
+    """Status of an open map: format, protection, dirty/deleted files, whether the original changed on disk, and
+    the file list."""
+    p = _project(path)
+    status = p.status()
+    if include_files:
+        status["files"] = p.list_files()
+    return status
+
+
+@_tool
+def map_file_read(path: str, name: str, encoding: Literal["text", "base64", "hex"] = "text", offset: int = 0,
+                  length: int = 65536) -> dict:
+    """Read a file inside an open map (e.g. war3map.j, war3map.wts). Page large files with offset/length."""
+    return {"name": name, **_encode(_project(path).read(name), encoding, offset, length)}
+
+
+@_tool
+def map_file_write(path: str, name: str, content: str = "", encoding: Literal["text", "base64"] = "text",
+                   delete: bool = False) -> dict:
+    """Create, replace or delete (delete=true) a file in an open map's working copy. Raw escape hatch: prefer typed
+    tools when they exist. Changes reach the map file on map_save."""
+    p = _project(path)
+    if delete:
+        p.delete(name)
+        return {"deleted": name}
+    try:
+        data = content.encode("utf-8") if encoding == "text" else base64.b64decode(content, validate=True)
+    except ValueError as e:
+        raise ToolError("bad_content", f"content is not valid {encoding}: {e}") from e
+    p.write(name, data)
+    return {"written": name, "size": len(data)}
+
+
+@_tool
+def map_snapshot(path: str, action: Literal["create", "restore", "list", "diff"], label: str | None = None) -> dict:
+    """Named checkpoints of an open map's working copy: create, restore, list, or diff against the current state."""
+    return _project(path).snapshot(action, label)
+
+
+@_tool
+def data_search(kind: Kind, query: str = "", limit: int = 50, offset: int = 0, locale: str = "enUS",
+                balance: str | None = "Custom_V1", hd: bool = True) -> dict:
+    """Search base game data by id, name or editor suffix (object, terrain and sound kinds) or by path substring or
+    glob (model, icon, file). balance selects the gameplay data set: Custom_V1 (current), Custom_V0, Melee_V0, or
+    null for the base files."""
+    results = _catalog(locale, balance, hd).search(kind, query, limit=min(limit, 500), offset=offset)
+    return {"kind": kind, "query": query, "offset": offset, "count": len(results), "results": results}
+
+
+@_tool
+def data_get(kind: Kind, id: str, fields: list[str] | None = None, locale: str = "enUS",
+             balance: str | None = "Custom_V1", hd: bool = True) -> dict:
+    """Base data for one object with editor field raw codes, names, types and values (per level for leveled
+    fields). fields filters by raw code (e.g. uhpm), field name, or display-name substring."""
+    return _catalog(locale, balance, hd).get(kind, id, fields)
+
+
+@_tool
+def data_file(path: str, encoding: Literal["text", "base64", "hex"] = "text", offset: int = 0,
+              length: int = 65536) -> dict:
+    """Read a raw file from the game's CASC storage, e.g. War3.w3mod:Scripts/common.j or UI/TriggerData.txt. Paths
+    without a 'War3.w3mod:' prefix resolve through the enUS locale and base layers."""
+    storage = _catalog("enUS", None, False).storage
+    full = path if ":" in path else storage.resolve(path)
+    data = storage.read(full) if full else None
+    if data is None:
+        raise ToolError("not_found", f"no game data file {path!r}", hint="data_search kind=file finds paths")
+    return {"path": full, **_encode(data, encoding, offset, length)}
+
+
+def main() -> None:
+    logs = config.home() / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(filename=logs / "wc3mcp.log", level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s")
+    mcp.run()
+
+
+if __name__ == "__main__":
+    main()
