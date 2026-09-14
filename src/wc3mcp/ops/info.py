@@ -6,6 +6,7 @@ from ..formats import w3i
 from ..formats.binary import FormatError
 from ..formats.wts import TRIGSTR, TriggerStrings
 from .edits import apply_ops
+from .strings import load_strings
 
 MAP_FLAGS = {
     "hide_minimap_in_preview": 1 << 0, "modify_ally_priorities": 1 << 1, "melee_map": 1 << 2,
@@ -364,13 +365,7 @@ def _load(project) -> tuple[w3i.MapInfo, TriggerStrings]:
         mi = w3i.parse(project.read("war3map.w3i"))
     except FormatError as e:
         raise ToolError("bad_file", f"war3map.w3i: {e}") from e
-    try:
-        strings = TriggerStrings.parse(project.read("war3map.wts"))
-    except ToolError as e:
-        if e.code != "no_such_file":
-            raise
-        strings = TriggerStrings()
-    return mi, strings
+    return mi, load_strings(project)
 
 
 def info_get(project) -> dict:
