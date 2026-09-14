@@ -9,7 +9,7 @@ from wc3mcp.formats.wtg import Trigger, Variable
 from wc3mcp.formats.wts import TriggerStrings
 from wc3mcp.gamedata.catalog import Catalog
 from wc3mcp.gamedata.triggerdata import ACTION, CALL, CONDITION, EVENT
-from wc3mcp.ops.gui import Checker, Renderer, eca_json, ecas_from_json
+from wc3mcp.ops.gui import Checker, Renderer, eca_json, ecas_from_json, script_name
 
 pytestmark = pytest.mark.skipif(not HAVE_INSTALL, reason="needs TriggerData from the install")
 
@@ -40,6 +40,12 @@ def build(catalog, doc, variables=VARIABLES):
 
 def as_json(ecas):
     return {key: [eca_json(e) for e in ecas if e.kind == kind] for key, kind in SECTIONS}
+
+
+def test_script_names_follow_the_editor():
+    assert script_name("Melee Initialization") == "Melee_Initialization"
+    assert script_name("Doom06Cripple ") == "Doom06Cripple"                         # NightElf02: trailing spaces dropped
+    assert script_name("  Footman01 End Movement") == "__Footman01_End_Movement"   # Human01: leading spaces kept
 
 
 def test_json_converts_both_ways(catalog):

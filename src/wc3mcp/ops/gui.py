@@ -27,8 +27,8 @@ def blocks(name: str) -> tuple[tuple[str, int, str], ...]:
 
 
 def script_name(name: str) -> str:
-    """The identifier the editor derives from a trigger name (gg_trg_<this>)."""
-    return re.sub(r"[^A-Za-z0-9_]", "_", name)
+    """The identifier the editor derives from a trigger name (gg_trg_<this>): trailing spaces dropped, leading kept."""
+    return re.sub(r"[^A-Za-z0-9_]", "_", name.rstrip())
 
 
 def var_type(name: str, variables: dict) -> str | None:
