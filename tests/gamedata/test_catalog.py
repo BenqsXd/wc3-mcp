@@ -58,3 +58,12 @@ def test_unknown_kind_and_id(cat):
     with pytest.raises(ToolError) as e:
         cat.get("unit", "zzzz")
     assert e.value.code == "not_found"
+
+
+def test_field_netsafe_and_applicability(cat):
+    units = {f.id: f for f in cat.fields("unit")}
+    assert units["unam"].netsafe == "1" and units["uhpm"].netsafe == "0"
+    abilities = {f.id: f for f in cat.fields("ability")}
+    assert cat.applies("ability", "AHbz", abilities["Hbz1"])
+    assert not cat.applies("ability", "AHbz", abilities["hem1"])
+    assert cat.applies("unit", "hfoo", units["uhpm"])

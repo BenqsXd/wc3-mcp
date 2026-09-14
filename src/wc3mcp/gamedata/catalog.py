@@ -36,6 +36,7 @@ class FieldMeta:
     max: str
     use_specific: tuple[str, ...]
     not_specific: tuple[str, ...]
+    netsafe: str = "0"  # "1"/"11": cosmetic field that the 2.x editor stores in war3mapSkin.* files
 
     def column(self, level: int) -> str:
         """Data column / profile key: Data + letter for ability data fields, + level for per-level SLK columns."""
@@ -108,7 +109,8 @@ class Catalog:
                     repeat=_int(r.get("repeat"), 0), data=_int(r.get("data"), 0), category=r.get("category", ""),
                     display_name=self.westring(r.get("displayName", "")), type=r.get("type", ""),
                     min=r.get("minVal", ""), max=r.get("maxVal", ""),
-                    use_specific=_codes(r.get("useSpecific")), not_specific=_codes(r.get("notSpecific"))))
+                    use_specific=_codes(r.get("useSpecific")), not_specific=_codes(r.get("notSpecific")),
+                    netsafe=r.get("netsafe") or "0"))
             self._fields[kind] = out
         return self._fields[kind]
 
@@ -146,7 +148,7 @@ class Catalog:
             return parts[meta.index] if meta.index < len(parts) else None
         return unquote(raw)
 
-    def _applies(self, kind: str, obj_id: str, meta: FieldMeta) -> bool:
+    def applies(self, kind: str, obj_id: str, meta: FieldMeta) -> bool:
         if kind != "ability" or not (meta.use_specific or meta.not_specific):
             return True
         code = self.table(OBJECT_KINDS["ability"].slks["AbilityData"]).rows.get(obj_id, {}).get("code", obj_id)
@@ -215,7 +217,7 @@ class Catalog:
             if wanted is not None and not any(w in (meta.id.lower(), meta.field.lower()) or w in meta.display_name.lower()
                                               for w in wanted):
                 continue
-            if not self._applies(kind, obj_id, meta):
+            if not self.applies(kind, obj_id, meta):
                 continue
             entry = {"field": meta.field, "name": meta.display_name, "category": meta.category, "type": meta.type}
             if meta.repeat > 0:
