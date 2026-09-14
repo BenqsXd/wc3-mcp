@@ -4,17 +4,18 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.shared.memory import create_connected_server_and_client_session
 
-from corpus import needs_install
+from corpus import ladder_maps, needs_install
 from wc3mcp import server
 from wc3mcp.mpq.reader import Archive
 from wc3mcp.mpq.writer import write_archive
 
 EXPECTED = {"map_open", "map_close", "map_save", "map_status", "map_file_read", "map_file_write", "map_snapshot",
-            "data_search", "data_get", "data_file"}
+            "data_search", "data_get", "data_file", "info_get", "info_edit", "imports_edit"}
 
 
 def call(name: str, args: dict):
@@ -85,3 +86,20 @@ def test_stdio_server_starts(tmp_path):
                 return {t.name for t in (await session.list_tools()).tools}
 
     assert EXPECTED <= asyncio.run(run())
+
+
+def test_info_and_import_tools(tmp_path):
+    maps = ladder_maps()
+    if not maps:
+        pytest.skip("no ladder maps in Documents")
+    src = tmp_path / maps[0].name
+    src.write_bytes(maps[0].read_bytes())
+    path = str(src)
+    payload(call("map_open", {"path": path}))
+    payload(call("info_edit", {"path": path, "ops": [{"op": "set", "path": "name", "value": "Server Test"}]}))
+    assert payload(call("info_get", {"path": path}))["name"] == "Server Test"
+    listed = payload(call("imports_edit", {"path": path, "ops": [
+        {"op": "add", "path": "war3mapImported/t.txt", "content_base64": "aGk="}]}))
+    assert {"path": "war3mapImported/t.txt", "flag": 29, "size": 2} in listed["imports"]
+    err = call("info_edit", {"path": path, "ops": [{"op": "set", "path": "players[99].name", "value": "x"}]})
+    assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "bad_op"

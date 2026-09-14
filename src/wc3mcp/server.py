@@ -14,6 +14,8 @@ from . import config
 from .casc.storage import open_storage
 from .errors import ToolError
 from .gamedata.catalog import Catalog
+from .ops import imports as imports_ops
+from .ops import info as info_ops
 from .project.workspace import MapProject
 
 log = logging.getLogger("wc3mcp")
@@ -185,6 +187,31 @@ def data_file(path: str, encoding: Literal["text", "base64", "hex"] = "text", of
     if data is None:
         raise ToolError("not_found", f"no game data file {path!r}", hint="data_search kind=file finds paths")
     return {"path": full, **_encode(data, encoding, offset, length)}
+
+
+@_tool
+def info_get(path: str) -> dict:
+    """Map info (war3map.w3i) of an open map as JSON: name, author, description, loading screen, fog, weather,
+    script language, camera zoom, map flags, players, forces, tech/upgrade availability and random tables. Text backed
+    by the string table is shown resolved, with its TRIGSTR reference in a matching *_ref key."""
+    return info_ops.info_get(_project(path))
+
+
+@_tool
+def info_edit(path: str, ops: list[dict]) -> dict:
+    """Edit map info with a batch of ops applied all-or-nothing to the info_get document, e.g.
+    {"op": "set", "path": "players[0].race", "value": "orc"}, {"op": "append", "path": "forces", "value": {...}},
+    {"op": "remove", "path": "tech[2]"}. Editing *_ref-backed text updates war3map.wts. Returns warnings, e.g. when the
+    map script needs regenerating in the World Editor."""
+    return info_ops.info_edit(_project(path), ops)
+
+
+@_tool
+def imports_edit(path: str, ops: list[dict] | None = None) -> dict:
+    """List or change imported files of an open map (war3map.imp plus the files themselves). ops:
+    {"op": "add", "path": "war3mapImported/icon.blp", "source": "C:/local/icon.blp"} (or "content_base64"),
+    {"op": "remove", "path": "war3mapImported/icon.blp"}. Without ops it only lists. Batches apply all-or-nothing."""
+    return imports_ops.imports_edit(_project(path), ops or [])
 
 
 def setup_logging() -> Path:
