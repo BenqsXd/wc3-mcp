@@ -17,6 +17,7 @@ from .gamedata.catalog import Catalog
 from .ops import imports as imports_ops
 from .ops import info as info_ops
 from .ops import objdata as objdata_ops
+from .ops import triggers as triggers_ops
 from .project.workspace import MapProject
 
 log = logging.getLogger("wc3mcp")
@@ -26,7 +27,7 @@ mcp = FastMCP("wc3", instructions=(
     "items, buffs, upgrades, doodads, destructibles, terrain, sounds and assets with data_search / data_get."))
 
 Kind = Literal["unit", "item", "ability", "buff", "upgrade", "destructible", "doodad", "tile", "cliff", "water",
-               "sound", "model", "icon", "file"]
+               "sound", "model", "icon", "file", "trigger_function", "trigger_type", "trigger_preset"]
 ObjectKind = Literal["unit", "item", "destructible", "doodad", "ability", "buff", "upgrade"]
 MAX_READ = 1024 * 1024
 _projects: dict[str, MapProject] = {}
@@ -164,7 +165,8 @@ def map_snapshot(path: str, action: Literal["create", "restore", "list", "diff"]
 def data_search(kind: Kind, query: str = "", limit: int = 50, offset: int = 0, locale: str = "enUS",
                 balance: str | None = "Custom_V1", hd: bool = True) -> dict:
     """Search base game data by id, name or editor suffix (object, terrain and sound kinds) or by path substring or
-    glob (model, icon, file). balance selects the gameplay data set: Custom_V1 (current), Custom_V0, Melee_V0, or
+    glob (model, icon, file); trigger_function / trigger_type / trigger_preset search GUI trigger functions, variable
+    types and preset values. balance selects the gameplay data set: Custom_V1 (current), Custom_V0, Melee_V0, or
     null for the base files."""
     results = _catalog(locale, balance, hd).search(kind, query, limit=min(limit, 500), offset=offset)
     return {"kind": kind, "query": query, "offset": offset, "count": len(results), "results": results}
@@ -239,6 +241,35 @@ def objdata_edit(path: str, kind: ObjectKind, ops: list[dict], balance: str | No
     {"1": 7, "2": 9}}} (per-level fields take level keys), {"op": "reset", "id": "h000", "fields": ["uhpm"]},
     {"op": "delete", "id": "h000"}. Fields accept raw codes, field names or display names."""
     return objdata_ops.objdata_edit(_project(path), _catalog("enUS", balance, True), kind, ops)
+
+
+@_tool
+def triggers_tree(path: str) -> dict:
+    """Trigger Editor overview of an open map: categories, triggers (type gui/text/comment, enabled, initially on,
+    run on map init, function count) and global variables."""
+    return triggers_ops.triggers_tree(_project(path), _catalog("enUS", "Custom_V1", True))
+
+
+@_tool
+def trigger_get(path: str, name: str | None = None) -> dict:
+    """One trigger. GUI triggers come as events/conditions/actions JSON (the shape triggers_edit takes) plus the
+    editor's text; text triggers as script. Without name: the map's custom script header and comment."""
+    return triggers_ops.trigger_get(_project(path), _catalog("enUS", "Custom_V1", True), name)
+
+
+@_tool
+def triggers_edit(path: str, ops: list[dict]) -> dict:
+    """All-or-nothing Trigger Editor changes. ops:
+    {"op": "category", "name", "parent"?, "new_name"?};
+    {"op": "variable", "name", "type", "array_size"?, "initial"?, "category"?, "new_name"?};
+    {"op": "trigger", "name", "category"?, "description"?, "enabled"?, "initially_on"?, "run_on_init"?,
+     "events"/"conditions"/"actions": [{"fn": "KillUnit", "args": [{"call": "GetTriggerUnit"}]}, ...] or
+     "script": "<JASS or Lua>", "new_name"?};
+    {"op": "delete", "what": "trigger"|"category"|"variable", "name"}; {"op": "header", "script"?, "comment"?}.
+    An argument is a literal, {"preset": name}, {"var": name, "index"?} or {"call": name, "args": [...]}; block
+    functions take "if"/"then"/"else" (IfThenElseMultiple), "conditions" (And/OrMultiple) or "actions" (loops).
+    GUI code is checked against TriggerData; data_search kind=trigger_function finds functions."""
+    return triggers_ops.triggers_edit(_project(path), _catalog("enUS", "Custom_V1", True), ops)
 
 
 def setup_logging() -> Path:

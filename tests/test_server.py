@@ -16,7 +16,7 @@ from wc3mcp.mpq.writer import write_archive
 
 EXPECTED = {"map_open", "map_close", "map_save", "map_status", "map_file_read", "map_file_write", "map_snapshot",
             "data_search", "data_get", "data_file", "info_get", "info_edit", "imports_edit",
-            "objdata_list", "objdata_get", "objdata_edit"}
+            "objdata_list", "objdata_get", "objdata_edit", "triggers_tree", "trigger_get", "triggers_edit"}
 
 
 def call(name: str, args: dict):
@@ -126,3 +126,24 @@ def test_object_data_tools(tmp_path):
     err = call("objdata_edit", {"path": path, "kind": "unit", "balance": None,
                                 "ops": [{"op": "set", "id": "h000", "set": {"nope": 1}}]})
     assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "unknown_field"
+
+
+@needs_install
+def test_trigger_tools(tmp_path):
+    maps = ladder_maps()
+    if not maps:
+        pytest.skip("no ladder maps in Documents")
+    src = tmp_path / maps[0].name
+    src.write_bytes(maps[0].read_bytes())
+    path = str(src)
+    payload(call("map_open", {"path": path}))
+    assert payload(call("triggers_tree", {"path": path}))["triggers"][0]["name"] == "Melee Initialization"
+    created = payload(call("triggers_edit", {"path": path, "ops": [{"op": "trigger", "name": "Hello", "actions": [
+        {"fn": "DisplayTextToForce", "args": [{"call": "GetPlayersAll"}, "Hi"]}]}]}))
+    assert created["created"] == ["Hello"]
+    doc = payload(call("trigger_get", {"path": path, "name": "Hello"}))
+    assert doc["text"].splitlines()[-1] == "    Game - Display to (All players) the text: Hi"
+    found = payload(call("data_search", {"kind": "trigger_function", "query": "DisplayTextToForce"}))
+    assert "DisplayTextToForce" in [r["id"] for r in found["results"]]
+    err = call("triggers_edit", {"path": path, "ops": [{"op": "trigger", "name": "Hello", "actions": [{"fn": "Nope"}]}]})
+    assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "unknown_function"
