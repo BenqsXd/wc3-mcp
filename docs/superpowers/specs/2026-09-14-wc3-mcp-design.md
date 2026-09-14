@@ -163,8 +163,9 @@ These are not open design questions; each is resolved inside the named plan task
 
 ## 9. Delivery
 
-- Project: `D:\Warcraft III\wc3-mcp` (git repo), uv-managed, Python 3.13.
-- Registration: `D:\Warcraft III\.mcp.json` entry `wc3` with command `uv`, args `["run", "--project", "D:\\Warcraft III\\wc3-mcp", "wc3-mcp"]` (console script `wc3-mcp` → `wc3mcp.server:main`, stdio transport).
+- Project: `D:\Warcraft III\wc3-mcp` (git repo), `src/` layout, no project venv.
+- Interpreter (user decision 2026-09-14, offline uv install impossible): the existing Microsoft Store Python 3.13.14 at `%LOCALAPPDATA%\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\python.exe`, which already has `mcp 1.27.0`, `pywin32 311`, `numpy 2.4.6`, `pillow 12.2.0`, `pytest 9.0.3`. No downloads. (The bare `python` on PATH is a different 3.12 without packages — always use the full path.)
+- Registration: `D:\Warcraft III\.mcp.json` entry `wc3` with that interpreter as `command`, args `["-m", "wc3mcp.server"]`, env `PYTHONPATH=D:\Warcraft III\wc3-mcp\src` (stdio transport).
 - Implementation plans are written per build-order phase below (one plan document per phase), each ending with its tests passing.
 - Runtime data: `%LOCALAPPDATA%\wc3mcp\{work,backups,cache,logs,tools}`.
 
