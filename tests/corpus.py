@@ -31,6 +31,7 @@ CASC_SAMPLE_MAPS = (
     "Maps/FrozenThrone/Community/2023Season2/(8)RoyalGardens_S2_v1.2.w3x",  # w3i v33, Lua
     "Maps/FrozenThrone/(10)RagingStream.w3x",       # w3i v31
     "Campaign/Classic/TFT/HumanX04Interlude.w3x",   # w3i v31, object data v2
+    "Campaign/Reforged/ROC/Human05.w3x",            # wtg with deleted-id counters (comments, kind 128)
 )
 
 
