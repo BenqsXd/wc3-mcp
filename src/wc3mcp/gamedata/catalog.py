@@ -6,8 +6,10 @@ from ..errors import ToolError
 from .kinds import OBJECT_KINDS, PATH_KINDS, ROW_KINDS
 from .profile import parse_profile, split_list, unquote
 from .slk import Table, parse_slk
+from .triggerdata import KIND_NAMES, TriggerData
 
-KINDS = tuple(OBJECT_KINDS) + tuple(ROW_KINDS) + tuple(PATH_KINDS)
+TRIGGER_KINDS = ("trigger_function", "trigger_type", "trigger_preset")
+KINDS = tuple(OBJECT_KINDS) + tuple(ROW_KINDS) + tuple(PATH_KINDS) + TRIGGER_KINDS
 
 
 def _int(value, default: int) -> int:
@@ -87,6 +89,41 @@ class Catalog:
 
     def westring(self, value: str) -> str:
         return self._westrings.get(value.lower(), value) if value.startswith("WESTRING_") else value
+
+    @cached_property
+    def trigger_data(self) -> TriggerData:
+        return TriggerData.parse(self._read("UI/TriggerData.txt") or b"", self.westring)
+
+    def _trigger_rows(self, kind: str) -> list[dict]:
+        td = self.trigger_data
+        if kind == "trigger_function":
+            return [{"id": f.name, "name": f.display, "suffix": KIND_NAMES[f.kind]}
+                    for table in td.functions for f in table.values()]
+        if kind == "trigger_type":
+            return [{"id": t.name, "name": t.display, "suffix": "" if t.base == t.name else t.base}
+                    for t in td.types.values()]
+        return [{"id": p.name, "name": p.display, "suffix": p.type} for p in td.presets.values()]
+
+    def _trigger_get(self, kind: str, obj_id: str, missing: ToolError) -> dict:
+        td = self.trigger_data
+        if kind == "trigger_function":
+            found = [table[obj_id] for table in td.functions if obj_id in table]
+            if not found:
+                raise missing
+            return {"kind": kind, "id": obj_id, "name": found[0].display, "variants": [
+                {"kind": KIND_NAMES[f.kind], "args": list(f.args), "returns": f.returns, "text": "".join(f.layout),
+                 "defaults": list(f.defaults), "category": td.categories.get(f.category, (f.category,))[0]}
+                for f in found]}
+        if kind == "trigger_type":
+            t = td.types.get(obj_id)
+            if t is None:
+                raise missing
+            return {"kind": kind, "id": obj_id, "name": t.display, "base": t.base, "global": t.global_ok,
+                    "comparable": t.comparable, "presets": [p.name for p in td.presets.values() if p.type == obj_id]}
+        p = td.presets.get(obj_id)
+        if p is None:
+            raise missing
+        return {"kind": kind, "id": obj_id, "name": p.display, "type": p.type, "code": p.code}
 
     # metadata
     def _check(self, kind: str) -> None:
@@ -181,6 +218,10 @@ class Catalog:
 
     def search(self, kind: str, query: str = "", limit: int = 50, offset: int = 0) -> list[dict]:
         self._check(kind)
+        if kind in TRIGGER_KINDS:
+            q = query.casefold()
+            hits = [r for r in self._trigger_rows(kind) if q in r["id"].casefold() or q in r["name"].casefold()]
+            return hits[offset:offset + limit]
         if kind in PATH_KINDS:
             exts, needle = PATH_KINDS[kind]
             hits = [p for p in self.storage.list(query)
@@ -197,6 +238,8 @@ class Catalog:
     def get(self, kind: str, obj_id: str, fields: list[str] | None = None) -> dict:
         self._check(kind)
         missing = ToolError("not_found", f"no {kind} with id {obj_id!r}", hint="data_search finds ids")
+        if kind in TRIGGER_KINDS:
+            return self._trigger_get(kind, obj_id, missing)
         if kind in PATH_KINDS:
             if self.storage.norm(obj_id) not in self.storage.names():
                 raise missing
