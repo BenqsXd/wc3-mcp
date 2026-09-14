@@ -1,0 +1,15 @@
+[project]
+name = "wc3mcp"
+version = "0.1.0"
+description = "MCP server for operating the Warcraft III World Editor"
+requires-python = ">=3.13"
+dependencies = ["mcp>=1.27,<2"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "tests"]
+testpaths = ["tests"]
+markers = [
+  "editor: drives the World Editor (run on demand)",
+  "game: launches Warcraft III (run on demand)",
+]
+addopts = "-m 'not editor and not game'"
