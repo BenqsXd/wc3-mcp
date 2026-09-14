@@ -114,7 +114,7 @@ import pytest
 from corpus import open_sample, sample_map_ids
 from wc3mcp.formats.wts import TriggerStrings
 
-SAMPLE = ("\ufeffSTRING 1\r\n{\r\nHammerfall\r\n}\r\n\r\n"
+SAMPLE = ("\N{ZERO WIDTH NO-BREAK SPACE}STRING 1\r\n{\r\nHammerfall\r\n}\r\n\r\n"
           "STRING 2\r\n// Units: hfoo\r\n{\r\nline one\r\nline two\r\n}\r\n\r\n").encode("utf-8")
 
 
@@ -131,12 +131,12 @@ def test_set_add_remove_keep_file_style():
     ts.set(1, "New Name")
     assert ts.add("Added\ntext") == 3
     assert ts.remove(2) == 1
-    assert ts.serialize() == ("\ufeffSTRING 1\r\n{\r\nNew Name\r\n}\r\n"
+    assert ts.serialize() == ("\N{ZERO WIDTH NO-BREAK SPACE}STRING 1\r\n{\r\nNew Name\r\n}\r\n"
                               "\r\nSTRING 3\r\n{\r\nAdded\r\ntext\r\n}\r\n\r\n").encode("utf-8")
 
 
 def test_double_encoded_bom_and_lf_files():
-    data = "\u00ef\u00bb\u00bfSTRING 0\n{\nPlayer 1\n}\n".encode("utf-8")
+    data = "\xef\xbb\xbfSTRING 0\n{\nPlayer 1\n}\n".encode("utf-8")  # double-encoded BOM
     ts = TriggerStrings.parse(data)
     assert ts.get(0) == "Player 1" and ts.newline == "\n" and ts.serialize() == data
     ts.add("Force 1")
@@ -146,7 +146,7 @@ def test_double_encoded_bom_and_lf_files():
 def test_empty_file_gets_bom_on_first_add():
     ts = TriggerStrings.parse(b"")
     assert ts.add("Hello") == 1
-    assert ts.serialize() == "\ufeffSTRING 1\r\n{\r\nHello\r\n}\r\n".encode("utf-8")
+    assert ts.serialize() == "\N{ZERO WIDTH NO-BREAK SPACE}STRING 1\r\n{\r\nHello\r\n}\r\n".encode("utf-8")
 
 
 def test_set_missing_id_adds_it_and_empty_text():
@@ -186,7 +186,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'wc3mcp.formats'`
 import re
 from dataclasses import dataclass, field
 
-_HEADER = re.compile(r"^(?:\ufeff|\u00ef\u00bb\u00bf)?STRING\s+(-?\d+)\s*$")  # plain or double-encoded BOM
+_HEADER = re.compile(r"^(?:\N{ZERO WIDTH NO-BREAK SPACE}|\xef\xbb\xbf)?STRING\s+(-?\d+)\s*$")  # plain or double-encoded BOM
 TRIGSTR = re.compile(r"^TRIGSTR_(-?\d+)$")
 
 
@@ -267,7 +267,7 @@ class TriggerStrings:
         if self.entries:
             lead = nl
         else:
-            lead, self.tail = (self.tail or "\ufeff"), ""
+            lead, self.tail = (self.tail or "\N{ZERO WIDTH NO-BREAK SPACE}"), ""
         self.entries.append(Entry(sid, lead, f"STRING {sid}{nl}", [], "{" + nl, self._body(text), "}" + nl))
         return sid
 

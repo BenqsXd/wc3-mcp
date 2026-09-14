@@ -2,7 +2,7 @@
 import re
 from dataclasses import dataclass, field
 
-_HEADER = re.compile(r"^(?:﻿|ï»¿)?STRING\s+(-?\d+)\s*$")  # plain or double-encoded BOM
+_HEADER = re.compile(r"^(?:\N{ZERO WIDTH NO-BREAK SPACE}|\xef\xbb\xbf)?STRING\s+(-?\d+)\s*$")  # plain or double-encoded BOM
 TRIGSTR = re.compile(r"^TRIGSTR_(-?\d+)$")
 
 
@@ -83,7 +83,7 @@ class TriggerStrings:
         if self.entries:
             lead = nl
         else:
-            lead, self.tail = (self.tail or "﻿"), ""
+            lead, self.tail = (self.tail or "\N{ZERO WIDTH NO-BREAK SPACE}"), ""
         self.entries.append(Entry(sid, lead, f"STRING {sid}{nl}", [], "{" + nl, self._body(text), "}" + nl))
         return sid
 
