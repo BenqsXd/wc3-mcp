@@ -1,0 +1,226 @@
+"""Game data lookups: base objects with their editor fields, terrain/sound rows, asset paths."""
+from dataclasses import dataclass
+from functools import cached_property
+
+from ..errors import ToolError
+from .kinds import OBJECT_KINDS, PATH_KINDS, ROW_KINDS
+from .profile import parse_profile, split_list, unquote
+from .slk import Table, parse_slk
+
+KINDS = tuple(OBJECT_KINDS) + tuple(ROW_KINDS) + tuple(PATH_KINDS)
+
+
+def _int(value, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _codes(value: str | None) -> tuple[str, ...]:
+    return tuple(c for c in (value or "").split(",") if c)
+
+
+@dataclass(frozen=True)
+class FieldMeta:
+    id: str
+    field: str
+    slk: str
+    index: int
+    repeat: int
+    data: int
+    category: str
+    display_name: str
+    type: str
+    min: str
+    max: str
+    use_specific: tuple[str, ...]
+    not_specific: tuple[str, ...]
+
+    def column(self, level: int) -> str:
+        """Data column / profile key: Data + letter for ability data fields, + level for per-level SLK columns."""
+        name = self.field + (chr(ord("A") + self.data - 1) if self.data > 0 else "")
+        return name + str(level) if self.repeat > 0 and self.slk != "Profile" else name
+
+
+class Catalog:
+    """ponytail: parsed tables are cached in memory per process; add a per-build disk cache if startup gets slow."""
+
+    def __init__(self, storage, locale: str = "enUS", balance: str | None = "Custom_V1", hd: bool = True):
+        self.storage = storage
+        self.layer = {"locale": locale, "balance": balance, "hd": hd}
+        self.variant = "hd" if hd else "sd"
+        self._tables: dict[str, Table] = {}
+        self._profiles: dict[str, dict] = {}
+        self._fields: dict[str, list[FieldMeta]] = {}
+
+    # raw data
+    def _read(self, relpath: str) -> bytes | None:
+        full = self.storage.resolve(relpath, **self.layer)
+        return None if full is None else self.storage.read(full)
+
+    def table(self, relpath: str) -> Table:
+        if relpath not in self._tables:
+            data = self._read(relpath)
+            self._tables[relpath] = parse_slk(data) if data else Table([], {})
+        return self._tables[relpath]
+
+    def profile(self, kind: str) -> dict:
+        if kind not in self._profiles:
+            merged = {}
+            for rel in OBJECT_KINDS[kind].profiles:
+                data = self._read(rel)
+                if data:
+                    parse_profile(data, into=merged)
+            self._profiles[kind] = merged
+        return self._profiles[kind]
+
+    @cached_property
+    def _westrings(self) -> dict[str, str]:
+        merged = {}
+        for rel in ("UI/WorldEditStrings.txt", "UI/WorldEditGameStrings.txt"):
+            data = self._read(rel)
+            if data:
+                parse_profile(data, into=merged)
+        return {k: unquote(v) for section in merged.values() for k, v in section.items()}
+
+    def westring(self, value: str) -> str:
+        return self._westrings.get(value.lower(), value) if value.startswith("WESTRING_") else value
+
+    # metadata
+    def _check(self, kind: str) -> None:
+        if kind not in KINDS:
+            raise ToolError("bad_kind", f"unknown kind {kind!r}", hint="one of: " + ", ".join(KINDS))
+
+    def fields(self, kind: str) -> list[FieldMeta]:
+        self._check(kind)
+        spec = OBJECT_KINDS[kind]
+        if kind not in self._fields:
+            out = []
+            for r in self.table(spec.meta).rows.values():
+                slk = r.get("slk", "")
+                if slk != "Profile" and slk not in spec.slks:
+                    continue
+                if spec.use_flags and not any(r.get(flag) == "1" for flag in spec.use_flags):
+                    continue
+                out.append(FieldMeta(
+                    id=r["ID"], field=r.get("field", ""), slk=slk, index=_int(r.get("index"), -1),
+                    repeat=_int(r.get("repeat"), 0), data=_int(r.get("data"), 0), category=r.get("category", ""),
+                    display_name=self.westring(r.get("displayName", "")), type=r.get("type", ""),
+                    min=r.get("minVal", ""), max=r.get("maxVal", ""),
+                    use_specific=_codes(r.get("useSpecific")), not_specific=_codes(r.get("notSpecific"))))
+            self._fields[kind] = out
+        return self._fields[kind]
+
+    def ids(self, kind: str) -> list[str]:
+        if kind in OBJECT_KINDS:
+            spec = OBJECT_KINDS[kind]
+            return list(self.table(spec.slks[spec.id_slk]).rows)
+        return [k for rel in ROW_KINDS[kind].slks for k in self.table(rel).rows]
+
+    def levels(self, kind: str, obj_id: str) -> int:
+        spec = OBJECT_KINDS[kind]
+        if spec.level_column is None:
+            return 1
+        row = self.table(spec.slks[spec.id_slk]).rows.get(obj_id, {})
+        return max(1, _int(row.get(spec.level_column), 1))
+
+    # values
+    def _raw(self, kind: str, obj_id: str, source: str, key: str) -> str | None:
+        if source == "Profile":
+            section = self.profile(kind).get(obj_id, {})
+            k = key.lower()
+            return section.get(f"{k}:{self.variant}", section.get(k))
+        row = self.table(OBJECT_KINDS[kind].slks[source]).rows.get(obj_id)
+        return None if row is None else row.get(key)
+
+    def value(self, kind: str, obj_id: str, meta: FieldMeta, level: int = 1) -> str | None:
+        raw = self._raw(kind, obj_id, meta.slk, meta.column(level))
+        if raw is None or meta.slk != "Profile":
+            return raw
+        if meta.repeat > 0:  # per-level comma list; missing levels reuse the last entry
+            parts = split_list(raw)
+            return parts[min(level, len(parts)) - 1]
+        if meta.index >= 0:
+            parts = split_list(raw)
+            return parts[meta.index] if meta.index < len(parts) else None
+        return unquote(raw)
+
+    def _applies(self, kind: str, obj_id: str, meta: FieldMeta) -> bool:
+        if kind != "ability" or not (meta.use_specific or meta.not_specific):
+            return True
+        code = self.table(OBJECT_KINDS["ability"].slks["AbilityData"]).rows.get(obj_id, {}).get("code", obj_id)
+        return (not meta.use_specific or code in meta.use_specific) and code not in meta.not_specific
+
+    def _lookup(self, kind: str, obj_id: str, keys: tuple[str, ...]) -> str:
+        for spec_key in keys:
+            source, key = spec_key.split(":", 1)
+            raw = self._raw(kind, obj_id, "Profile" if source == "profile" else OBJECT_KINDS[kind].id_slk, key)
+            if raw:
+                return self.westring(split_list(raw)[0])
+        return ""
+
+    def _row(self, kind: str, obj_id: str) -> dict | None:
+        for rel in ROW_KINDS[kind].slks:
+            row = self.table(rel).rows.get(obj_id)
+            if row is not None:
+                return row
+        return None
+
+    # public queries
+    def name(self, kind: str, obj_id: str) -> str:
+        self._check(kind)
+        if kind in OBJECT_KINDS:
+            return self._lookup(kind, obj_id, OBJECT_KINDS[kind].name_keys)
+        if kind in ROW_KINDS:
+            row, col = self._row(kind, obj_id), ROW_KINDS[kind].name_column
+            return self.westring(row[col]) if row and col and row.get(col) else obj_id
+        return obj_id
+
+    def search(self, kind: str, query: str = "", limit: int = 50, offset: int = 0) -> list[dict]:
+        self._check(kind)
+        if kind in PATH_KINDS:
+            exts, needle = PATH_KINDS[kind]
+            hits = [p for p in self.storage.list(query)
+                    if (not exts or p.lower().endswith(exts)) and needle in p.lower()]
+            return [{"id": p} for p in hits[offset:offset + limit]]
+        q, out = query.casefold(), []
+        for obj_id in self.ids(kind):
+            name = self.name(kind, obj_id)
+            suffix = self._lookup(kind, obj_id, OBJECT_KINDS[kind].suffix_keys) if kind in OBJECT_KINDS else ""
+            if q in obj_id.casefold() or q in name.casefold() or q in suffix.casefold():
+                out.append({"id": obj_id, "name": name, "suffix": suffix})
+        return out[offset:offset + limit]
+
+    def get(self, kind: str, obj_id: str, fields: list[str] | None = None) -> dict:
+        self._check(kind)
+        missing = ToolError("not_found", f"no {kind} with id {obj_id!r}", hint="data_search finds ids")
+        if kind in PATH_KINDS:
+            if self.storage.norm(obj_id) not in self.storage.names():
+                raise missing
+            return {"kind": kind, "id": obj_id, "local": self.storage.is_local(obj_id)}
+        if kind in ROW_KINDS:
+            row = self._row(kind, obj_id)
+            if row is None:
+                raise missing
+            return {"kind": kind, "id": obj_id, "name": self.name(kind, obj_id),
+                    "fields": {k: self.westring(v) for k, v in row.items()}}
+        spec = OBJECT_KINDS[kind]
+        if obj_id not in self.table(spec.slks[spec.id_slk]).rows:
+            raise missing
+        levels = self.levels(kind, obj_id)
+        wanted = [f.lower() for f in fields] if fields else None
+        out = {}
+        for meta in self.fields(kind):
+            if wanted is not None and not any(w in (meta.id.lower(), meta.field.lower()) or w in meta.display_name.lower()
+                                              for w in wanted):
+                continue
+            if not self._applies(kind, obj_id, meta):
+                continue
+            entry = {"field": meta.field, "name": meta.display_name, "category": meta.category, "type": meta.type}
+            if meta.repeat > 0:
+                entry["values"] = [self.value(kind, obj_id, meta, lv) for lv in range(1, levels + 1)]
+            else:
+                entry["value"] = self.value(kind, obj_id, meta)
+            out[meta.id] = entry
+        return {"kind": kind, "id": obj_id, "name": self.name(kind, obj_id), "levels": levels, "fields": out}
