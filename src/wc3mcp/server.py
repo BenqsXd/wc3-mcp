@@ -22,6 +22,7 @@ from .ops import info as info_ops
 from .ops import objdata as objdata_ops
 from .ops import placed as placed_ops
 from .ops import script as script_ops
+from .ops import terrain as terrain_ops
 from .ops import triggers as triggers_ops
 from .project.workspace import MapProject
 
@@ -358,6 +359,37 @@ def placed_edit(path: str, ops: list[dict]) -> dict:
     abilities [{id, autocast, level}], drops {table, sets: [[{item, chance}]]}, random (uDNR/bDNR/iDNR: {level,
     item_class}, {group, position} or {units: [{type, chance}]}), color, waygate (region name), doodad z and flags."""
     return placed_ops.placed_edit(_project(path), _catalog("enUS", "Custom_V1", True), ops)
+
+
+@_tool
+def terrain_get(path: str, area: list[float] | None = None,
+                layers: list[Literal["height", "texture", "cliff_level", "water", "flags", "pathing"]] | None = None,
+                step: int = 1) -> dict:
+    """Terrain corners of an open map (one every 128 units) inside area [left, bottom, right, top] (default: the
+    whole map), every step-th corner, as grids of rows running south to north. height is the ground height without
+    cliffs (ground z = height + (cliff_level - 2) * 128), texture the tile id, water the water surface z or null,
+    flags letters r ramp, b blight, w water, x boundary, pathing letters w unwalkable, f unflyable, b unbuildable,
+    B blight from the editor's last save. Also the tile lists and map bounds. At most 65536 corners per call."""
+    return terrain_ops.terrain_get(_project(path), area, layers, step)
+
+
+@_tool
+def terrain_edit(path: str, ops: list[dict]) -> dict:
+    """All-or-nothing terrain brushes on circles {"x", "y", "radius"} (world units): raise / lower {"amount",
+    "falloff": smooth|linear|flat}, plateau {"height"} (default: the centre corner's), smooth {"strength" 0..1},
+    noise {"amount", "seed", "falloff"}, paint {"tile"} (data_search kind=tile; a map holds at most 16 tiles),
+    cliff {"level" 0..15, "cliff" tile id}, water {"level": surface z or null to remove}, ramp / blight / boundary
+    {"value": true|false}. Pathing, shadows and the minimap are recomputed by the World Editor on its next save."""
+    return terrain_ops.terrain_edit(_project(path), _catalog("enUS", "Custom_V1", True), ops)
+
+
+@_tool
+def terrain_render(path: str, scale: int | None = None, objects: bool = True) -> Image:
+    """Top-down PNG of the map's terrain, north up, scale pixels per tile (default: fits 1024 px): tile colours,
+    height shading, darkened cliffs, water, blight and boundary; objects draws regions (cyan), start locations
+    (white), units (red) and items (yellow)."""
+    return Image(data=terrain_ops.terrain_render(_project(path), _catalog("enUS", "Custom_V1", True), scale, objects),
+                 format="png")
 
 
 @_tool

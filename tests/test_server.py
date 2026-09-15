@@ -20,7 +20,7 @@ EXPECTED = {"map_open", "map_close", "map_save", "map_status", "map_file_read", 
             "script_build", "script_validate", "map_validate", "editor_launch", "editor_status", "editor_map",
             "editor_menu", "editor_screenshot", "editor_dialogs", "editor_dialog_act", "editor_input", "editor_log",
             "game_test", "game_status", "game_close", "elements_list", "elements_edit", "placed_list",
-            "placed_edit"}
+            "placed_edit", "terrain_get", "terrain_edit", "terrain_render"}
 
 
 def call(name: str, args: dict):
@@ -192,6 +192,23 @@ def test_placed_tools(tmp_path):
     if Archive.open(src).read("war3map.j") is not None:
         saved = payload(call("map_save", {"path": path}))
         assert saved["script"]["changed"] and b"CreateUnitsForPlayer1(  )" in Archive.open(src).read("war3map.j")
+
+
+@needs_install
+def test_terrain_tools(tmp_path):
+    maps = ladder_maps()
+    if not maps:
+        pytest.skip("no ladder maps in Documents")
+    src = tmp_path / maps[0].name
+    src.write_bytes(maps[0].read_bytes())
+    path = str(src)
+    payload(call("map_open", {"path": path}))
+    doc = payload(call("terrain_get", {"path": path, "area": [0, 0, 128, 128], "layers": ["height"]}))
+    assert len(doc["layers"]["height"]) == 2
+    assert payload(call("terrain_edit", {"path": path, "ops": [
+        {"op": "raise", "x": 0, "y": 0, "radius": 300, "amount": 50}]}))["changed"]
+    image = call("terrain_render", {"path": path, "scale": 1})
+    assert not image.isError and image.content[0].type == "image" and image.content[0].mimeType == "image/png"
 
 
 @needs_install
