@@ -60,4 +60,4 @@
 
 ### Task 6: live check
 
-- [ ] A converted icon and an edited model imported into a map show in the World Editor (object editor icon and model preview) without errors (`pytest -m editor`).
+- [x] A converted icon and an edited model imported into a map show in the World Editor (object editor icon and model preview) without errors (`pytest -m editor`). The editor starts a new War3EditorLog.txt at each launch and logs `model creation failed - <path>` / `Could not load file: <path>` for every placed unit model it cannot load (it rewrites `.mdx` to `.mdl` in the message); the test keeps a unit with a missing model as the control. Checked by eye once: the tinted icon shows in the Object Editor tree and the scaled Footman stands at the map centre.
