@@ -17,6 +17,10 @@
 - Take turns with the World Editor: editor tests skip when an editor is already running and quit only the instance they launched.
 - Game tests need the user to be logged in to Battle.net once; never enter credentials.
 
+## Found while building it
+
+- The Microsoft Store Python redirects writes under `AppData\Local` into its package folder, invisible to pjass and JassHelper, so `script_validate` failed outside the test suite: `config.home()` now names the package's real `LocalCache\Local` folder (fixed in 5437239).
+
 ## The scenario
 
 - Map: `map_new` 64x64 Lordaeron Summer, 2 players; `script_language` jass (GUI and JASS variants) or lua (Lua variant).
@@ -35,17 +39,17 @@
 
 **Interfaces:** `build(folder: Path) -> dict` with `maps` ({variant: path}), `campaign` (path), `hero`, `ability`, `item` ids and `expected_report(variant) -> list[str]`.
 
-- [ ] The builder runs every step through tool calls and fails with the tool's error text on any `isError` result.
-- [ ] `test_arena.py` (needs the install): all three maps validate clean; reopened with `map_open`, each has the custom hero / ability / item (`objdata_list`), the Arena region (`elements_list`), the hero placed for player 0 (`placed_list`), both imports and the exported AI (`imports_edit` listing), the report trigger (`triggers_tree`: gui for GUI, text for JASS and Lua); `campaign_get` lists two maps and two buttons.
+- [x] The builder runs every step through tool calls and fails with the tool's error text on any `isError` result.
+- [x] `test_arena.py` (needs the install): all three maps validate clean; reopened with `map_open`, each has the custom hero / ability / item (`objdata_list`), the Arena region (`elements_list`), the hero placed for player 0 (`placed_list`), both imports and the exported AI (`imports_edit` listing), the report trigger (`triggers_tree`: gui for GUI, text for JASS and Lua); `campaign_get` lists two maps and two buttons.
 
 ### Task 2: World Editor acceptance
 
 **Files:** Create `tests/acceptance/test_arena_editor.py`.
 
-- [ ] `-m editor`: each map opens in the World Editor without dialogs and saves without script errors; the editor log names no failing import; the editor-saved maps still hold the custom objects, the region, the placed hero, the imports and the triggers; the campaign opens in the Campaign Editor and saves (`save_campaign`) without warnings.
+- [x] `-m editor`: each map opens in the World Editor without dialogs and saves without script errors; the editor log names no failing import; the editor-saved maps still hold the custom objects, the region, the placed hero, the imports and the triggers; the campaign opens in the Campaign Editor and saves (`save_campaign`) without warnings.
 
 ### Task 3: game acceptance
 
 **Files:** Create `tests/acceptance/test_arena_game.py`.
 
-- [ ] `-m game`: each variant runs in Warcraft III and writes the expected report (identical apart from the file name); the run ends when the report exists and the game closes.
+- [ ] `-m game`: each variant runs in Warcraft III and writes the expected report (identical apart from the file name); the run ends when the report exists and the game closes. (Test written 2026-09-15; blocked: the game exits before loading a map until the user logs in to Battle.net.)
