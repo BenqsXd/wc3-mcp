@@ -1,0 +1,269 @@
+"""World Editor driver. The editor is found by its process image and main window (class OsWindow with a menu bar);
+the map, unsaved changes and busy state come from the window title and open dialogs. Maps are opened by launching
+the editor with -loadfile. Take-turns safety: anything that would lose unsaved changes needs discard=true."""
+import re
+import subprocess
+import time
+from pathlib import Path
+
+import win32gui
+
+from .. import config
+from ..errors import ToolError
+from . import win
+
+EXE_NAME = "World Editor.exe"
+TITLE = re.compile(r"^Warcraft III World Editor(?: - \[(?P<doc>.*?)(?P<dirty> \*)?\])?$")
+PALETTES = {"Tool Palette"}
+DISABLED = re.compile(r"Trigger '(?P<name>.*)' has been disabled due to errors")
+
+
+def parse_title(title: str) -> dict | None:
+    m = TITLE.match(title)
+    if m is None:
+        return None
+    doc = m.group("doc")
+    untitled = doc == "Untitled"
+    return {"map": str(Path(doc.replace("/", "\\"))) if doc and not untitled else None, "untitled": untitled,
+            "dirty": bool(m.group("dirty"))}
+
+
+def _same(a: str | None, b: str | None) -> bool:
+    return bool(a and b) and a.lower() == b.lower()
+
+
+class Editor:
+    def __init__(self):
+        self.launched: set[int] = set()
+
+    # ---- discovery -------------------------------------------------------------------------------------------
+    @staticmethod
+    def exe() -> Path:
+        return config.install_root() / "_retail_" / "x86_64" / EXE_NAME
+
+    @staticmethod
+    def _main_of(pid: int) -> int | None:
+        return next((h for h in win.windows(pid) if win32gui.GetClassName(h) == "OsWindow" and win32gui.GetMenu(h)
+                     and TITLE.match(win32gui.GetWindowText(h))), None)
+
+    def status(self) -> dict:
+        for pid in win.processes(EXE_NAME):
+            main = self._main_of(pid)
+            title = parse_title(win32gui.GetWindowText(main)) if main else None
+            dialogs, modules = [], []
+            for h in win.windows(pid):
+                cls, name = win32gui.GetClassName(h), win32gui.GetWindowText(h)
+                if cls == "#32770" and name not in PALETTES:
+                    (modules if win32gui.GetMenu(h) else dialogs).append(name)
+            return {"running": True, "pid": pid, "launched_by_server": pid in self.launched, "ready": main is not None,
+                    "map": title["map"] if title else None, "untitled": bool(title and title["untitled"]),
+                    "dirty": bool(title and title["dirty"]), "busy": "Progress" in dialogs, "dialogs": dialogs,
+                    "modules": modules}
+        return {"running": False, "pid": None, "launched_by_server": False, "ready": False, "map": None,
+                "untitled": False, "dirty": False, "busy": False, "dialogs": [], "modules": []}
+
+    def main(self) -> int:
+        for pid in win.processes(EXE_NAME):
+            main = self._main_of(pid)
+            if main:
+                return main
+        raise ToolError("editor_not_running", "no World Editor is running", hint="editor_launch starts one")
+
+    @property
+    def pid(self) -> int | None:
+        return self.status()["pid"]
+
+    def find_window(self, title: str) -> int | None:
+        pid = self.pid
+        return next((h for h in win.windows(pid) if win32gui.GetWindowText(h) == title), None) if pid else None
+
+    def wait_window(self, title: str, timeout: float = 20) -> int:
+        end = time.time() + timeout
+        while time.time() < end:
+            h = self.find_window(title)
+            if h:
+                time.sleep(0.3)
+                return h
+            time.sleep(0.2)
+        raise ToolError("timeout", f"no editor window titled {title!r} appeared within {timeout} s")
+
+    # ---- lifecycle -------------------------------------------------------------------------------------------
+    def launch(self, map_path=None, timeout: float = 120) -> dict:
+        if win.processes(EXE_NAME):
+            raise ToolError("editor_running", "a World Editor is already running",
+                            hint="editor_status shows it; editor_map open switches maps")
+        exe = self.exe()
+        if not exe.is_file():
+            raise ToolError("no_install", f"{exe} not found", hint="set WC3MCP_INSTALL")
+        args, target = [str(exe), "-launch"], None
+        if map_path:
+            target = Path(map_path).resolve()
+            if not target.exists():
+                raise ToolError("not_found", f"no map at {target}")
+            args += ["-loadfile", str(target)]
+        process = subprocess.Popen(args, cwd=exe.parent)
+        self.launched.add(process.pid)
+        end = time.time() + timeout
+        while time.time() < end:
+            if process.poll() is not None:
+                raise ToolError("launch_failed", f"the World Editor exited during start-up (code {process.returncode})")
+            s = self.status()
+            if s["ready"] and not s["busy"] and (_same(s["map"], str(target)) if target else s["untitled"]):
+                time.sleep(1.0)
+                return self.status()
+            time.sleep(0.5)
+        raise ToolError("timeout", f"the World Editor was not ready after {timeout} s", status=self.status())
+
+    def _loaded(self) -> dict:
+        s = self.status()
+        if not s["running"]:
+            raise ToolError("editor_not_running", "no World Editor is running", hint="editor_launch starts one")
+        if s["dialogs"]:
+            raise ToolError("dialog_open", f"the editor is showing {s['dialogs']}",
+                            hint="editor_dialogs shows them; editor_dialog_act answers them")
+        return s
+
+    def open(self, map_path, discard: bool = False, timeout: float = 120) -> dict:
+        target = Path(map_path).resolve()
+        if not target.exists():
+            raise ToolError("not_found", f"no map at {target}")
+        s = self.status()
+        if s["running"]:
+            if _same(s["map"], str(target)) and not s["dirty"]:
+                return s
+            if s["dirty"] and not discard:
+                raise ToolError("unsaved_changes", f"the editor has unsaved changes in {s['map'] or 'an untitled map'}",
+                                hint="save them (editor_map save) or ask the user; discard=true drops them")
+            self.quit(discard=discard)
+        return self.launch(target, timeout)
+
+    def reload(self, discard: bool = False) -> dict:
+        s = self._loaded()
+        if not s["map"]:
+            raise ToolError("no_map", "the editor has no saved map open")
+        return self.open(s["map"], discard=True) if discard or not s["dirty"] else self.open(s["map"])
+
+    def _answer_prompt(self, answer: str) -> bool:
+        """Answer a 'Save changes to ...?' prompt if one is showing; returns whether one was answered."""
+        h = self.find_window("Warning")
+        if not h:
+            return False
+        controls = win.controls(h)
+        if not any("Save changes" in c["text"] for c in controls):
+            return False
+        win.click(next(c["hwnd"] for c in controls if c["class"] == "Button" and c["text"].replace("&", "") == answer))
+        return True
+
+    def close(self, discard: bool = False, timeout: float = 60) -> dict:
+        s = self._loaded()
+        if not (s["map"] or s["untitled"]):
+            return s
+        if s["dirty"] and not discard:
+            raise ToolError("unsaved_changes", f"the editor has unsaved changes in {s['map'] or 'an untitled map'}",
+                            hint="save them (editor_map save) or ask the user; discard=true drops them")
+        main = self.main()
+        win.post_command(main, win.find_command(win.window_menu(main), "File/Close Map"))
+        end = time.time() + timeout
+        while time.time() < end:
+            self._answer_prompt("No")
+            s = self.status()
+            if not (s["map"] or s["untitled"]) and not s["dialogs"]:
+                return s
+            time.sleep(0.3)
+        raise ToolError("timeout", "the map did not close", status=self.status())
+
+    def quit(self, discard: bool = False, timeout: float = 60) -> dict:
+        s = self.status()
+        if not s["running"]:
+            return s
+        if s["dirty"] and not discard:
+            raise ToolError("unsaved_changes", f"the editor has unsaved changes in {s['map'] or 'an untitled map'}",
+                            hint="save them (editor_map save) or ask the user; discard=true drops them")
+        pid = s["pid"]
+        if discard:
+            self._dismiss_errors()
+        win.close(self.main())
+        end = time.time() + timeout
+        while time.time() < end:
+            if not win.running(pid):
+                self.launched.discard(pid)
+                return self.status()
+            self._answer_prompt("No")
+            time.sleep(0.3)
+        raise ToolError("timeout", "the World Editor did not exit", hint="it may be busy or showing a dialog",
+                        status=self.status())
+
+    # ---- saving ----------------------------------------------------------------------------------------------
+    def _dismiss_errors(self) -> tuple[list[dict], list[str], list[str]]:
+        """Read and close the editor's compile error dialogs: (errors, disabled triggers, other messages)."""
+        errors, disabled, messages = [], [], []
+        for title in ("Error", "Script Errors"):
+            h = self.find_window(title)
+            if not h:
+                continue
+            controls = win.controls(h)
+            statics = [c["text"] for c in controls if c["class"] == "Static" and c["text"] and c["visible"]]
+            if title == "Error":
+                for text in statics:
+                    m = DISABLED.search(text)
+                    (disabled.append(m["name"]) if m else messages.append(text))
+                button = next((c for c in controls if c["class"] == "Button"), None)
+            else:  # visible statics: trigger name or generated script path, "<n> compile error(s)", "Line:", line
+                paths = [s for s in statics if "/" in s or "\\" in s]
+                names = [s for s in statics if s not in paths and "compile error" not in s and s != "Line:"
+                         and not s.isdigit()]
+                line = next((statics[i + 1] for i, s in enumerate(statics[:-1]) if s == "Line:"), None)
+                for c in controls:
+                    if c["class"] == "ListBox":
+                        errors += [{"trigger": names[0] if names else None, "message": item, "line": line,
+                                    "script": paths[0] if paths else None} for item in c.get("items", [])]
+                button = next((c for c in controls if c["class"] == "Button" and c["id"] == 10), None)
+            if button:
+                win.click(button["hwnd"])
+                time.sleep(0.5)
+        return errors, disabled, messages
+
+    def save(self, timeout: float = 300) -> dict:
+        """File > Save Map. The editor regenerates the script on save; script errors come back in `errors` and the
+        editor disables the failing triggers (the map stays unsaved and dirty)."""
+        s = self._loaded()
+        if not s["map"]:
+            raise ToolError("no_map", "the editor has no saved map open" if not s["untitled"] else
+                            "this map was never saved; use editor_menu File/Save Map As...")
+        target = Path(s["map"])
+        mtime = target.stat().st_mtime if target.exists() else None
+        main = self.main()
+        win.post_command(main, win.find_command(win.window_menu(main), "File/Save Map"))
+        errors, disabled, messages = [], [], []
+        end, quiet_since = time.time() + timeout, None
+        while time.time() < end:
+            s = self.status()
+            if "Error" in s["dialogs"] or "Script Errors" in s["dialogs"]:
+                time.sleep(0.8)  # both error dialogs appear within a second
+                e, d, m = self._dismiss_errors()
+                errors, disabled, messages = errors + e, disabled + d, messages + m
+                quiet_since = None
+            elif s["dialogs"]:
+                quiet_since = None
+            else:
+                quiet_since = quiet_since or time.time()
+                written = target.exists() and target.stat().st_mtime != mtime
+                if time.time() - quiet_since > (0.5 if written and not s["dirty"] else 2.0):
+                    break
+            time.sleep(0.3)
+        else:
+            raise ToolError("timeout", f"saving did not finish within {timeout} s", status=self.status())
+        written = target.exists() and target.stat().st_mtime != mtime
+        for error in errors:  # the dialog may name the generated script instead of the trigger
+            if error["trigger"] is None and len(set(disabled)) == 1:
+                error["trigger"] = disabled[0]
+        s = self.status()
+        return {"saved": written and not errors, "errors": errors, "disabled_triggers": disabled, "messages": messages,
+                "dirty": s["dirty"], "map": s["map"]}
+
+    def compile(self, timeout: float = 300) -> dict:
+        """Save through the editor to regenerate and check the map script (JassHelper for JASS maps)."""
+        return self.save(timeout)
+
+
+EDITOR = Editor()
