@@ -19,6 +19,19 @@ def test_parse_title():
     assert ed.parse_title("Notepad") is None
 
 
+def test_dialog_act_refuses_disabled_controls(monkeypatch):
+    clicked = []
+    editor = ed.Editor()
+    monkeypatch.setattr(editor, "find_window", lambda title: 1)
+    monkeypatch.setattr(ed.win32gui, "GetClassName", lambda h: "#32770")
+    monkeypatch.setattr(win, "controls", lambda h: [
+        {"hwnd": 2, "class": "Button", "id": 20, "text": "&Imported File:", "visible": True, "enabled": False}])
+    monkeypatch.setattr(win, "click", clicked.append)
+    with pytest.raises(ToolError) as e:
+        editor.dialog_act("Campaign Editor", [{"control": 20, "click": True}])
+    assert e.value.code == "control_disabled" and clicked == []
+
+
 @pytest.fixture
 def maps(tmp_path):
     from wc3mcp.gamedata.catalog import Catalog

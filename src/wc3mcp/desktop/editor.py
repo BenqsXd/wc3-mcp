@@ -318,6 +318,9 @@ class Editor:
             if control is None:
                 raise ToolError("no_control", f"actions[{i}]: no control {key!r} in {dialog!r}", op_index=i,
                                 choices=[c["text"] or c["id"] for c in controls][:60])
+            if not control["enabled"]:  # clicking a disabled radio button with nothing behind it crashes the editor
+                raise ToolError("control_disabled", f"actions[{i}]: control {key!r} in {dialog!r} is disabled",
+                                hint="change what enables it first (editor_dialogs shows enabled states)", op_index=i)
             if "set_text" in action:
                 win.set_text(control["hwnd"], str(action["set_text"]))
             elif action.get("click"):
