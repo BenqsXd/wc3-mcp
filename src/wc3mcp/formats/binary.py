@@ -55,6 +55,11 @@ class Reader:
         self.pos = len(self.data)
         return chunk
 
+    def done(self) -> None:
+        """Reject bytes left after the last structure."""
+        if self.pos != len(self.data):
+            raise FormatError(f"{len(self.data) - self.pos} unexpected trailing bytes at offset {self.pos}")
+
 
 class Writer:
     def __init__(self):
