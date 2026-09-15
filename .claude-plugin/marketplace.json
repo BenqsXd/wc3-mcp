@@ -1,0 +1,12 @@
+{
+  "name": "wc3-mcp",
+  "owner": {"name": "BenqsXd"},
+  "metadata": {"description": "Warcraft III map making for Claude Code."},
+  "plugins": [
+    {
+      "name": "wc3-mcp",
+      "source": "./",
+      "description": "Warcraft III map making: MCP server plus a skill that explains how to use it."
+    }
+  ]
+}

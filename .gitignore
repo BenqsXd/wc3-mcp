@@ -2,3 +2,5 @@ __pycache__/
 .pytest_cache/
 *.pyc
 .memsearch/
+.venv/
+uv.lock

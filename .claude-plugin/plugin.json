@@ -1,0 +1,14 @@
+{
+  "name": "wc3-mcp",
+  "version": "0.1.0",
+  "description": "Make Warcraft III maps, campaigns, AI and assets with Claude, and drive the World Editor and the game.",
+  "author": {"name": "BenqsXd"},
+  "repository": "https://github.com/BenqsXd/wc3-mcp",
+  "mcpServers": {
+    "wc3": {
+      "command": "uv",
+      "args": ["run", "--quiet", "--no-dev", "--directory", "${CLAUDE_PLUGIN_ROOT}", "python", "-m", "wc3mcp.server"],
+      "env": {"PYTHONPATH": "${CLAUDE_PLUGIN_ROOT}/src"}
+    }
+  }
+}

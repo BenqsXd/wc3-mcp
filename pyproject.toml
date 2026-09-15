@@ -1,9 +1,12 @@
 [project]
 name = "wc3mcp"
 version = "0.1.0"
-description = "MCP server for operating the Warcraft III World Editor"
+description = "MCP server for making Warcraft III maps and operating the World Editor"
 requires-python = ">=3.13"
-dependencies = ["mcp>=1.27,<2"]
+dependencies = ["mcp>=1.27,<2", "pywin32>=306", "numpy>=2", "pillow>=11"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "tests"]

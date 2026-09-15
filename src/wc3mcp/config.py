@@ -6,7 +6,16 @@ from pathlib import Path
 
 
 def install_root() -> Path:
-    return Path(os.environ.get("WC3MCP_INSTALL", r"D:\Warcraft III"))
+    """WC3MCP_INSTALL, else where the Battle.net installer registered the game, else C:\\Program Files (x86)."""
+    if env := os.environ.get("WC3MCP_INSTALL"):
+        return Path(env)
+    try:
+        import winreg
+        key = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Warcraft III"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as k:
+            return Path(winreg.QueryValueEx(k, "InstallLocation")[0])
+    except OSError:
+        return Path(r"C:\Program Files (x86)\Warcraft III")
 
 
 @functools.cache
