@@ -160,3 +160,36 @@ def build(folder: Path) -> dict:
     tool("map_save", path=c)
     tool("map_close", path=c)
     return {"maps": maps, "campaign": campaign, "ai": wai}
+
+
+def check_map(built: dict, variant: str) -> None:
+    """Reopen a built (or editor-saved) map through the tools and check the scenario's pieces."""
+    p = str(built["path"])
+    tool("map_open", path=p)
+    try:
+        assert tool("info_get", path=p)["script_language"] == ("lua" if variant == "lua" else "jass")
+        for kind, id_ in (("unit", built["hero"]), ("ability", built["ability"]), ("item", built["item"])):
+            assert id_ in [o["id"] for o in tool("objdata_list", path=p, kind=kind, custom_only=True)["objects"]]
+        assert [r["name"] for r in tool("elements_list", path=p, kind="region")["items"]] == ["Arena"]
+        hero, = tool("placed_list", path=p, kind="unit", type_id=built["hero"])["items"]
+        assert (hero["owner"], hero["x"], hero["y"], hero["script_name"]) == (0, 0.0, 0.0, built["champion"])
+        imports = {i["path"].replace("/", "\\") for i in tool("imports_edit", path=p)["imports"]}
+        assert {ICON, MODEL, "war3mapImported\\HeroArena.ai"} <= imports
+        triggers = {t["name"]: t["type"] for t in tool("triggers_tree", path=p)["triggers"]}
+        assert triggers["Arena Report"] == ("gui" if variant == "gui" else "text")
+        assert "Start AI HeroArena" in triggers
+        assert tool("map_validate", path=p)["errors"] == []
+        assert tool("script_validate", path=p)["ok"]
+    finally:
+        tool("map_close", path=p, discard=True)
+
+
+def check_campaign(path: Path) -> None:
+    c = str(path)
+    tool("map_open", path=c)
+    try:
+        campaign = tool("campaign_get", path=c)
+        assert [b["map"] for b in campaign["buttons"]] == ["HeroArenaGUI.w3x", "HeroArenaJASS.w3x"]
+        assert sorted(m["name"] for m in campaign["maps"]) == ["HeroArenaGUI.w3x", "HeroArenaJASS.w3x"]
+    finally:
+        tool("map_close", path=c, discard=True)
