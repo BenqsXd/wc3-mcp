@@ -46,6 +46,7 @@ class TriggerData:
     def __init__(self):
         self.categories: dict[str, tuple[str, bool]] = {}   # code -> (display name, shown before function text)
         self.types: dict[str, TriggerType] = {}
+        self.type_defaults: dict[str, str] = {}              # variable type -> script text of its default value
         self.presets: dict[str, Preset] = {}
         self.functions: tuple[dict[str, Function], ...] = ({}, {}, {}, {})
 
@@ -69,6 +70,8 @@ class TriggerData:
         for name, value in rows.get("TriggerTypes", {}).items():
             v = split_list(value) + [""] * 7
             td.types[name] = TriggerType(name, v[1] == "1", v[2] == "1", westring(v[3]), v[4] or name)
+        for name, value in rows.get("TriggerTypeDefaults", {}).items():
+            td.type_defaults[name] = split_list(value)[0].strip()
         for name, value in rows.get("TriggerParams", {}).items():
             v = split_list(value) + [""] * 4
             td.presets[name] = Preset(name, v[1], v[2], westring(_text(v[3])))
