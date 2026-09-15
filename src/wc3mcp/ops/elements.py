@@ -9,7 +9,7 @@ from ..formats import unitsdoo, w3c, w3r, w3s, wtg
 from ..formats.binary import FormatError
 from .gui import script_name
 from .strings import load_strings
-from .triggers import SCRIPT_WARNING, _all_params, _load, _read, _triggers
+from .triggers import SCRIPT_WARNING, _all_params, _load, _read, _triggers, script_users
 
 FILES = {"region": "war3map.w3r", "camera": "war3map.w3c", "sound": "war3map.w3s"}
 SOUND_EXTENSIONS = (".flac", ".ogg", ".wav", ".mp3")
@@ -41,7 +41,7 @@ def _kind(kind) -> None:
 
 
 def _bad(path: str, message: str) -> ToolError:
-    return ToolError("bad_value", f"{path}: {message}", hint="elements_list shows the fields", path=path)
+    return ToolError("bad_value", f"{path}: {message}", path=path)
 
 
 def _int(v, path: str, lo: int = -2 ** 31, hi: int = 2 ** 31 - 1) -> int:
@@ -186,12 +186,7 @@ class _Edit:
             ("map header", self.ct.header or "")]
 
     def _users(self, script: str) -> list[str]:
-        if self.tf is None:
-            return []
-        gui = [t.name for t in _triggers(self.tf)
-               if any(p.type == wtg.VARIABLE and p.value == script for p in _all_params(t.ecas))]
-        mention = re.compile(rf"\b{re.escape(script)}\b")
-        return gui + [name for name, text in self._texts() if mention.search(text)]
+        return script_users(self.tf, self.ct, script) if self.tf is not None else []
 
     def _sound_names(self) -> set[str]:
         sounds = self.items if self.kind == "sound" else _load_file(self.project, "sound")[0].sounds
@@ -424,5 +419,7 @@ def elements_edit(project, catalog, kind: str, ops: list) -> dict:
             getattr(edit, f"op_{action}")(op, path)
         except ToolError as e:
             e.details.setdefault("op_index", i)
+            if e.code == "bad_value" and not e.hint:
+                e.hint = "elements_list shows the fields"
             raise
     return edit.finish()

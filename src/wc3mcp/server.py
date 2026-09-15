@@ -20,6 +20,7 @@ from .ops import elements as elements_ops
 from .ops import imports as imports_ops
 from .ops import info as info_ops
 from .ops import objdata as objdata_ops
+from .ops import placed as placed_ops
 from .ops import script as script_ops
 from .ops import triggers as triggers_ops
 from .project.workspace import MapProject
@@ -329,6 +330,32 @@ def elements_edit(path: str, kind: Literal["region", "camera", "sound"], ops: li
     GUI trigger references. {"op": "delete", "name"} refuses while triggers, region ambient sounds or waygates use it.
     Fields match elements_list; weather ids come from data_search kind=weather, sound labels from kind=sound."""
     return elements_ops.elements_edit(_project(path), _catalog("enUS", "Custom_V1", True), kind, ops)
+
+
+@_tool
+def placed_list(path: str, kind: Literal["unit", "item", "start_location", "doodad", "destructible"] | None = None,
+                area: list[float] | None = None, owner: int | None = None, type_id: str | None = None,
+                limit: int = 200, offset: int = 0) -> dict:
+    """Placed objects of an open map: units, items and start locations (war3mapUnits.doo), doodads and destructibles
+    (war3map.doo). Filters: kind, area [left, bottom, right, top], owner (player 0-23, 24 neutral hostile, 27 neutral
+    passive), type_id. Each object has a ref ("unit:12") for placed_edit, world position, angle in degrees and its
+    kind's fields (owner, life %, mana, hero stats, inventory, abilities, item drops, random settings, waygate region,
+    script_name gg_unit_/gg_item_/gg_dest_). bounds gives the playable area and the whole map."""
+    return placed_ops.placed_list(_project(path), _catalog("enUS", "Custom_V1", True), kind, area, owner, type_id,
+                                  limit, offset)
+
+
+@_tool
+def placed_edit(path: str, ops: list[dict]) -> dict:
+    """All-or-nothing placed object changes. {"op": "add", "kind", "type", "x", "y", ...fields} places an object with
+    editor defaults (facing 270, z on the terrain, units owned by player 0, items neutral passive; start locations need
+    owner, no type); {"op": "set", "ref", ...fields} changes fields (type too); {"op": "move", "ref", "x", "y"};
+    {"op": "delete", "ref"} refuses while triggers use its gg_ name. Fields match placed_list: angle, scale (number or
+    [x, y, z]), variation, skin, owner, life (unit %, null default; destructible %), mana, gold, acquisition
+    ("normal", "camp" or a range), hero {level, strength, agility, intelligence}, inventory [{slot 0-5, item}],
+    abilities [{id, autocast, level}], drops {table, sets: [[{item, chance}]]}, random (uDNR/bDNR/iDNR: {level,
+    item_class}, {group, position} or {units: [{type, chance}]}), color, waygate (region name), doodad z and flags."""
+    return placed_ops.placed_edit(_project(path), _catalog("enUS", "Custom_V1", True), ops)
 
 
 @_tool

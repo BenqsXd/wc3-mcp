@@ -138,6 +138,14 @@ def _all_params(ecas):
         yield from _all_params(e.children)
 
 
+def script_users(tf, ct, script: str) -> list[str]:
+    """Triggers whose GUI parameters or custom script text use the global `script` ("map header" for the header)."""
+    gui = [t.name for t in _triggers(tf) if any(p.type == VARIABLE and p.value == script for p in _all_params(t.ecas))]
+    mention = re.compile(rf"\b{re.escape(script)}\b")
+    texts = [(t.name, text) for t, text in zip(_triggers(tf), ct.texts) if text] + [("map header", ct.header or "")]
+    return gui + [name for name, text in texts if mention.search(text)]
+
+
 class _Edit:
     def __init__(self, project, catalog):
         self.project, self.catalog, self.td = project, catalog, catalog.trigger_data
