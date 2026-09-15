@@ -51,7 +51,7 @@ Try it: *"Create a 64x64 Lordaeron Summer map at C:\Maps\Arena.w3x with a hero f
 git clone https://github.com/BenqsXd/wc3-mcp
 cd wc3-mcp
 uv sync
-claude mcp add --scope user -e PYTHONPATH="$PWD\src" wc3 -- uv run --directory "$PWD" python -m wc3mcp.server
+claude mcp add wc3 --scope user -e PYTHONPATH="$PWD\src" -- uv run --directory "$PWD" python -m wc3mcp.server
 ```
 
 For other clients, run `uv run --directory <repo> python -m wc3mcp.server` over stdio with `PYTHONPATH=<repo>\src`. With plain pip instead of uv, run `pip install mcp pywin32 numpy pillow` on Python 3.13+, then `python -m wc3mcp.server` with the same `PYTHONPATH`. To get the skill too, copy `skills/wc3-map-making` to `%USERPROFILE%\.claude\skills\`.
