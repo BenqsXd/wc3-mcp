@@ -39,6 +39,13 @@ class ObjectMods:
 
 def parse(data: bytes, levels: bool) -> ObjectMods:
     r = Reader(data)
+    om = read(r, levels)
+    om.trailing = r.rest()
+    return om
+
+
+def read(r: Reader, levels: bool) -> ObjectMods:
+    """One object modification table from a stream (also embedded in .w3o and AI files)."""
     version = r.i32()
     if version not in (2, 3):
         raise FormatError(f"unsupported object data version {version}")
@@ -67,7 +74,6 @@ def parse(data: bytes, levels: bool) -> ObjectMods:
                 mod.end = r.raw(4)
                 entry.mods.append(mod)
             table.append(entry)
-    om.trailing = r.rest()
     return om
 
 
@@ -79,6 +85,12 @@ def _four(b: bytes, what: str) -> bytes:
 
 def serialize(om: ObjectMods) -> bytes:
     w = Writer()
+    write(w, om)
+    w.raw(om.trailing)
+    return w.getvalue()
+
+
+def write(w: Writer, om: ObjectMods) -> None:
     w.i32(om.version)
     for table in (om.original, om.custom):
         w.i32(len(table))
@@ -104,5 +116,3 @@ def serialize(om: ObjectMods) -> bytes:
                 else:
                     raise FormatError(f"unknown value type {mod.var_type}")
                 w.raw(_four(mod.end, "end token"))
-    w.raw(om.trailing)
-    return w.getvalue()
