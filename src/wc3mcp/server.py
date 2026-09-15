@@ -17,6 +17,7 @@ from .desktop import game as desktop_game
 from .errors import ToolError
 from .gamedata.catalog import Catalog
 from .ops import ai as ai_ops
+from .ops import assets as assets_ops
 from .ops import campaign as campaign_ops
 from .ops import elements as elements_ops
 from .ops import imports as imports_ops
@@ -466,6 +467,45 @@ def map_validate(path: str) -> dict:
     variables, trigger names, references to generated objects, TRIGSTR strings, object data base ids and fields,
     imports. Errors break the map; warnings are defects that shipped maps also carry."""
     return script_ops.map_validate(_project(path), _catalog("enUS", "Custom_V1", True))
+
+
+# ---- assets ----------------------------------------------------------------------------------------------------
+def _storage_for_assets():
+    return _catalog("enUS", None, True).storage
+
+
+@_tool
+def asset_info(source: dict) -> dict:
+    """Facts about a texture (BLP1, DDS, TGA, PNG, JPEG): format, size, mip levels, compression, alpha. source is
+    {"file": path}, {"map": open map path, "name": file in the map} or {"game": game data path}."""
+    return assets_ops.asset_info(source, _project, _storage_for_assets())
+
+
+@_tool
+def asset_convert(source: dict, dest: dict, format: Literal["blp", "dds", "tga", "png", "jpg"] | None = None,
+                  compression: str | None = None, quality: int = 90, mipmaps: bool = True) -> dict:
+    """Convert a texture. dest is {"file": path} or {"map": open map path, "name": import path} (imported through
+    imports_edit). format defaults to the destination extension; compression: blp jpeg | palette (JPEG like the game's
+    icons by default), dds dxt1 | dxt5 | uncompressed, tga rle."""
+    return assets_ops.asset_convert(source, dest, _project, _storage_for_assets(), format, compression, quality, mipmaps)
+
+
+@_tool
+def asset_edit(source: dict, dest: dict, ops: list[dict], format: Literal["blp", "dds", "tga", "png", "jpg"] | None = None,
+               compression: str | None = None, quality: int = 90, mipmaps: bool = True) -> dict:
+    """Edit a texture and write the result (source and dest as in asset_convert). ops apply in order: {"op":
+    "resize", "width", "height"}, {"op": "crop", "left", "top", "right", "bottom"}, {"op": "grayscale"}, {"op":
+    "brightness", "factor"}, {"op": "tint", "color": [r, g, b], "strength"}, {"op": "overlay", "source", "x", "y",
+    "width"?, "height"?, "opacity"?}, {"op": "icon", "kind": "BTN" | "DISBTN" | "PASBTN" | "DISPASBTN"} (64x64 command
+    button styles of the game's icons)."""
+    return assets_ops.asset_edit(source, dest, ops, _project, _storage_for_assets(), format, compression, quality,
+                                 mipmaps)
+
+
+@_tool
+def asset_preview(source: dict, size: int = 256) -> Image:
+    """PNG preview of a texture (fits size pixels, checkerboard behind transparency)."""
+    return Image(data=assets_ops.asset_preview(source, _project, _storage_for_assets(), size), format="png")
 
 
 # ---- AI Editor -------------------------------------------------------------------------------------------------

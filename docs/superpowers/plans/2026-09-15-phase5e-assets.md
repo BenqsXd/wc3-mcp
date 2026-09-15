@@ -28,15 +28,15 @@
 
 **Interfaces:** `blp.parse(bytes) -> Blp` (header fields, mip data), `blp.serialize(Blp) -> bytes`, `blp.encode(image, kind="jpeg"|"palette", quality=90, mipmaps=True) -> bytes`; `texture.info(bytes) -> dict` (format, width, height, mipmaps, compression, alpha), `texture.decode(bytes) -> PIL.Image (RGBA)`, `texture.encode(image, format, **options) -> bytes` for blp / dds (dxt1, dxt5, uncompressed) / tga / png / jpg.
 
-- [ ] Every game BLP round-trips byte-exact through parse/serialize and decodes like Pillow; a sample of game DDS decodes (including BC1 sRGB); encoded BLP JPEG, BLP palette, DDS and TGA decode back within tolerance.
+- [x] Every game BLP round-trips byte-exact through parse/serialize and decodes like Pillow; a sample of game DDS decodes (including BC1 sRGB); encoded BLP JPEG, BLP palette, DDS and TGA decode back within tolerance.
 
 ### Task 2: texture tools
 
 **Files:** Create `src/wc3mcp/ops/assets.py`; Modify `src/wc3mcp/server.py`; Test `tests/ops/test_assets.py`.
 
-**Interfaces:** sources are `{"file": path}`, `{"map": open map path, "name": file in the map}` or `{"game": path}` (CASC path, layers like data_file). `asset_info(source)`; `asset_convert(source, dest, format?, options)` where dest is `{"file": path}` or `{"map": path, "name": import path}`; `asset_edit(source, dest, ops)` with texture ops `resize`, `crop`, `tint`, `grayscale`, `brightness`, `overlay` (another texture), `icon` (`{"op": "icon", "kind": "BTN"|"DISBTN"|"PAS"|"ATC"}` building the 64x64 command button variants); `asset_preview(source, size?)` returns a PNG image.
+**Interfaces:** sources are `{"file": path}`, `{"map": open map path, "name": file in the map}` or `{"game": path}` (CASC path, layers like data_file). `asset_info(source)`; `asset_convert(source, dest, format?, options)` where dest is `{"file": path}` or `{"map": path, "name": import path}`; `asset_edit(source, dest, ops)` with texture ops `resize`, `crop`, `tint`, `grayscale`, `brightness`, `overlay` (another texture), `icon` (`{"op": "icon", "kind": "BTN"|"DISBTN"|"PASBTN"|"DISPASBTN"}` building the 64x64 command button variants: BTN bevel measured on 120 game icons, DISBTN = luminance x 0.48 with a black 4-pixel frame and a dark ramp, mean error 4.6/255 against 200 game DISBTN icons); `asset_preview(source, size?)` returns a PNG image.
 
-- [ ] Tests: info on game BLP/DDS; convert a game icon to PNG and to a BLP JPEG import in a ladder map (imports list and map_validate clean); DISBTN built from BTNFootman is close to the game's DISBTNFootman; errors for missing sources and unknown formats.
+- [x] Tests: info on game BLP/DDS; convert a game icon to PNG and to a BLP JPEG import in a ladder map (imports list and map_validate clean); DISBTN built from BTNFootman is close to the game's DISBTNFootman; errors for missing sources and unknown formats.
 
 ### Task 3: MDX codec
 
