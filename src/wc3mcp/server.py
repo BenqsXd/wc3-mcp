@@ -7,11 +7,13 @@ import time
 from pathlib import Path
 from typing import Literal
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
 from mcp.server.fastmcp.exceptions import ToolError as McpToolError
 
 from . import config
 from .casc.storage import open_storage
+from .desktop import editor as desktop_editor
+from .desktop import game as desktop_game
 from .errors import ToolError
 from .gamedata.catalog import Catalog
 from .ops import imports as imports_ops
@@ -122,6 +124,14 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
     always regenerates whenever possible, never leaves the script alone. validate runs map_validate first and
     refuses to save on errors."""
     project, catalog = _project(path), _catalog("enUS", "Custom_V1", True)
+    warnings = []
+    if dest is None:  # take turns with the World Editor on the same file
+        seen = desktop_editor.EDITOR.status()
+        if seen["running"] and seen["map"] and _key(seen["map"]) == _key(str(project.source)):
+            if seen["dirty"]:
+                raise ToolError("open_in_editor", f"{project.source.name} has unsaved changes in the World Editor",
+                                hint="ask the user, or save or close it there (editor_map save / close) first")
+            warnings.append("the map is open in the World Editor; editor_map reload shows the saved version there")
     script = None
     dirty = {name.lower() for name in project.status()["dirty"]}
     if rebuild_script == "always" or (rebuild_script == "auto" and dirty & {"war3map.wtg", "war3map.wct"}):
@@ -139,6 +149,7 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
                         f"{first['file']}: {first['message']}", hint="fix them, or save with validate=false",
                         errors=validation["errors"][:20])
     result = project.save(dest=dest, format=format, force=force)
+    result["warnings"] = warnings
     if script is not None:
         result["script"] = script
     if validation is not None:
@@ -321,6 +332,115 @@ def map_validate(path: str) -> dict:
     variables, trigger names, references to generated objects, TRIGSTR strings, object data base ids and fields,
     imports. Errors break the map; warnings are defects that shipped maps also carry."""
     return script_ops.map_validate(_project(path), _catalog("enUS", "Custom_V1", True))
+
+
+# ---- World Editor ----------------------------------------------------------------------------------------------
+@_tool
+def editor_launch(map_path: str | None = None) -> dict:
+    """Start the World Editor on the user's desktop, optionally opening a map file. Refuses when an editor is already
+    running (use editor_map open to switch maps)."""
+    return desktop_editor.EDITOR.launch(map_path)
+
+
+@_tool
+def editor_status() -> dict:
+    """Whether the World Editor runs, the map it shows, unsaved changes, busy state, open dialogs and module windows.
+    Check this before touching a map the user may be editing."""
+    return desktop_editor.EDITOR.status()
+
+
+@_tool
+def editor_map(action: Literal["open", "save", "close", "reload", "compile", "quit"], map_path: str | None = None,
+               discard: bool = False) -> dict:
+    """Map actions in the World Editor. open (map_path; relaunches the editor on that map), save / compile (the editor
+    regenerates and checks the script; script errors come back per trigger and the editor disables failing
+    triggers), close, reload (reopen from disk after map_save), quit. Anything that would drop unsaved editor changes
+    refuses with unsaved_changes unless discard=true: ask the user first."""
+    editor = desktop_editor.EDITOR
+    if action == "open":
+        if not map_path:
+            raise ToolError("bad_value", "open needs map_path")
+        return editor.open(map_path, discard=discard)
+    if action in ("save", "compile"):
+        return editor.save()
+    if action == "close":
+        return editor.close(discard=discard)
+    if action == "reload":
+        return editor.reload(discard=discard)
+    return editor.quit(discard=discard)
+
+
+@_tool
+def editor_menu(path: str | None = None, window: str | None = None) -> dict:
+    """Without path: the menu tree of the main window or of a module window (window="Trigger Editor"). With path:
+    invoke that command, e.g. "Module/Object Editor" or "Scenario/Map Options...". Labels omit & and shortcuts."""
+    if path is None:
+        return {"window": window or "main", "menus": desktop_editor.EDITOR.menu(window)}
+    return {"invoked": path, "status": desktop_editor.EDITOR.invoke(path, window)}
+
+
+@_tool
+def editor_screenshot(target: str = "main", region: list[int] | None = None) -> Image:
+    """Screenshot of the editor main window, a module window or a dialog (by title); region [x, y, width, height]
+    relative to that window. The window is brought to the front briefly."""
+    return Image(data=desktop_editor.EDITOR.screenshot(target, region), format="png")
+
+
+@_tool
+def editor_dialogs(include_palettes: bool = False) -> dict:
+    """Open editor dialogs with their visible controls (class, id, text, enabled, checked, list items)."""
+    return {"dialogs": desktop_editor.EDITOR.dialogs(include_palettes)}
+
+
+@_tool
+def editor_dialog_act(dialog: str, actions: list[dict]) -> dict:
+    """Operate a dialog by title. actions: [{"control": 14, "set_text": "My Map"}, {"control": "OK", "click": true},
+    {"control": "Hide minimap", "check": true}, {"control": 17, "select": "Warcraft III Scenario"}]; controls by id
+    or text. Returns the dialog's controls, or closed=true."""
+    return desktop_editor.EDITOR.dialog_act(dialog, actions)
+
+
+@_tool
+def editor_input(actions: list[dict], window: str = "main") -> dict:
+    """Real mouse and keyboard input into an editor window (brought to the front, focus restored afterwards); points
+    are client coordinates. actions: {"click": [x, y], "button"?, "double"?}, {"drag": [[x1, y1], [x2, y2]]},
+    {"keys": "ctrl+z"}, {"text": "..."}, {"wait": seconds}. Prefer editor_menu and editor_dialog_act when possible."""
+    return desktop_editor.EDITOR.input(window, actions)
+
+
+@_tool
+def editor_log(lines: int = 200) -> dict:
+    """The World Editor log tail and the newest crash report folders."""
+    return desktop_editor.EDITOR.log(lines)
+
+
+# ---- game ------------------------------------------------------------------------------------------------------
+@_tool
+def game_test(path: str, timeout: float = 240, results: list[str] | None = None, close: bool = True,
+              screenshot: bool = False) -> dict:
+    """Run a map in Warcraft III (windowed; the window needs to be in front while loading). The map script reports
+    results with PreloadGenClear/PreloadGenStart/Preload("text")/PreloadGenEnd("folder\\\\file.txt"); list those
+    files in results (relative to Documents\\Warcraft III\\CustomMapData) and the run ends as soon as all exist.
+    Returns the Preload strings per file, the useful War3Log.txt lines and any new crash report."""
+    result = desktop_game.GAME.test(path, timeout=timeout, results=results, close=close, screenshot=screenshot)
+    if "screenshot" in result:
+        shot = config.home() / "screenshots" / f"game-{result['pid']}.png"
+        shot.parent.mkdir(parents=True, exist_ok=True)
+        shot.write_bytes(result.pop("screenshot"))
+        result["screenshot"] = str(shot)
+    return result
+
+
+@_tool
+def game_status() -> dict:
+    """Game processes (and which this server launched), their windows and the useful War3Log.txt lines."""
+    return desktop_game.GAME.status()
+
+
+@_tool
+def game_close() -> dict:
+    """Close game processes launched by game_test (never other game sessions)."""
+    return desktop_game.GAME.close()
 
 
 def setup_logging() -> Path:

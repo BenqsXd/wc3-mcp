@@ -17,7 +17,9 @@ from wc3mcp.mpq.writer import write_archive
 EXPECTED = {"map_open", "map_close", "map_save", "map_status", "map_file_read", "map_file_write", "map_snapshot",
             "data_search", "data_get", "data_file", "info_get", "info_edit", "imports_edit",
             "objdata_list", "objdata_get", "objdata_edit", "triggers_tree", "trigger_get", "triggers_edit",
-            "script_build", "script_validate", "map_validate"}
+            "script_build", "script_validate", "map_validate", "editor_launch", "editor_status", "editor_map",
+            "editor_menu", "editor_screenshot", "editor_dialogs", "editor_dialog_act", "editor_input", "editor_log",
+            "game_test", "game_status", "game_close"}
 
 
 def call(name: str, args: dict):
@@ -167,3 +169,23 @@ def test_script_tools_and_save_rebuild(tmp_path):
     assert payload(call("script_validate", {"path": path}))["ok"]
     assert payload(call("map_validate", {"path": path}))["errors"] == []
     assert payload(call("script_build", {"path": path}))["changed"] is False
+
+
+def test_map_save_takes_turns_with_the_editor(tmp_path, monkeypatch):
+    from wc3mcp.desktop import editor
+
+    maps = ladder_maps()
+    if not maps:
+        pytest.skip("no ladder maps in Documents")
+    src = tmp_path / maps[0].name
+    src.write_bytes(maps[0].read_bytes())
+    path = str(src)
+    payload(call("map_open", {"path": path}))
+    payload(call("info_edit", {"path": path, "ops": [{"op": "set", "path": "name", "value": "Turn Test"}]}))
+    idle = {"running": True, "map": str(src).upper(), "dirty": True, "untitled": False, "dialogs": []}
+    monkeypatch.setattr(editor.EDITOR, "status", lambda: idle)
+    err = call("map_save", {"path": path})
+    assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "open_in_editor"
+    monkeypatch.setattr(editor.EDITOR, "status", lambda: {**idle, "dirty": False})
+    saved = payload(call("map_save", {"path": path}))
+    assert saved["saved"] and any("editor" in w for w in saved["warnings"])
