@@ -17,6 +17,7 @@ from .gamedata.catalog import Catalog
 from .ops import imports as imports_ops
 from .ops import info as info_ops
 from .ops import objdata as objdata_ops
+from .ops import script as script_ops
 from .ops import triggers as triggers_ops
 from .project.workspace import MapProject
 
@@ -113,11 +114,37 @@ def map_close(path: str, discard: bool = False) -> dict:
 
 @_tool
 def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"] | None = None,
-             force: bool = False) -> dict:
+             force: bool = False, rebuild_script: Literal["auto", "always", "never"] = "auto",
+             validate: bool = True) -> dict:
     """Save the working copy. By default backs up the original and replaces it atomically. dest/format write a
     copy elsewhere (mpq archive or map folder). Refuses if the original changed on disk since opening unless
-    force=true."""
-    return _project(path).save(dest=dest, format=format, force=force)
+    force=true. rebuild_script: auto regenerates war3map.j when triggers changed (JASS maps with trigger data),
+    always regenerates whenever possible, never leaves the script alone. validate runs map_validate first and
+    refuses to save on errors."""
+    project, catalog = _project(path), _catalog("enUS", "Custom_V1", True)
+    script = None
+    dirty = {name.lower() for name in project.status()["dirty"]}
+    if rebuild_script == "always" or (rebuild_script == "auto" and dirty & {"war3map.wtg", "war3map.wct"}):
+        try:
+            script = script_ops.script_build(project, catalog)
+        except ToolError as e:
+            if rebuild_script == "always" or e.code not in ("lua_not_supported", "no_triggers", "no_script",
+                                                             "not_editor_script"):
+                raise
+            script = {"changed": False, "skipped": str(e)}
+    validation = script_ops.map_validate(project, catalog) if validate else None
+    if validation and validation["errors"]:
+        first = validation["errors"][0]
+        raise ToolError("validation_failed", f"{len(validation['errors'])} map validation error(s); first: "
+                        f"{first['file']}: {first['message']}", hint="fix them, or save with validate=false",
+                        errors=validation["errors"][:20])
+    result = project.save(dest=dest, format=format, force=force)
+    if script is not None:
+        result["script"] = script
+    if validation is not None:
+        result["validation"] = {"errors": [], "warning_count": len(validation["warnings"]),
+                                "warnings": validation["warnings"][:20]}
+    return result
 
 
 @_tool
@@ -270,6 +297,30 @@ def triggers_edit(path: str, ops: list[dict]) -> dict:
     functions take "if"/"then"/"else" (IfThenElseMultiple), "conditions" (And/OrMultiple) or "actions" (loops).
     GUI code is checked against TriggerData; data_search kind=trigger_function finds functions."""
     return triggers_ops.triggers_edit(_project(path), _catalog("enUS", "Custom_V1", True), ops)
+
+
+@_tool
+def script_build(path: str) -> dict:
+    """Regenerate the trigger-dependent parts of war3map.j exactly as the World Editor writes them (variable
+    globals, InitGlobals, custom script code, trigger functions, InitCustomTriggers, RunInitializationTriggers);
+    the rest of the script is kept. map_save does this automatically when triggers changed. Lua maps are not
+    rebuilt yet: save them in the World Editor."""
+    return script_ops.script_build(_project(path), _catalog("enUS", "Custom_V1", True))
+
+
+@_tool
+def script_validate(path: str) -> dict:
+    """Check the map script: pjass (JassHelper for vJASS) for war3map.j, a Lua 5.3 syntax check for war3map.lua.
+    Errors carry line, message, the script section and the trigger they are in."""
+    return script_ops.script_validate(_project(path), _catalog("enUS", "Custom_V1", True))
+
+
+@_tool
+def map_validate(path: str) -> dict:
+    """Cross-file checks of an open map: script language vs script files, GUI trigger code against TriggerData and
+    variables, trigger names, references to generated objects, TRIGSTR strings, object data base ids and fields,
+    imports. Errors break the map; warnings are defects that shipped maps also carry."""
+    return script_ops.map_validate(_project(path), _catalog("enUS", "Custom_V1", True))
 
 
 def setup_logging() -> Path:

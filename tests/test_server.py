@@ -16,7 +16,8 @@ from wc3mcp.mpq.writer import write_archive
 
 EXPECTED = {"map_open", "map_close", "map_save", "map_status", "map_file_read", "map_file_write", "map_snapshot",
             "data_search", "data_get", "data_file", "info_get", "info_edit", "imports_edit",
-            "objdata_list", "objdata_get", "objdata_edit", "triggers_tree", "trigger_get", "triggers_edit"}
+            "objdata_list", "objdata_get", "objdata_edit", "triggers_tree", "trigger_get", "triggers_edit",
+            "script_build", "script_validate", "map_validate"}
 
 
 def call(name: str, args: dict):
@@ -147,3 +148,22 @@ def test_trigger_tools(tmp_path):
     assert "DisplayTextToForce" in [r["id"] for r in found["results"]]
     err = call("triggers_edit", {"path": path, "ops": [{"op": "trigger", "name": "Hello", "actions": [{"fn": "Nope"}]}]})
     assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "unknown_function"
+
+
+@needs_install
+def test_script_tools_and_save_rebuild(tmp_path):
+    maps = [p for p in ladder_maps() if Archive.open(p).read("war3map.j") is not None]
+    if not maps:
+        pytest.skip("no JASS ladder maps in Documents")
+    src = tmp_path / maps[0].name
+    src.write_bytes(maps[0].read_bytes())
+    path = str(src)
+    payload(call("map_open", {"path": path}))
+    payload(call("triggers_edit", {"path": path, "ops": [{"op": "trigger", "name": "Hello", "actions": [
+        {"fn": "DisplayTextToForce", "args": [{"call": "GetPlayersAll"}, "Hi"]}]}]}))
+    saved = payload(call("map_save", {"path": path}))
+    assert saved["saved"] and saved["script"]["changed"] and saved["validation"]["errors"] == []
+    assert b"function InitTrig_Hello takes nothing returns nothing" in Archive.open(src).read("war3map.j")
+    assert payload(call("script_validate", {"path": path}))["ok"]
+    assert payload(call("map_validate", {"path": path}))["errors"] == []
+    assert payload(call("script_build", {"path": path}))["changed"] is False
