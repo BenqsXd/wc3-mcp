@@ -14,7 +14,7 @@ from wc3mcp import server
 from wc3mcp.mpq.reader import Archive
 from wc3mcp.mpq.writer import write_archive
 
-EXPECTED = {"map_open", "map_close", "map_save", "map_status", "map_file_read", "map_file_write", "map_snapshot",
+EXPECTED = {"map_new", "map_open", "map_close", "map_save", "map_status", "map_file_read", "map_file_write", "map_snapshot",
             "data_search", "data_get", "data_file", "info_get", "info_edit", "imports_edit",
             "objdata_list", "objdata_get", "objdata_edit", "triggers_tree", "trigger_get", "triggers_edit",
             "script_build", "script_validate", "map_validate", "editor_launch", "editor_status", "editor_map",
@@ -192,6 +192,16 @@ def test_placed_tools(tmp_path):
     if Archive.open(src).read("war3map.j") is not None:
         saved = payload(call("map_save", {"path": path}))
         assert saved["script"]["changed"] and b"CreateUnitsForPlayer1(  )" in Archive.open(src).read("war3map.j")
+
+
+@needs_install
+def test_map_new_tool(tmp_path):
+    path = str(tmp_path / "Brand New.w3x")
+    status = payload(call("map_new", {"path": path, "width": 32, "height": 32, "players": 2, "name": "Fresh"}))
+    assert status["dirty"] == [] and Archive.open(path).read("war3map.j") is not None
+    assert payload(call("info_get", {"path": path}))["name"] == "Fresh"
+    err = call("map_new", {"path": path})
+    assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "exists"
 
 
 @needs_install

@@ -19,6 +19,7 @@ from .gamedata.catalog import Catalog
 from .ops import elements as elements_ops
 from .ops import imports as imports_ops
 from .ops import info as info_ops
+from .ops import newmap as newmap_ops
 from .ops import objdata as objdata_ops
 from .ops import placed as placed_ops
 from .ops import script as script_ops
@@ -107,6 +108,20 @@ def map_open(path: str) -> dict:
     p = MapProject.open(path)
     _projects[_key(path)] = p
     return p.status()
+
+
+@_tool
+def map_new(path: str, width: int = 64, height: int = 64, tileset: str = "L", name: str = "Just another Warcraft III map",
+            author: str = "Unknown", players: int = 2, script_language: Literal["jass", "lua"] = "jass",
+            format: Literal["mpq", "folder"] = "mpq") -> dict:
+    """Create a new map at path (it must not exist) and open it: width/height in tiles (32-480, steps of 32, the
+    playable area is 12 tiles narrower and shorter), tileset letter (data_search kind=tile ids start with it),
+    players 1-24 with start locations, one force, a flat terrain of the tileset's first tile, the default Melee
+    Initialization trigger and a generated war3map.j. JASS only for now."""
+    project = newmap_ops.new_map(path, _catalog("enUS", "Custom_V1", True), width, height, tileset, name, author, players,
+                                 script_language, format)
+    _projects[_key(path)] = project
+    return project.status()
 
 
 @_tool

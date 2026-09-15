@@ -126,3 +126,35 @@ def test_world_content_runs_in_the_game(tmp_path):
     assert result["results"][RESULTS] == ["arena-ok", str(int.from_bytes(b"hfoo", "big")),
                                           str(int.from_bytes(b"ratc", "big"))]
     assert result["closed"]
+
+
+@pytest.mark.editor
+def test_new_map_opens_and_saves_in_the_editor(tmp_path):
+    from wc3mcp.gamedata.catalog import Catalog
+    from wc3mcp.ops.newmap import new_map
+    from wc3mcp.ops.script import balance, script_build
+    from wc3mcp.project.workspace import MapProject
+
+    editor = ed.Editor()
+    if editor.status()["running"]:
+        pytest.skip("a World Editor is already running")
+    target = tmp_path / "New Tool Map.w3x"
+    new_map(target, Catalog(_storage(), balance="Custom_V1"), width=64, height=64, tileset="L", players=4,
+            name="New Tool Map").close()
+    try:
+        status = editor.launch(target)
+        assert status["map"] == str(target) and status["dialogs"] == []
+        saved = editor.save()
+        assert saved["saved"] and saved["errors"] == []
+    finally:
+        editor.quit(discard=True)
+    project = MapProject.open(target)
+    assert len([u for u in unitsdoo.parse(project.read("war3mapUnits.doo")).units if u.id == b"sloc"]) == 4
+    if script_build(project, Catalog(_storage(), balance=balance(project)))["changed"]:
+        ours, edited = project.read("war3map.j").decode("utf-8"), Archive.open(target).read("war3map.j").decode("utf-8")
+        (tmp_path / "editor.j").write_text(edited, "utf-8")
+        (tmp_path / "script_build.j").write_text(ours, "utf-8")
+        a, b = edited.splitlines(), ours.splitlines()
+        first = next(i for i, (x, y) in enumerate(zip(a + [""], b + [""])) if x != y)
+        pytest.fail(f"script_build changes the editor's script (both in {tmp_path}); first difference at line "
+                    f"{first + 1}:\n{a[first:first + 3]}\n{b[first:first + 3]}")
