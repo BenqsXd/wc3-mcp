@@ -44,13 +44,13 @@
 
 **Interfaces:** `mdx.parse(bytes) -> Model` (version, info, sequences, global sequences, textures, materials/layers, texture animations, geosets, geoset animations, bones, lights, helpers, attachments, pivots, particle emitters, ribbons, cameras, event objects, collision shapes, corn emitters, face effects, bind poses; unknown chunks kept raw), `mdx.serialize(Model) -> bytes`.
 
-- [ ] Byte-exact on a runtime sample of game models across every chunk kind (all models with the rare tags) and the v1600 / v1700 files.
+- [x] Byte-exact on a runtime sample of game models across every chunk kind (all models with the rare tags) and the v1600 / v1700 files. (Whole corpus checked once: 14,984 / 14,984. Found on the way: bone indices and weights are 16-bit from v1600; v1600+ lights carry 4 + 24 undocumented bytes; material shader names exist only for 900-1000; camera sizes keep 3 in their top byte; cameras use the unprefixed one-float tracks IDUF, ELAF and PTSF; v1100+ layers name their real textures in a per-layer list with semantics 0 diffuse, 1 normal, 2 ORM, 3 emissive, 4 team colour, 5 environment; the DILG chunk stays raw.)
 
 ### Task 4: MDL text and conversion
 
 **Files:** Create `src/wc3mcp/formats/mdl.py`; Test `tests/formats/test_mdl.py`.
 
-- [ ] MDX -> MDL -> MDX byte-exact on the same sample; MDL output readable by Retera-style tools (blocks, keys, interpolation names).
+- [x] MDX -> MDL -> MDX byte-exact on the same sample (and 300 random models); MDL output readable by Retera-style tools (blocks, keys, interpolation names). Syntax follows mdx-m3-viewer's MDL; each written block is read back and anything the dialect cannot hold goes on `//@ key json` comment lines.
 
 ### Task 5: model tools
 
