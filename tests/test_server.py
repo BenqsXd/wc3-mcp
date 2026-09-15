@@ -19,7 +19,7 @@ EXPECTED = {"map_open", "map_close", "map_save", "map_status", "map_file_read", 
             "objdata_list", "objdata_get", "objdata_edit", "triggers_tree", "trigger_get", "triggers_edit",
             "script_build", "script_validate", "map_validate", "editor_launch", "editor_status", "editor_map",
             "editor_menu", "editor_screenshot", "editor_dialogs", "editor_dialog_act", "editor_input", "editor_log",
-            "game_test", "game_status", "game_close"}
+            "game_test", "game_status", "game_close", "elements_list", "elements_edit"}
 
 
 def call(name: str, args: dict):
@@ -150,6 +150,26 @@ def test_trigger_tools(tmp_path):
     assert "DisplayTextToForce" in [r["id"] for r in found["results"]]
     err = call("triggers_edit", {"path": path, "ops": [{"op": "trigger", "name": "Hello", "actions": [{"fn": "Nope"}]}]})
     assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "unknown_function"
+
+
+@needs_install
+def test_element_tools(tmp_path):
+    maps = ladder_maps()
+    if not maps:
+        pytest.skip("no ladder maps in Documents")
+    src = tmp_path / maps[0].name
+    src.write_bytes(maps[0].read_bytes())
+    path = str(src)
+    payload(call("map_open", {"path": path}))
+    created = payload(call("elements_edit", {"path": path, "kind": "region", "ops": [
+        {"op": "upsert", "name": "Arena", "left": -256, "bottom": -256, "right": 256, "top": 256, "weather": "RAlr"}]}))
+    assert created["created"] == ["Arena"]
+    regions = payload(call("elements_list", {"path": path, "kind": "region"}))["items"]
+    assert (regions[-1]["script_name"], regions[-1]["weather"]) == ("gg_rct_Arena", "RAlr")
+    weather = payload(call("data_search", {"kind": "weather", "query": "RAlr"}))["results"]
+    assert "RAlr" in [w["id"] for w in weather]
+    err = call("elements_edit", {"path": path, "kind": "region", "ops": [{"op": "delete", "name": "Nope"}]})
+    assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "not_found"
 
 
 @needs_install

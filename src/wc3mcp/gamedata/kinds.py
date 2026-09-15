@@ -64,6 +64,7 @@ ROW_KINDS = {
     "tile": RowKind(("TerrainArt/Terrain.slk",), "name"),
     "cliff": RowKind(("TerrainArt/CliffTypes.slk",), "name"),
     "water": RowKind(("TerrainArt/Water.slk",), None),
+    "weather": RowKind(("TerrainArt/Weather.slk",), "name"),
     "sound": RowKind(tuple(f"UI/SoundInfo/{n}.slk" for n in (
         "AbilitySounds", "AmbienceSounds", "AmbientMusic", "AnimSounds", "CinematicSounds", "DialogSounds",
         "EnvironmentSounds", "Music", "UISounds", "UnitAckSounds", "UnitCombatSounds")), None),

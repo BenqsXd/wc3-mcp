@@ -16,6 +16,7 @@ from .desktop import editor as desktop_editor
 from .desktop import game as desktop_game
 from .errors import ToolError
 from .gamedata.catalog import Catalog
+from .ops import elements as elements_ops
 from .ops import imports as imports_ops
 from .ops import info as info_ops
 from .ops import objdata as objdata_ops
@@ -30,7 +31,7 @@ mcp = FastMCP("wc3", instructions=(
     "items, buffs, upgrades, doodads, destructibles, terrain, sounds and assets with data_search / data_get."))
 
 Kind = Literal["unit", "item", "ability", "buff", "upgrade", "destructible", "doodad", "tile", "cliff", "water",
-               "sound", "model", "icon", "file", "trigger_function", "trigger_type", "trigger_preset"]
+               "weather", "sound", "model", "icon", "file", "trigger_function", "trigger_type", "trigger_preset"]
 ObjectKind = Literal["unit", "item", "destructible", "doodad", "ability", "buff", "upgrade"]
 MAX_READ = 1024 * 1024
 _projects: dict[str, MapProject] = {}
@@ -308,6 +309,23 @@ def triggers_edit(path: str, ops: list[dict]) -> dict:
     functions take "if"/"then"/"else" (IfThenElseMultiple), "conditions" (And/OrMultiple) or "actions" (loops).
     GUI code is checked against TriggerData; data_search kind=trigger_function finds functions."""
     return triggers_ops.triggers_edit(_project(path), _catalog("enUS", "Custom_V1", True), ops)
+
+
+@_tool
+def elements_list(path: str, kind: Literal["region", "camera", "sound"]) -> dict:
+    """Regions (war3map.w3r), cameras (war3map.w3c) or sounds (war3map.w3s) of an open map with their gg_rct_ /
+    gg_cam_ / gg_snd_ script names. Sounds show flags, distances, label and dialogue text resolved from war3map.wts;
+    unset values are null."""
+    return elements_ops.elements_list(_project(path), kind)
+
+
+@_tool
+def elements_edit(path: str, kind: Literal["region", "camera", "sound"], ops: list[dict]) -> dict:
+    """All-or-nothing region/camera/sound changes. {"op": "upsert", "name", ...fields} creates (regions need
+    left/bottom/right/top, cameras x/y, sounds path) or changes the named element; "new_name" renames it and updates
+    GUI trigger references. {"op": "delete", "name"} refuses while triggers, region ambient sounds or waygates use it.
+    Fields match elements_list; weather ids come from data_search kind=weather, sound labels from kind=sound."""
+    return elements_ops.elements_edit(_project(path), _catalog("enUS", "Custom_V1", True), kind, ops)
 
 
 @_tool
