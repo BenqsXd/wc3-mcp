@@ -7,7 +7,7 @@ from PIL import Image
 
 from corpus import HAVE_INSTALL, _storage, ladder_maps
 from wc3mcp.errors import ToolError
-from wc3mcp.formats import blp, texture
+from wc3mcp.formats import blp, mdl, mdx, texture
 from wc3mcp.gamedata.catalog import Catalog
 from wc3mcp.ops import assets
 from wc3mcp.ops.imports import imports_list
@@ -94,4 +94,82 @@ def test_errors(tmp_path, storage, args, code):
         dest = {"file": str(tmp_path / dest["file"])}
     with pytest.raises(ToolError) as e:
         assets.asset_edit(source, dest, ops, no_maps, storage)
+    assert e.value.code == code
+
+
+FOOTMAN_MODEL = {"game": "Units/Human/Footman/Footman.mdx"}
+
+
+def test_model_info(storage):
+    facts = assets.asset_info(FOOTMAN_MODEL, no_maps, storage)
+    assert (facts["format"], facts["format_version"], facts["model_name"]) == ("mdx", 1800, "Footman")
+    stand = next(s for s in facts["sequences"] if s["name"] == "Stand - 1")
+    assert stand["looping"] and stand["duration"] == stand["interval"][1] - stand["interval"][0] > 0
+    assert facts["textures"][0] == {"index": 0, "path": "Textures\\Footman.blp", "replaceable_id": 0}
+    assert "Weapon Ref" in facts["attachments"] and facts["bones"] > 10 and facts["geosets"][0]["triangles"] > 100
+
+
+def test_model_converts_between_mdx_and_mdl(tmp_path, storage):
+    original = storage.read(storage.resolve("Units/Human/Footman/Footman.mdx"))
+    result = assets.asset_convert(FOOTMAN_MODEL, {"file": str(tmp_path / "Footman.mdl")}, no_maps, storage)
+    assert result["format"] == "mdl" and (tmp_path / "Footman.mdl").read_bytes().startswith(b"// MDL")
+    assets.asset_convert({"file": str(tmp_path / "Footman.mdl")}, {"file": str(tmp_path / "back.bin")}, no_maps,
+                         storage, fmt="mdx")
+    assert (tmp_path / "back.bin").read_bytes() == original
+
+
+def test_model_edits(tmp_path, storage):
+    before = mdx.parse(storage.read(storage.resolve("Units/Human/Footman/Footman.mdx")))
+    ops = [{"op": "retexture", "texture": "textures/footman.blp", "path": "war3mapImported\\Footman2.blp"},
+           {"op": "rename_sequence", "sequence": "Stand - 1", "name": "Stand Ready"},
+           {"op": "remove_sequence", "sequence": "Death"},
+           {"op": "scale", "factor": 2},
+           {"op": "team_color", "material": 0},
+           {"op": "add_attachment", "name": "Custom Ref", "parent": 0, "position": [1, 2, 3]}]
+    result = assets.asset_edit(FOOTMAN_MODEL, {"file": str(tmp_path / "Footman2.mdx")}, ops, no_maps, storage)
+    assert result["ops"][0] == {"op": "retexture", "texture": 0} and result["ops"][5] == {"op": "add_attachment",
+                                                                                          "object_id": 57}
+    model = mdx.parse((tmp_path / "Footman2.mdx").read_bytes())
+    assert mdx.chunk(model, "TEXS")[0]["path"] == "war3mapImported\\Footman2.blp"
+    names = [s["name"] for s in mdx.chunk(model, "SEQS")]
+    assert "Stand Ready" in names and "Death" not in names and len(names) == len(mdx.chunk(before, "SEQS")) - 1
+    assert all(len(g["sequence_extents"]) == len(names) for g in mdx.chunk(model, "GEOS"))
+    assert mdx.chunk(model, "GEOS")[0]["vertices"][:3] == [2 * x for x in mdx.chunk(before, "GEOS")[0]["vertices"][:3]]
+    team, texture_layer = mdx.chunk(model, "MTLS")[0]["layers"]
+    assert team["textures"][0]["texture_id"] == 1 and texture_layer["filter_mode"] == 2
+    attachment = mdx.chunk(model, "ATCH")[-1]
+    assert (attachment["node"]["name"], attachment["node"]["object_id"], attachment["attachment_id"]) == ("Custom Ref", 57, 9)
+    assert mdx.chunk(model, "PIVT")[57] == [1.0, 2.0, 3.0] and len(mdx.chunk(model, "PIVT")) == 58
+    assets.asset_edit(FOOTMAN_MODEL, {"file": str(tmp_path / "Footman2.mdl")}, ops, no_maps, storage)
+    assert mdx.serialize(mdl.parse((tmp_path / "Footman2.mdl").read_bytes())) == (tmp_path / "Footman2.mdx").read_bytes()
+
+
+def test_model_import_and_previews(tmp_path, storage):
+    maps = ladder_maps()
+    if not maps:
+        pytest.skip("no ladder maps")
+    target = tmp_path / maps[0].name
+    shutil.copyfile(maps[0], target)
+    project = MapProject.open(target)
+    project_for = {str(target): project}.__getitem__
+    dest = {"map": str(target), "name": "war3mapImported\\Footman2.mdx"}
+    assets.asset_edit(FOOTMAN_MODEL, dest, [{"op": "scale", "factor": 1.5}], project_for, storage)
+    assert any(i["path"].replace("/", "\\") == dest["name"] for i in imports_list(project))
+    assert map_validate(project, Catalog(_storage()))["errors"] == []
+    for source in (dest, {"game": "War3.w3mod:_HD.w3mod:Units/Human/Footman/Footman.mdx"}):
+        picture = Image.open(io.BytesIO(assets.asset_preview(source, project_for, storage, size=128)))
+        assert picture.size == (128, 128) and np.asarray(picture.convert("RGB")).std() > 10
+
+
+@pytest.mark.parametrize("dest, ops, code", [
+    ({"file": "x.png"}, [], "bad_value"),
+    ({"file": "x.mdx"}, [{"op": "resize", "width": 5, "height": 5}], "bad_op"),
+    ({"file": "x.mdx"}, [{"op": "remove_sequence", "sequence": "Dance"}], "not_found"),
+    ({"file": "x.mdx"}, [{"op": "scale", "factor": 0}], "bad_value"),
+    ({"file": "x.mdx"}, [{"op": "team_color", "material": 99}], "bad_value"),
+    ({"file": "x.mdx"}, [{"op": "add_attachment", "name": "A", "parent": "Nobody"}], "not_found"),
+])
+def test_model_errors(tmp_path, storage, dest, ops, code):
+    with pytest.raises(ToolError) as e:
+        assets.asset_edit(FOOTMAN_MODEL, {"file": str(tmp_path / dest["file"])}, ops, no_maps, storage)
     assert e.value.code == code

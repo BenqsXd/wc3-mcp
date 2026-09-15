@@ -1,5 +1,5 @@
-"""Asset tools: textures (and models, later) from local files, open maps or the game data; results to local files or
-map imports."""
+"""Asset tools: textures and models from local files, open maps or the game data; results to local files or map
+imports."""
 import base64
 import io
 from pathlib import Path
@@ -11,6 +11,7 @@ from ..errors import ToolError
 from ..formats import texture
 from ..formats.binary import FormatError
 from ..project.workspace import write_file
+from . import models
 from .imports import imports_edit
 
 TEXTURE_EXTENSIONS = {".blp": "blp", ".dds": "dds", ".tga": "tga", ".png": "png", ".jpg": "jpg", ".jpeg": "jpg"}
@@ -60,23 +61,54 @@ def save(dest, data: bytes, project_for) -> dict:
     raise _bad("dest", "expected {file} or {map, name}")
 
 
-def _dest_format(dest, fmt: str | None) -> str:
+def _dest_format(dest, fmt: str | None, extensions: dict = TEXTURE_EXTENSIONS) -> str:
+    kinds = sorted(set(extensions.values()))
     if fmt is not None:
-        if fmt not in texture.FORMATS:
-            raise _bad("format", f"expected one of {', '.join(texture.FORMATS)}")
+        if fmt not in kinds:
+            raise _bad("format", f"expected one of {', '.join(kinds)} for this source")
         return fmt
     name = str(dest.get("file") or dest.get("name") or "") if isinstance(dest, dict) else ""
-    found = TEXTURE_EXTENSIONS.get(Path(name.replace("\\", "/")).suffix.lower())
+    found = extensions.get(Path(name.replace("\\", "/")).suffix.lower())
     if found is None:
-        raise _bad("format", "give format, or a destination name ending in .blp, .dds, .tga, .png or .jpg")
+        raise _bad("format", f"give format, or a destination name ending in {', '.join('.' + k for k in kinds)}")
     return found
+
+
+def _texture_finder(source, project_for, storage):
+    """find_texture(path) for model previews: beside the model (local file or map), then the game data (the model's
+    own data layer first; .blp / .dds / .tga variants of the name as the game resolves them)"""
+    game = str(source.get("game", ""))
+    full = (game if ":" in game else storage.resolve(game.replace("\\", "/"))) if game else None
+    layer = full.rsplit(":", 1)[0] + ":" if full and ":" in full else ""
+
+    def find(path: str) -> bytes | None:
+        p = path.replace("\\", "/")
+        stem, dot, ext = p.rpartition(".")
+        names = [p] + [f"{stem}.{e}" for e in ("dds", "blp", "tga") if dot and e != ext.lower()]
+        for name in names:
+            if "file" in source and (Path(str(source["file"])).parent / name).is_file():
+                return (Path(str(source["file"])).parent / name).read_bytes()
+            if "map" in source:
+                try:
+                    return project_for(source["map"]).read(name.replace("/", "\\"))
+                except ToolError:
+                    pass
+            if layer and (data := storage.read(layer + name)):
+                return data
+        for name in names:
+            for hd in (False, True):
+                hit = storage.resolve(name, hd=hd)
+                if hit:
+                    return storage.read(hit)
+        return None
+    return find
 
 
 def _decode(data: bytes, name: str) -> Image.Image:
     try:
         return texture.decode(data, name)
     except FormatError as e:
-        raise ToolError("bad_texture", f"{name}: {e}", hint="models are not supported by this tool yet") from e
+        raise ToolError("bad_texture", f"{name}: {e}") from e
 
 
 # ---- texture edits ---------------------------------------------------------------------------------------------
@@ -170,10 +202,13 @@ def apply(image: Image.Image, ops: list, project_for, storage) -> Image.Image:
 # ---- tools -----------------------------------------------------------------------------------------------------
 def asset_info(source, project_for, storage) -> dict:
     data, name = load(source, project_for, storage)
+    if models.is_model(data, name):
+        return {"name": name, "size": len(data), "format": "mdx" if data[:4] == b"MDLX" else "mdl",
+                **models.info(models.read(data, name))}
     try:
         return {"name": name, "size": len(data), **texture.info(data, name)}
     except FormatError as e:
-        raise ToolError("bad_texture", f"{name}: {e}", hint="models are not supported by this tool yet") from e
+        raise ToolError("bad_texture", f"{name}: {e}") from e
 
 
 def asset_convert(source, dest, project_for, storage, fmt: str | None = None, compression: str | None = None,
@@ -184,6 +219,11 @@ def asset_convert(source, dest, project_for, storage, fmt: str | None = None, co
 def asset_edit(source, dest, ops: list, project_for, storage, fmt: str | None = None, compression: str | None = None,
                quality: int = 90, mipmaps: bool = True) -> dict:
     data, name = load(source, project_for, storage)
+    if models.is_model(data, name):
+        fmt = _dest_format(dest, fmt, models.EXTENSIONS)
+        model = models.read(data, name)
+        notes = models.apply(model, ops)
+        return {**save(dest, models.write(model, fmt), project_for), "format": fmt, "ops": notes}
     fmt = _dest_format(dest, fmt)
     if not 1 <= int(quality) <= 100:
         raise _bad("quality", "expected 1-100")
@@ -197,9 +237,11 @@ def asset_edit(source, dest, ops: list, project_for, storage, fmt: str | None = 
 
 def asset_preview(source, project_for, storage, size: int = 256) -> bytes:
     data, name = load(source, project_for, storage)
-    image = _decode(data, name)
     if not 16 <= size <= 2048:
         raise _bad("size", "expected 16-2048 pixels")
+    if models.is_model(data, name):
+        return models.preview(models.read(data, name), size, _texture_finder(source, project_for, storage))
+    image = _decode(data, name)
     if max(image.size) > size:
         image.thumbnail((size, size), Image.Resampling.LANCZOS)
     y, x = np.mgrid[0:image.height, 0:image.width]   # checkerboard behind transparent pixels

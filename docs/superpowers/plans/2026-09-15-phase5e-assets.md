@@ -56,7 +56,7 @@
 
 **Files:** Modify `src/wc3mcp/ops/assets.py`, `src/wc3mcp/server.py`; Test `tests/ops/test_assets.py`.
 
-- [ ] `asset_info` for models (version, sequences with intervals, textures, geoset / bone / attachment counts, extents); `asset_convert` MDX <-> MDL; `asset_edit` model ops `retexture`, `scale`, `rename_sequence`, `remove_sequence`, `team_color`, `add_attachment`; `asset_preview` renders geosets (software, orthographic, textured when possible).
+- [x] `asset_info` for models (version, sequences with intervals, textures, geoset / bone / attachment counts, extents); `asset_convert` MDX <-> MDL; `asset_edit` model ops `retexture`, `scale`, `rename_sequence`, `remove_sequence`, `team_color`, `add_attachment`; `asset_preview` renders geosets (software, orthographic, textured when possible).
 
 ### Task 6: live check
 
