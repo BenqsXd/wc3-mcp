@@ -54,7 +54,7 @@
 
 **Files:** Create `src/wc3mcp/formats/w3e.py`, `wpm.py`, `mmp.py`; Test `tests/formats/test_terrain_codecs.py`.
 
-**Interfaces:** `w3e.Terrain(version, tileset, custom_tileset, tiles, cliffs, width, height, offset_x, offset_y, heights, water, textures, variations, cliff_bytes)` (per-corner lists, row-major from the bottom-left), helpers `w3e.corner(t, x, y) -> dict` (`height`, `water_level`, `boundary_water_bit`, `texture`, `ramp`, `blight`, `water`, `boundary`, `ground_variation`, `cliff_variation`, `cliff_texture`, `layer`) and `w3e.set_corner(t, x, y, **fields)`; `VERSIONS = (11, 12)`. `wpm.PathingMap(version, width, height, cells: bytearray)`; `mmp.Icon(kind, x, y, color)`, `mmp.Minimap(version=0, icons=[])`.
+**Interfaces:** `w3e.Terrain(version, tileset, custom_tileset, tiles, cliff_tiles, width, height, offset_x, offset_y, heights, water, textures, variations, cliffs)` (per-corner lists, row-major from the bottom-left), helpers `w3e.corner(t, x, y) -> dict` (`height`, `water_level`, `edge` (top 2 water bits), `texture`, `ramp`, `blight`, `water`, `boundary`, `ground_variation`, `cliff_variation`, `cliff_texture`, `layer`) and `w3e.set_corner(t, x, y, **fields)`; `VERSIONS = (11, 12)`. `wpm.PathingMap(version, width, height, cells: bytearray)`; `mmp.Icon(kind, x, y, color)`, `mmp.Minimap(version=0, icons=[])`.
 
 - [ ] Tests: constructed v11/v12 terrains round-trip; `corner`/`set_corner` pack and unpack every field for both versions (texture 0-15 vs 0-63); wpm/mmp round-trip; sample maps round-trip byte-exact; wpm size equals `4(w-1) × 4(h-1)` of the map's terrain.
 - [ ] Implement; run; commit `feat(formats): terrain, pathing and minimap codecs`.
