@@ -5,6 +5,7 @@ import win32con
 import win32gui
 
 from arena import VARIANTS, build, check_campaign, check_map
+from desktop.test_world_live import assert_script_build_keeps
 from wc3mcp.desktop import editor as ed
 
 
@@ -24,6 +25,8 @@ def test_arena_opens_and_saves_in_the_world_editor(tmp_path):
             # a new editor log per launch; it names every model or texture it could not load
             failures = [line for line in editor.log(100000)["log"] if "war3mapImported" in line]
             assert failures == [], (variant, failures)
+            # the editor's own script for what the tools built is the one script_build writes
+            assert_script_build_keeps(tmp_path, path, "war3map.lua" if variant == "lua" else "war3map.j")
         status = editor.open(project["campaign"])
         assert status["campaign"].endswith("/HeroArena.w3n") and status["dialogs"] == [], status
         saved = editor.save_campaign()

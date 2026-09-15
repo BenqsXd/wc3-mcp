@@ -121,8 +121,9 @@ def build_map(path: Path, variant: str, wai: Path) -> dict:
         {"op": "add", "kind": "unit", "type": "nogr", "x": 700, "y": 700, "owner": 24},
         {"op": "add", "kind": "item", "type": item, "x": 128, "y": -128}])
     champion = tool("placed_list", path=p, kind="unit", type_id=hero)["items"][0]["script_name"]
-    trigger = {"op": "trigger", "name": "Arena Report", "run_on_init": True}
+    trigger = {"op": "trigger", "name": "Arena Report"}
     if variant == "gui":
+        trigger["events"] = [{"fn": "MapInitializationEvent"}]
         trigger["actions"] = [
             {"fn": "SetHeroLevel", "args": [{"var": champion}, 3, {"preset": "ShowHideHide"}]},
             {"fn": "SelectHeroSkill", "args": [{"var": champion}, ability]},
@@ -130,6 +131,7 @@ def build_map(path: Path, variant: str, wai: Path) -> dict:
         ] + [{"fn": "CustomScriptCode", "args": [line.strip()]} for line in _report_jass(champion, "gui")]
     else:
         trigger["script"] = _jass_trigger(champion) if variant == "jass" else _lua_trigger(champion)
+        trigger["run_on_init"] = True
     tool("triggers_edit", path=p, ops=[trigger])
     tool("ai_export", path=str(wai), map_path=p, player=1)
     tool("script_build", path=p)

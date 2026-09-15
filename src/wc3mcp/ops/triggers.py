@@ -365,6 +365,10 @@ class _Edit:
             self.warnings += checker.warnings
             t.ecas = current["events"] + current["conditions"] + current["actions"]
             t.custom_text, self.text[t.id] = 0, None
+        if op.get("run_on_init") and not t.custom_text:
+            raise ToolError("bad_value", f"{path}: run_on_init applies to custom text triggers only; the World Editor "
+                            "ignores it on GUI triggers", path=f"{path}.run_on_init",
+                            hint='give the trigger the event {"fn": "MapInitializationEvent"}')
         if "new_name" in op:
             self._check_trigger_name(op["new_name"], t, f"{path}.new_name")
             self._rename_references("gg_trg_" + script_name(t.name), "gg_trg_" + script_name(op["new_name"]))

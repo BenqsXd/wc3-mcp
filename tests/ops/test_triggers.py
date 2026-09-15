@@ -148,6 +148,8 @@ def test_delete_rules(melee, catalog):
     ({"op": "trigger", "name": "Bad", "category": "Nope"}, "not_found"),
     ({"op": "trigger", "name": "Bad", "script": "x", "actions": []}, "bad_op"),
     ({"op": "trigger", "name": "Bad", "colour": "red"}, "bad_op"),
+    ({"op": "trigger", "name": "Bad", "run_on_init": True, "actions": []}, "bad_value"),  # the editor ignores it on GUI
+    ({"op": "trigger", "name": "Melee Initialization", "run_on_init": True}, "bad_value"),
     ({"op": "variable", "name": "1bad", "type": "integer"}, "bad_value"),
     ({"op": "variable", "name": "Ok", "type": "spaceship"}, "bad_value"),
     ({"op": "variable", "name": "Ok"}, "bad_op"),

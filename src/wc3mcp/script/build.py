@@ -27,8 +27,10 @@ def listed(t) -> bool:
 
 
 def runs_on_init(t) -> bool:
+    """The editor honours the run-on-initialization flag of custom text triggers only; GUI triggers need the event."""
     return listed(t) and not t.initially_off and bool(
-        t.run_on_init or any(e.kind == EVENT and e.enabled and e.name == "MapInitializationEvent" for e in t.ecas))
+        t.run_on_init if t.custom_text else
+        any(e.kind == EVENT and e.enabled and e.name == "MapInitializationEvent" for e in t.ecas))
 
 
 # ---- globals ---------------------------------------------------------------------------------------------------

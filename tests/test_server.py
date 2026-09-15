@@ -275,6 +275,34 @@ def test_map_save_rebuilds_the_script_after_element_edits(tmp_path):
     assert b"set gg_rct_Arena = Rect( -256.0, -256.0, 256.0, 256.0 )" in Archive.open(src).read("war3map.j")
 
 
+@needs_install
+def test_map_save_keeps_the_minimap_in_step_with_the_terrain(tmp_path):
+    from wc3mcp.formats import blp
+
+    import base64
+
+    from PIL import Image
+
+    path = str(tmp_path / "Minimap.w3x")
+    payload(call("map_new", {"path": path, "width": 32, "height": 32}))
+    center = lambda: blp.decode(Archive.open(path).read("war3mapMap.blp")).getpixel((128, 128))  # noqa: E731
+    flat = center()
+    payload(call("terrain_edit", {"path": path, "ops": [{"op": "paint", "x": 0, "y": 0, "radius": 512, "tile": "Lgrs"}]}))
+    assert payload(call("map_save", {"path": path}))["minimap"] == "rebuilt" and center() != flat
+
+    # a map without one gets one (the game quits right after login on such a map)
+    payload(call("map_file_write", {"path": path, "name": "war3mapMap.blp", "delete": True}))
+    assert payload(call("map_save", {"path": path}))["minimap"] == "added"
+
+    # an imported war3mapMap.blp is the map maker's own and stays
+    own = blp.encode(Image.new("RGB", (256, 256), (200, 0, 200)), mipmaps=False)
+    payload(call("imports_edit", {"path": path, "ops": [
+        {"op": "add", "path": "war3mapMap.blp", "content_base64": base64.b64encode(own).decode()}]}))
+    payload(call("terrain_edit", {"path": path, "ops": [{"op": "paint", "x": 0, "y": 0, "radius": 512, "tile": "Ldrt"}]}))
+    assert "minimap" not in payload(call("map_save", {"path": path}))
+    assert Archive.open(path).read("war3mapMap.blp") == own
+
+
 def test_map_save_takes_turns_with_the_editor(tmp_path, monkeypatch):
     from wc3mcp.desktop import editor
 

@@ -2,7 +2,7 @@ import pytest
 
 from corpus import HAVE_INSTALL, _storage
 from wc3mcp.errors import ToolError
-from wc3mcp.formats import doo, imp, mmp, unitsdoo, w3c, w3e, w3i, w3r, w3s, wpm
+from wc3mcp.formats import blp, doo, imp, mmp, unitsdoo, w3c, w3e, w3i, w3r, w3s, wpm
 from wc3mcp.gamedata.catalog import Catalog
 from wc3mcp.ops import newmap
 from wc3mcp.ops.info import info_get
@@ -44,6 +44,9 @@ def test_new_map_files_and_script(tmp_path, catalog):
     assert script_build(project, catalog)["changed"] is False
     assert script_validate(project, catalog)["ok"] and map_validate(project, catalog)["errors"] == []
     assert project.status()["dirty"] == []
+    # the game quits right after login on a map without a minimap; the editor saves a 256x256 JPEG without mipmaps
+    preview = blp.parse(read("war3mapMap.blp"))
+    assert (preview.compression, preview.width, preview.height, preview.has_mipmaps) == (blp.JPEG, 256, 256, 0)
 
 
 def test_new_folder_map(tmp_path, catalog):

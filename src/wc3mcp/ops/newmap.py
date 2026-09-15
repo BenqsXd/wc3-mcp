@@ -1,6 +1,6 @@
 """map_new: a new melee-ready map written from scratch with the file versions the current World Editor saves
 (w3i 39, w3e 12, doodads/units 13/11, regions 7, cameras 3, sounds 3), a flat terrain, one start location per
-player, the default "Melee Initialization" trigger and a script built from those files."""
+player, the default "Melee Initialization" trigger, a script built from those files and the minimap image."""
 import json
 import math
 import shutil
@@ -14,7 +14,7 @@ from ..mpq.writer import write_archive
 from ..project.workspace import MapProject
 from ..script import build
 from . import script as script_ops
-from .terrain import VARIATIONS
+from .terrain import VARIATIONS, minimap
 from .triggers import triggers_edit
 
 SIZES = range(32, 481, 32)  # total tiles per side, as the editor's New Map dialog offers them
@@ -138,6 +138,7 @@ def new_map(path, catalog, width: int = 64, height: int = 64, tileset: str = "L"
             text = build.new_script(tf, ct, catalog.trigger_data, scene, script_ops._placed(project, catalog, objects),
                                     script_ops._mapinfo(project, catalog, objects, scene.terrain))
             project.write("war3map.j", text.encode("utf-8"))
+        project.write("war3mapMap.blp", minimap(project, catalog))
         project.save(force=True)
         return project
     except BaseException:

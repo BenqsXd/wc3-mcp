@@ -27,6 +27,16 @@ def test_splice_reproduces_editor_scripts(map_id, td):
     assert build.splice(original, wtg.parse(data, td.arg_count), wct.parse(arc.read("war3map.wct")), td) == original
 
 
+def test_runs_on_init_follows_the_editor():
+    # the World Editor honours the "run on map initialization" flag only for custom text triggers; a GUI trigger runs
+    # at initialization through its Map Initialization event, whatever the flag says
+    event = wtg.ECA(build.EVENT, "MapInitializationEvent")
+    assert build.runs_on_init(wtg.Trigger(wtg.TRIGGER, "Text", custom_text=1, run_on_init=1))
+    assert not build.runs_on_init(wtg.Trigger(wtg.TRIGGER, "Gui", run_on_init=1))
+    assert build.runs_on_init(wtg.Trigger(wtg.TRIGGER, "Gui", ecas=[event]))
+    assert not build.runs_on_init(wtg.Trigger(wtg.TRIGGER, "Off", ecas=[event], initially_off=1))
+
+
 def test_splice_rejects_foreign_scripts(td):
     with pytest.raises(ValueError):
         build.splice("function main takes nothing returns nothing\r\nendfunction\r\n", wtg.TriggerFile(),

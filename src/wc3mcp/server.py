@@ -172,6 +172,27 @@ SCRIPT_SOURCES = {"war3map.wtg", "war3map.wct", "war3map.w3r", "war3map.w3c", "w
                   "war3mapunits.doo", "war3map.w3i"}
 
 
+def _refresh_minimap(project, catalog, dirty: set, warnings: list) -> str | None:
+    """Like the World Editor on save: war3mapMap.blp follows the terrain unless the map imports its own. The game
+    quits right after login on a map without one."""
+    files = {f["name"].lower() for f in project.list_files()}
+    if "war3map.w3e" not in files:
+        return None
+    try:
+        if "war3mapmap.blp" not in files:
+            state = "added"
+        elif "war3map.w3e" in dirty and not any(i["path"].replace("\\", "/").lower() == "war3mapmap.blp"
+                                                 for i in imports_ops.imports_list(project)):
+            state = "rebuilt"
+        else:
+            return None
+        project.write("war3mapMap.blp", terrain_ops.minimap(project, catalog))
+        return state
+    except ToolError as e:
+        warnings.append(f"war3mapMap.blp (minimap) not refreshed: {e}")
+        return None
+
+
 @_tool
 def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"] | None = None,
              force: bool = False, rebuild_script: Literal["auto", "always", "never"] = "auto",
@@ -180,7 +201,8 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
     copy elsewhere (mpq archive or map folder). Refuses if the original changed on disk since opening unless
     force=true. rebuild_script: auto regenerates war3map.j / war3map.lua when triggers, regions, cameras, sounds,
     placed objects or map info changed (maps with trigger data), always regenerates whenever possible, never leaves
-    the script alone. validate runs map_validate first and refuses to save on errors."""
+    the script alone. The minimap war3mapMap.blp is added when missing and redrawn after terrain edits unless the map
+    imports its own. validate runs map_validate first and refuses to save on errors."""
     project = _project(path)
     catalog = _catalog("enUS", script_ops.balance(project), True)
     warnings = []
@@ -201,6 +223,7 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
                                                              "not_editor_script"):
                 raise
             script = {"changed": False, "skipped": str(e)}
+    minimap = _refresh_minimap(project, catalog, dirty, warnings)
     validation = script_ops.map_validate(project, catalog) if validate else None
     if validation and validation["errors"]:
         first = validation["errors"][0]
@@ -211,6 +234,8 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
     result["warnings"] = warnings
     if script is not None:
         result["script"] = script
+    if minimap:
+        result["minimap"] = minimap
     if validation is not None:
         result["validation"] = {"errors": [], "warning_count": len(validation["warnings"]),
                                 "warnings": validation["warnings"][:20]}
@@ -365,7 +390,8 @@ def triggers_edit(path: str, ops: list[dict]) -> dict:
     {"op": "delete", "what": "trigger"|"category"|"variable", "name"}; {"op": "header", "script"?, "comment"?}.
     An argument is a literal, {"preset": name}, {"var": name, "index"?} or {"call": name, "args": [...]}; block
     functions take "if"/"then"/"else" (IfThenElseMultiple), "conditions" (And/OrMultiple) or "actions" (loops).
-    GUI code is checked against TriggerData; data_search kind=trigger_function finds functions."""
+    GUI code is checked against TriggerData; data_search kind=trigger_function finds functions. run_on_init is for
+    script triggers; a GUI trigger runs at map start through the event {"fn": "MapInitializationEvent"}."""
     return triggers_ops.triggers_edit(_project(path), _catalog("enUS", "Custom_V1", True), ops)
 
 

@@ -9,7 +9,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from ..errors import ToolError
-from ..formats import unitsdoo, w3e, w3r, wpm
+from ..formats import blp, unitsdoo, w3e, w3i, w3r, wpm
 from ..formats.binary import FormatError
 from .elements import _bad, _bool, _int, _num, _out
 from .triggers import _read
@@ -359,3 +359,16 @@ def terrain_render(project, catalog, scale: int | None = None, objects: bool = T
     out = io.BytesIO()
     image.save(out, "PNG")
     return out.getvalue()
+
+
+def minimap(project, catalog) -> bytes:
+    """war3mapMap.blp as the World Editor saves it: the playable area from above as a 256x256 JPEG BLP without
+    mipmaps. The game quits right after login on a map without one."""
+    image = Image.open(io.BytesIO(terrain_render(project, catalog, scale=1, objects=False)))
+    try:
+        left, right, bottom, top = w3i.parse(project.read("war3map.w3i")).camera_complements
+        if min(left, right, bottom, top) >= 0 and left + right < image.width and bottom + top < image.height:
+            image = image.crop((left, top, image.width - right, image.height - bottom))
+    except (ToolError, FormatError, ValueError):
+        pass  # no readable map info: the whole terrain
+    return blp.encode(image.resize((256, 256), Image.Resampling.BILINEAR), mipmaps=False)
