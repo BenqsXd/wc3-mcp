@@ -6,7 +6,7 @@ from ..formats import objmods
 from ..formats.binary import FormatError
 from ..formats.objmods import INT, LEVEL_EXTENSIONS, REAL, STRING, UNREAL, Mod, ObjectEntry, ObjectMods
 from ..formats.wts import TRIGSTR, TriggerStrings
-from .strings import load_strings
+from .strings import file_prefix, load_strings, strings_file
 
 EXTENSIONS = {"unit": "w3u", "item": "w3t", "destructible": "w3b", "doodad": "w3d", "ability": "w3a",
               "buff": "w3h", "upgrade": "w3q"}
@@ -38,7 +38,8 @@ def _load(project, kind: str) -> tuple[ObjectMods, ObjectMods, dict]:
     """The main and skin files for `kind` (empty v3 tables when absent) plus their original bytes by name."""
     ext = _check_kind(kind)
     levels, files, raw = ext in LEVEL_EXTENSIONS, [], {}
-    for prefix in ("war3map", "war3mapSkin"):
+    stem = file_prefix(project)
+    for prefix in (stem, stem + "Skin"):
         name = f"{prefix}.{ext}"
         try:
             data = project.read(name)
@@ -383,6 +384,6 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
             changed = True
     wts_after = strings.serialize()
     if wts_after != wts_before:
-        project.write("war3map.wts", wts_after)
+        project.write(strings_file(project), wts_after)
         changed = True
     return {"changed": changed, "created": created, "warnings": []}

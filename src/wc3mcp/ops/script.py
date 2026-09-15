@@ -9,7 +9,7 @@ from ..script import validate as scripts
 from . import objdata
 from . import validate as checks
 from .elements import SOUND_EXTENSIONS, _load_file
-from .strings import load_strings
+from .strings import file_prefix, load_strings
 from .triggers import _load, _read
 
 SCRIPT_FILES = {"jass": ("war3map.j", "scripts\\war3map.j"), "lua": ("war3map.lua", "scripts\\war3map.lua")}
@@ -230,6 +230,10 @@ def script_validate(project, catalog) -> dict:
 
 
 def map_validate(project, catalog) -> dict:
+    if file_prefix(project) == "war3campaign":
+        from .campaign import campaign_checks
+
+        return campaign_checks(project)
     names = _names(project)
     files = {real: project.read(real) for low, real in names.items()
              if ("\\" not in low and low.startswith("war3map")) or low.startswith("scripts\\")}

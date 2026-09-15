@@ -1,6 +1,7 @@
 """World Editor driver. The editor is found by its process image and main window (class OsWindow with a menu bar);
-the map, unsaved changes and busy state come from the window title and open dialogs. Maps are opened by launching
-the editor with -loadfile. Take-turns safety: anything that would lose unsaved changes needs discard=true."""
+the map, unsaved changes and busy state come from the window title and open dialogs. Maps and campaigns (.w3n, shown
+in the Campaign Editor) are opened by launching the editor with -loadfile. Take-turns safety: anything that would lose
+unsaved changes needs discard=true."""
 import re
 import subprocess
 import time
@@ -14,6 +15,7 @@ from . import win
 
 EXE_NAME = "World Editor.exe"
 TITLE = re.compile(r"^Warcraft III World Editor(?: - \[(?P<doc>.*?)(?P<dirty> \*)?\])?$")
+CAMPAIGN_TITLE = re.compile(r"^Campaign Editor - \[(?P<doc>.*?)(?P<dirty> \*)?\]$")
 PALETTES = {"Tool Palette"}
 DISABLED = re.compile(r"Trigger '(?P<name>.*)' has been disabled due to errors")
 
@@ -30,6 +32,20 @@ def parse_title(title: str) -> dict | None:
 
 def _same(a: str | None, b: str | None) -> bool:
     return bool(a and b) and a.lower() == b.lower()
+
+
+def _shows(s: dict, target: Path) -> bool:
+    """Whether the editor shows `target`: the map of the main window, or the campaign of the Campaign Editor (whose
+    title abbreviates the folders)."""
+    if target.suffix.lower() == ".w3n":
+        return bool(s["campaign"]) and s["campaign"].replace("\\", "/").lower().endswith("/" + target.name.lower())
+    return _same(s["map"], str(target))
+
+
+def _unsaved(s: dict) -> str | None:
+    if s["dirty"]:
+        return s["map"] or "an untitled map"
+    return f"the campaign {s['campaign'] or 'Untitled'}" if s["campaign_dirty"] else None
 
 
 class Editor:
@@ -55,12 +71,16 @@ class Editor:
                 cls, name = win32gui.GetClassName(h), win32gui.GetWindowText(h)
                 if cls == "#32770" and name not in PALETTES:
                     (modules if win32gui.GetMenu(h) else dialogs).append(name)
+            campaign = next((m for m in map(CAMPAIGN_TITLE.match, modules) if m), None)
             return {"running": True, "pid": pid, "launched_by_server": pid in self.launched, "ready": main is not None,
                     "map": title["map"] if title else None, "untitled": bool(title and title["untitled"]),
                     "dirty": bool(title and title["dirty"]), "busy": "Progress" in dialogs, "dialogs": dialogs,
-                    "modules": modules}
+                    "modules": modules,
+                    "campaign": campaign["doc"] if campaign and campaign["doc"] != "Untitled" else None,
+                    "campaign_dirty": bool(campaign and campaign["dirty"])}
         return {"running": False, "pid": None, "launched_by_server": False, "ready": False, "map": None,
-                "untitled": False, "dirty": False, "busy": False, "dialogs": [], "modules": []}
+                "untitled": False, "dirty": False, "busy": False, "dialogs": [], "modules": [], "campaign": None,
+                "campaign_dirty": False}
 
     def main(self) -> int:
         for pid in win.processes(EXE_NAME):
@@ -108,7 +128,7 @@ class Editor:
             if process.poll() is not None:
                 raise ToolError("launch_failed", f"the World Editor exited during start-up (code {process.returncode})")
             s = self.status()
-            if s["ready"] and not s["busy"] and (_same(s["map"], str(target)) if target else s["untitled"]):
+            if s["ready"] and not s["busy"] and (_shows(s, target) if target else s["untitled"]):
                 time.sleep(1.0)
                 return self.status()
             time.sleep(0.5)
@@ -129,11 +149,11 @@ class Editor:
             raise ToolError("not_found", f"no map at {target}")
         s = self.status()
         if s["running"]:
-            if _same(s["map"], str(target)) and not s["dirty"]:
+            if _shows(s, target) and not _unsaved(s):
                 return s
-            if s["dirty"] and not discard:
-                raise ToolError("unsaved_changes", f"the editor has unsaved changes in {s['map'] or 'an untitled map'}",
-                                hint="save them (editor_map save) or ask the user; discard=true drops them")
+            if _unsaved(s) and not discard:
+                raise ToolError("unsaved_changes", f"the editor has unsaved changes in {_unsaved(s)}",
+                                hint="save them (editor_map save / save_campaign) or ask the user; discard=true drops them")
             self.quit(discard=discard)
         return self.launch(target, timeout)
 
@@ -176,9 +196,9 @@ class Editor:
         s = self.status()
         if not s["running"]:
             return s
-        if s["dirty"] and not discard:
-            raise ToolError("unsaved_changes", f"the editor has unsaved changes in {s['map'] or 'an untitled map'}",
-                            hint="save them (editor_map save) or ask the user; discard=true drops them")
+        if _unsaved(s) and not discard:
+            raise ToolError("unsaved_changes", f"the editor has unsaved changes in {_unsaved(s)}",
+                            hint="save them (editor_map save / save_campaign) or ask the user; discard=true drops them")
         pid = s["pid"]
         if discard:
             self._dismiss_errors()
@@ -260,6 +280,39 @@ class Editor:
         s = self.status()
         return {"saved": written and not errors, "errors": errors, "disabled_triggers": disabled, "messages": messages,
                 "dirty": s["dirty"], "map": s["map"]}
+
+    def save_campaign(self, timeout: float = 120) -> dict:
+        """Campaign Editor > Save Campaign. The editor asks before saving a campaign whose maps have no button; the
+        save goes ahead and the question comes back in `warnings`."""
+        s = self._loaded()
+        title = next((m for m in s["modules"] if CAMPAIGN_TITLE.match(m)), None)
+        if title is None or not s["campaign"]:
+            raise ToolError("no_campaign", "the Campaign Editor shows no saved campaign",
+                            hint="editor_map open with a .w3n map_path opens one")
+        was_dirty = s["campaign_dirty"]
+        # menu commands posted to the Campaign Editor are ignored unless it is the active window: use its shortcut
+        win.send_input(self.find_window(title), [{"keys": "ctrl+s"}])
+        warnings, end, quiet_since = [], time.time() + timeout, None
+        while time.time() < end:
+            h = self.find_window("Warning")
+            if h:
+                text = " ".join(c["text"] for c in win.controls(h) if c["class"] == "Static" and c["text"])
+                if "Continue with save" not in text:
+                    raise ToolError("dialog_open", f"the editor asks: {text}", hint="editor_dialogs shows it")
+                warnings.append(text)
+                win.send_input(h, [{"keys": "enter"}])   # BM_CLICK leaves this message box open
+                quiet_since = None
+            s = self.status()
+            if s["dialogs"] or s["campaign_dirty"]:
+                quiet_since = None
+            else:
+                quiet_since = quiet_since or time.time()
+                if time.time() - quiet_since > (0.5 if was_dirty else 2.0):
+                    break
+            time.sleep(0.3)
+        else:
+            raise ToolError("timeout", f"saving the campaign did not finish within {timeout} s", status=self.status())
+        return {"saved": not s["campaign_dirty"], "warnings": warnings, "campaign": s["campaign"]}
 
     def compile(self, timeout: float = 300) -> dict:
         """Save through the editor to regenerate and check the map script (JassHelper for JASS maps)."""

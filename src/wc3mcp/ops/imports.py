@@ -6,6 +6,7 @@ from ..errors import ToolError
 from ..formats import imp
 from ..formats.binary import FormatError
 from ..project.workspace import check_name
+from .strings import file_prefix
 
 
 def _key(path: str) -> str:
@@ -14,13 +15,13 @@ def _key(path: str) -> str:
 
 def _load(project) -> imp.ImportList:
     try:
-        return imp.parse(project.read("war3map.imp"))
+        return imp.parse(project.read(file_prefix(project) + ".imp"))
     except ToolError as e:
         if e.code == "no_such_file":
             return imp.ImportList()
         raise
     except FormatError as e:
-        raise ToolError("bad_file", f"war3map.imp: {e}") from e
+        raise ToolError("bad_file", f"{file_prefix(project)}.imp: {e}") from e
 
 
 def _content(op: dict) -> bytes:
@@ -79,5 +80,5 @@ def imports_edit(project, ops: list) -> dict:
         if _key(f["name"]) in deletes:
             project.delete(f["name"])
     if ops:
-        project.write("war3map.imp", imp.serialize(imports))
+        project.write(file_prefix(project) + ".imp", imp.serialize(imports))
     return {"imports": imports_list(project)}

@@ -33,13 +33,13 @@
 
 **Interfaces:** `Button(flags, chapter, title, map)`, `CampaignMap(unknown, path)`, `CampaignInfo` (fields above, defaults = the editor's new campaign), `parse(bytes) -> CampaignInfo` (FormatError for other versions), `serialize(CampaignInfo) -> bytes`; `FLAG_VARIABLE_DIFFICULTY, FLAG_IMPORTED_AMBIENT, FLAG_MINIMAP_FROM_MAP`.
 
-- [ ] Tests: every sample round-trips byte-exact; `serialize(CampaignInfo()) == default.w3f`; decoded values of the loading screen, buttons and imported samples match what was set in the editor.
+- [x] Tests: every sample round-trips byte-exact; `serialize(CampaignInfo()) == default.w3f`; decoded values of the loading screen, buttons and imported samples match what was set in the editor.
 
 ### Task 2: campaign file names for strings, object data and imports
 
 **Files:** Modify `src/wc3mcp/ops/strings.py` (`file_prefix(project) -> "war3map" | "war3campaign"`, `load_strings` and a `strings_file(project)` use it), `src/wc3mcp/ops/objdata.py`, `src/wc3mcp/ops/imports.py`; Test `tests/ops/test_campaign.py`.
 
-- [ ] `objdata_edit` on `Full.w3n` changes `war3campaign.w3u` / `war3campaignSkin.w3u` and writes new strings to `war3campaign.wts`; `imports_edit` keeps `war3campaign.imp`; maps are unchanged.
+- [x] `objdata_edit` on `Full.w3n` changes `war3campaign.w3u` / `war3campaignSkin.w3u` and writes new strings to `war3campaign.wts`; `imports_edit` keeps `war3campaign.imp`; maps are unchanged.
 
 ### Task 3: `ops/campaign.py` and tools
 
@@ -51,10 +51,10 @@
 - `campaign_edit(project, catalog, ops) -> {"changed", "warnings"}` with ops `{"op": "set", "path", "value"}` on the JSON fields above (text, flags, minimap, loading screen, fog), `{"op": "add_button", chapter, title, map, visible?, cinematic?, index?}`, `{"op": "set_button", index, ...}`, `{"op": "delete_button", index}`, `{"op": "move_button", index, to}`, `{"op": "add_map", source, name?}`, `{"op": "replace_map", name, source}`, `{"op": "remove_map", name}` (refused while a button uses it), `{"op": "extract_map", name, dest}` (written after all ops succeed).
 - `map_validate` on a campaign: buttons naming missing maps (error), maps without a button (warning), missing TRIGSTR strings (error).
 
-- [ ] Tests: build a campaign from `new_campaign` with two tool-made maps, buttons, info, loading screen and a campaign unit change; `campaign_get` reflects it; errors are atomic; `map_save` of a campaign skips script rebuild and validates; the result round-trips through `w3f`.
+- [x] Tests: build a campaign from `new_campaign` with two tool-made maps, buttons, info, loading screen and a campaign unit change; `campaign_get` reflects it; errors are atomic; `map_save` of a campaign skips script rebuild and validates; the result round-trips through `w3f`.
 
 ### Task 4: live Campaign Editor check
 
 **Files:** Modify `src/wc3mcp/desktop/editor.py` if the editor needs a way to open campaigns; Test `tests/desktop/test_campaign_live.py` (`pytest -m editor`).
 
-- [ ] The tool-built campaign opens in the Campaign Editor and saves with no warning dialog; `campaign_get` on the editor-saved file equals the tool's view except `campaign_version`.
+- [x] The tool-built campaign opens in the Campaign Editor and saves with no warning dialog; `campaign_get` on the editor-saved file equals the tool's view except `campaign_version`.

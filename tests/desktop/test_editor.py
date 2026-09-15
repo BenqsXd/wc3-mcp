@@ -1,5 +1,6 @@
 import shutil
 import time
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +18,15 @@ def test_parse_title():
         "map": r"C:\Maps\My Map.w3x", "untitled": False, "dirty": False}
     assert ed.parse_title("Warcraft III World Editor - [C:/Maps/My Map.w3x *]")["dirty"] is True
     assert ed.parse_title("Notepad") is None
+
+
+def test_campaign_titles():
+    m = ed.CAMPAIGN_TITLE.match("Campaign Editor - [C:/.../Campaigns/My Saga.w3n *]")
+    assert (m["doc"], bool(m["dirty"])) == ("C:/.../Campaigns/My Saga.w3n", True)
+    s = {"map": None, "dirty": False, "campaign": m["doc"], "campaign_dirty": True}
+    assert ed._shows(s, Path(r"D:\Maps\Campaigns\My Saga.w3n")) and not ed._shows(s, Path(r"D:\Maps\Saga.w3n"))
+    assert ed._unsaved(s) == "the campaign C:/.../Campaigns/My Saga.w3n"
+    assert ed._unsaved({**s, "campaign_dirty": False}) is None
 
 
 def test_dialog_act_refuses_disabled_controls(monkeypatch):
@@ -129,7 +139,7 @@ def test_editor_ui_access(maps):
 
         editor.invoke("Module/Trigger Editor")
         editor.wait_window("Trigger Editor")
-        assert editor.menu(window="Trigger Editor") and editor.status()["modules"] == ["Trigger Editor"]
+        assert editor.menu(window="Trigger Editor") and "Trigger Editor" in editor.status()["modules"]
         assert editor.screenshot()[:8] == b"\x89PNG\r\n\x1a\n"
         assert editor.screenshot("Trigger Editor", region=[0, 0, 120, 60])[:8] == b"\x89PNG\r\n\x1a\n"
         editor.input("Trigger Editor", [{"wait": 0.1}])

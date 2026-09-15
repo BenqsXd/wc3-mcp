@@ -16,6 +16,7 @@ from .desktop import editor as desktop_editor
 from .desktop import game as desktop_game
 from .errors import ToolError
 from .gamedata.catalog import Catalog
+from .ops import campaign as campaign_ops
 from .ops import elements as elements_ops
 from .ops import imports as imports_ops
 from .ops import info as info_ops
@@ -103,8 +104,9 @@ def _encode(data: bytes, encoding: str, offset: int, length: int) -> dict:
 
 @_tool
 def map_open(path: str) -> dict:
-    """Open a Warcraft III map (.w3x/.w3m archive or map folder) into a private working copy.
-    Re-opening resumes unsaved edits. Returns the map status."""
+    """Open a Warcraft III map (.w3x/.w3m archive or map folder) or campaign (.w3n) into a private working copy.
+    Re-opening resumes unsaved edits. Returns the map status. Campaigns work with campaign_get / campaign_edit,
+    objdata_* and imports_edit (their war3campaign.* files); map_save, map_status and map_validate take them too."""
     p = MapProject.open(path)
     _projects[_key(path)] = p
     return p.status()
@@ -122,6 +124,38 @@ def map_new(path: str, width: int = 64, height: int = 64, tileset: str = "L", na
                                  script_language, format)
     _projects[_key(path)] = project
     return project.status()
+
+
+@_tool
+def campaign_new(path: str, name: str | None = None, author: str | None = None,
+                 format: Literal["mpq", "folder"] = "mpq") -> dict:
+    """Create an empty campaign (.w3n, it must not exist) as the Campaign Editor does and open it. Add maps and
+    campaign screen buttons with campaign_edit."""
+    project = campaign_ops.new_campaign(path, _catalog("enUS", "Custom_V1", True), name, author, format)
+    _projects[_key(path)] = project
+    return project.status()
+
+
+@_tool
+def campaign_get(path: str) -> dict:
+    """An open campaign as the Campaign Editor shows it: name, difficulty, author, description, variable difficulty,
+    minimap image, loading screen (background, background version, ambient sound, cursor, custom fog), campaign
+    screen buttons (chapter, title, map, visible, cinematic), the maps inside, import and object data counts."""
+    return campaign_ops.campaign_get(_project(path), _catalog("enUS", "Custom_V1", True))
+
+
+@_tool
+def campaign_edit(path: str, ops: list[dict]) -> dict:
+    """All-or-nothing campaign changes. ops on the campaign_get document: {"op": "set", "path": "name", "value":
+    "My Campaign"}, {"op": "set", "path": "minimap", "value": {"preset": "Human"} | {"map": "Ch1.w3x"} |
+    {"file": "war3campImported/map.tga"} | null}, {"op": "set", "path": "loading_screen.background", "value":
+    {"preset": "Orc" or index} | {"file": "war3campImported/intro.webm"} | null} (ambient_sound likewise),
+    loading_screen.cursor / background_version / fog ({"style": "linear", "z_start", "z_end", "density", "color":
+    {r, g, b, a}, ...} or null), {"op": "append", "path": "buttons", "value": {"chapter", "title", "map", "visible",
+    "cinematic"}}, {"op": "set"/"remove", "path": "buttons[0]..."}; maps: {"op": "add_map", "source":
+    "C:/maps/Ch1.w3x", "name"?}, {"op": "replace_map", "name", "source"}, {"op": "remove_map", "name"},
+    {"op": "extract_map", "name", "dest"} (edit it with map_open, put it back with replace_map)."""
+    return campaign_ops.campaign_edit(_project(path), _catalog("enUS", "Custom_V1", True), ops)
 
 
 @_tool
@@ -449,11 +483,12 @@ def editor_status() -> dict:
 
 
 @_tool
-def editor_map(action: Literal["open", "save", "close", "reload", "compile", "quit"], map_path: str | None = None,
-               discard: bool = False) -> dict:
-    """Map actions in the World Editor. open (map_path; relaunches the editor on that map), save / compile (the editor
-    regenerates and checks the script; script errors come back per trigger and the editor disables failing
-    triggers), close, reload (reopen from disk after map_save), quit. Anything that would drop unsaved editor changes
+def editor_map(action: Literal["open", "save", "close", "reload", "compile", "quit", "save_campaign"],
+               map_path: str | None = None, discard: bool = False) -> dict:
+    """Map actions in the World Editor. open (map_path; relaunches the editor on that map, or on a .w3n campaign in
+    the Campaign Editor), save / compile (the editor regenerates and checks the script; script errors come back per
+    trigger and the editor disables failing triggers), save_campaign (the Campaign Editor's campaign), close, reload
+    (reopen from disk after map_save), quit. Anything that would drop unsaved editor changes
     refuses with unsaved_changes unless discard=true: ask the user first."""
     editor = desktop_editor.EDITOR
     if action == "open":
@@ -462,6 +497,8 @@ def editor_map(action: Literal["open", "save", "close", "reload", "compile", "qu
         return editor.open(map_path, discard=discard)
     if action in ("save", "compile"):
         return editor.save()
+    if action == "save_campaign":
+        return editor.save_campaign()
     if action == "close":
         return editor.close(discard=discard)
     if action == "reload":
