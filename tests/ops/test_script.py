@@ -76,13 +76,15 @@ def layers():
 @pytest.mark.parametrize("map_id", sample_map_ids())
 def test_script_build_keeps_editor_scripts(tmp_path, layers, map_id):
     arc = open_sample(map_id)
-    if arc.read("war3map.j") is None or arc.read("war3map.wtg") is None:
-        pytest.skip("not a JASS map with triggers")
+    if arc.read("war3map.wtg") is None:
+        pytest.skip("no triggers")
     src = tmp_path / "map.w3x"
     src.write_bytes(arc.data)
     project = MapProject.open(src)
     catalog = layers(project)
     assert script_build(project, catalog)["changed"] is False
+    if arc.read("war3map.j") is None:
+        return
     tf, ct = _load(project, catalog.trigger_data)
     objects, scene = _Objects(project, catalog), _world(project, catalog)
     whole = build.new_script(tf, ct, catalog.trigger_data, scene, _placed(project, catalog, objects),
@@ -153,10 +155,45 @@ def test_script_errors_point_at_their_trigger(tmp_path, catalog):
     assert [e["trigger"] for e in result["errors"]] == ["Broken"]
 
 
-def test_lua_maps_are_validated_but_not_rebuilt(tmp_path, catalog):
+def test_lua_maps_are_rebuilt(tmp_path, layers):
     project = open_copy(tmp_path, ladder("war3map.lua"))
-    with pytest.raises(ToolError) as e:
-        script_build(project, catalog)
-    assert e.value.code == "lua_not_supported"
+    catalog = layers(project)
     assert script_validate(project, catalog) | {"seconds": 0} == {
         "language": "lua", "file": "war3map.lua", "ok": True, "errors": [], "tool": "luacheck", "seconds": 0}
+    text = "function InitTrig_Text()\r\n    print(Twice(2))\r\nend\r\n"
+    triggers_edit(project, catalog, [
+        HELLO, {"op": "header", "script": "-- helpers\nfunction Twice(x)\n    return 2 * x\nend"},
+        {"op": "trigger", "name": "Text", "script": text},
+        {"op": "trigger", "name": "Gui", "actions": [{"fn": "IfThenElseMultiple", "args": [], "if": [], "else": [],
+                                                      "then": [{"fn": "CustomScriptCode", "args": ['print("then")']}]}]}])
+    assert script_build(project, catalog) == {"changed": True, "language": "lua", "file": "war3map.lua"}
+    lua = project.read("war3map.lua").decode("utf-8")
+    assert "\r\nfunction InitTrig_Hello()\r\n" in lua and "\r\nInitTrig_Hello()\r\n" in lua
+    # the map's own Lua passes through as the editor writes it: the header, custom text after an empty InitTrig, and
+    # Custom Script actions with their JASS indentation
+    assert "\r\n-- helpers\r\nfunction Twice(x)\r\n    return 2 * x\r\nend\r\n" in lua
+    assert "\r\nfunction InitTrig_Text()\r\nend\r\n\r\n" + text + "\r\n" in lua
+    assert '(Trig_Gui_Func001C()) then\r\n        print("then")\r\n' in lua
+    assert script_build(project, catalog)["changed"] is False
+    assert script_validate(project, catalog)["ok"]
+
+
+def test_switching_the_script_language_generates_the_new_script(tmp_path, layers):
+    project = open_copy(tmp_path, ladder("war3map.j"))
+    catalog = layers(project)
+    info_edit(project, [{"op": "set", "path": "script_language", "value": "lua"}])
+    assert script_build(project, catalog) == {"changed": True, "language": "lua", "file": "war3map.lua"}
+    assert "\r\nfunction main()\r\n" in project.read("war3map.lua").decode("utf-8")
+    assert script_validate(project, catalog)["ok"] and map_validate(project, catalog)["errors"] == []
+    project.delete("war3map.j")
+    info_edit(project, [{"op": "set", "path": "script_language", "value": "jass"}])
+    assert script_build(project, catalog) == {"changed": True, "language": "jass", "file": "war3map.j"}
+    assert project.read("war3map.j") == open_sample("ladder:" + ladder("war3map.j").name).read("war3map.j")
+
+
+def test_hand_written_lua_is_not_replaced(tmp_path, catalog):
+    project = open_copy(tmp_path, ladder("war3map.lua"))
+    project.write("war3map.lua", b"print('mine')\n")
+    with pytest.raises(ToolError) as e:
+        script_build(project, catalog)
+    assert e.value.code == "not_editor_script" and project.read("war3map.lua") == b"print('mine')\n"

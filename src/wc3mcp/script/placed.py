@@ -23,8 +23,8 @@ REFERENCE = re.compile(r"gg_(?:unit|item|dest)_\w{4}_\d{4}")
 TITLES = ("Random Groups", "Map Item Tables", "Unit Item Tables", "Destructible Item Tables", "Destructable Objects",
           "Items", "Unit Creation")
 MAIN_CALLS = ("CreateAllDestructables", "CreateAllItems", "InitRandomGroups", "CreateAllUnits")
-_DESTRUCTABLE = re.compile(r"Create\w*Destructable\w*\( '(\w{4})', ([-\d.]+), ([-\d.]+),")
-_ITEM = re.compile(r"BlzCreateItemWithSkin\( '(\w{4})', ([-\d.]+), ([-\d.]+),")
+_DESTRUCTABLE = re.compile(r"Create\w*Destructable\w*\( ?(?:'(\w{4})'|FourCC\(\"(\w{4})\"\)), ([-\d.]+), ([-\d.]+),")
+_ITEM = re.compile(r"BlzCreateItemWithSkin\( ?(?:'(\w{4})'|FourCC\(\"(\w{4})\"\)), ([-\d.]+), ([-\d.]+),")  # JASS or Lua
 
 
 @dataclass
@@ -127,9 +127,10 @@ class _Gen:
         self.region_names = {g.index: "gg_rct_" + script_name(g.name) for g in (p.regions.regions if p.regions else [])}
         self.previous = {}  # objects already created by the script keep their order within their type
         for fn, kind, pattern in (("CreateAllDestructables", "dest", _DESTRUCTABLE), ("CreateAllItems", "item", _ITEM)):
-            m = re.search(r"^function %s takes nothing returns nothing\r?\n(.*?)^endfunction" % fn, script, re.S | re.M)
+            m = re.search(r"^function %s(?: takes nothing returns nothing|\(\))\r?\n(.*?)^end(?:function)?\r?$" % fn, script,
+                          re.S | re.M)
             for k, c in enumerate(pattern.finditer(m.group(1) if m else "")):
-                self.previous.setdefault((kind, *c.groups()), k)
+                self.previous.setdefault((kind, c.group(1) or c.group(2), c.group(3), c.group(4)), k)
 
     def _order(self, kind: str, objs: list) -> list:
         return sorted(objs, key=lambda e: (_id(e[1].id), self.previous.get((kind, _id(e[1].id), _f1(e[1].x),

@@ -118,8 +118,7 @@ ALLOWED = {
     "delete": {"what", "name"},
     "header": {"script", "comment"},
 }
-SCRIPT_WARNING = ("the map script is not regenerated yet: map_save (or script_build) rebuilds war3map.j; Lua maps "
-                  "need a save in the World Editor")
+SCRIPT_WARNING = "the map script is not regenerated yet: map_save (or script_build) rebuilds war3map.j or war3map.lua"
 _HINT = ('ops: {"op": "category", "name": "Spawns"}, {"op": "variable", "name": "Count", "type": "integer"}, '
          '{"op": "trigger", "name": "Spawn", "events": [...], "actions": [...]} or {..., "script": "..."}, '
          '{"op": "delete", "what": "trigger", "name": "Spawn"}, {"op": "header", "script": "..."}')

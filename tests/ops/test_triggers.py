@@ -142,6 +142,8 @@ def test_delete_rules(melee, catalog):
     ({"op": "trigger", "name": "Bad", "events": [{"fn": "KillUnit", "args": [{"call": "GetTriggerUnit"}]}]},
      "unknown_function"),
     ({"op": "trigger", "name": "Bad", "actions": [{"fn": "KillUnit"}]}, "bad_value"),
+    ({"op": "trigger", "name": "Bad", "conditions": [{"fn": "OperatorCompareInteger",
+      "args": [1, "OperatorEqualENE", 1]}]}, "invalid_trigger"),   # operator written as a literal, not a preset
     ({"op": "trigger", "name": "Melee_Initialization"}, "name_taken"),
     ({"op": "trigger", "name": "Bad", "category": "Nope"}, "not_found"),
     ({"op": "trigger", "name": "Bad", "script": "x", "actions": []}, "bad_op"),

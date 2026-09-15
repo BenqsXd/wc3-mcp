@@ -31,8 +31,8 @@ SCRIPT_KEYS = ("players", "forces", "upgrades", "tech", "camera_bounds",  # rand
                "camera_bounds_complements", "playable_width", "playable_height", "script_language")
 SCRIPT_FLAGS = ("modify_ally_priorities", "melee_map", "fixed_player_settings_for_custom_forces", "use_custom_forces",
                 "use_custom_techtree", "use_custom_abilities", "use_custom_upgrades")
-SCRIPT_WARNING = ("the map script is not regenerated yet: map_save (or script_build) rebuilds war3map.j with the new "
-                  "players, forces, tech and camera setup; Lua maps need a save in the World Editor")
+SCRIPT_WARNING = ("the map script is not regenerated yet: map_save (or script_build) rebuilds the script with the new "
+                  "players, forces, tech and camera setup")
 
 
 # ---- validation helpers -------------------------------------------------------------------------------------

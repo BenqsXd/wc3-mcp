@@ -204,6 +204,11 @@ class Checker:
 
     def _param(self, p: Param, expected: str, path: str) -> None:
         if p.type == STRING:
+            if expected not in RAWCODE_TYPES and self.td.base(expected) not in ("integer", "real", "boolean", "string"):
+                # the corpus writes literals only for these base types; anything else needs a preset, variable or call
+                self.errors.append(f"{path}: {expected} takes no literal, got {p.value!r}"
+                                   + (f' (write presets as {{"preset": "{p.value}"}})' if p.value in self.td.presets else ""))
+                return
             self.literal(p.value, expected, path)
             return
         if p.type == PRESET:

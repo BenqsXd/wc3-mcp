@@ -1,6 +1,6 @@
 """Editor-generated script parts from war3map.w3i: the file header, InitUpgrades, InitTechTree, the player setup
 functions (InitCustomPlayerSlots, InitCustomTeams, InitAllyPriorities), main and config. Exact on the local JASS
-corpus except one credits map whose player sets a race skin without a forced start location."""
+corpus (v39 players with the race skin flag keep a fixed start location in their extra value)."""
 import struct
 from dataclasses import dataclass
 from typing import Callable
@@ -16,7 +16,7 @@ MAIN_CALLS = ("InitSounds", "CreateRegions", "CreateCameras", "InitUpgrades", "I
 CAMERA_MARGINS = (512, 256, 512, 256)  # left, bottom, right, top: the editor writes bounds minus the game's margins
 RACE_PREFERENCE = {1: "RACE_PREF_HUMAN", 2: "RACE_PREF_ORC", 3: "RACE_PREF_UNDEAD", 4: "RACE_PREF_NIGHTELF"}
 CONTROLLER = {1: "MAP_CONTROL_USER", 2: "MAP_CONTROL_COMPUTER", 3: "MAP_CONTROL_NEUTRAL", 4: "MAP_CONTROL_RESCUABLE"}
-FIXED_START, RACE_SKIN = 0x01, 0x40  # player flags; RACE_SKIN also fixes the start location
+FIXED_START, RACE_SKIN = 0x01, 0x40  # player flags; with RACE_SKIN the v39 extra value fixes the start location
 FIXED_PLAYER_SETTINGS, CUSTOM_FORCES, TERRAIN_FOG, WATER_TINT = 1 << 5, 1 << 6, 1 << 13, 1 << 16
 ALLIED, ALLIED_VICTORY = 1, 2
 SHARED = ((1, "Allied", "SetPlayerAllianceStateAllyBJ"), (8, "Shared Vision", "SetPlayerAllianceStateVisionBJ"),
@@ -128,7 +128,7 @@ def players(p: MapInfoParts) -> str:
     for k, player in enumerate(mi.players):
         pid = f"Player({player.id})"
         slots += [f"    // Player {player.id}", f"    call SetPlayerStartLocation( {pid}, {k} )"]
-        if player.flags & (FIXED_START | RACE_SKIN):
+        if player.flags & FIXED_START or player.flags & RACE_SKIN and player.v39_value:
             slots.append(f"    call ForcePlayerStartLocation( {pid}, {k} )")
         slots += [f"    call SetPlayerColor( {pid}, ConvertPlayerColor({player.id}) )",
                   f"    call SetPlayerRacePreference( {pid}, {RACE_PREFERENCE.get(player.race, 'RACE_PREF_RANDOM')} )"]

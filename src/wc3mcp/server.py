@@ -117,7 +117,7 @@ def map_new(path: str, width: int = 64, height: int = 64, tileset: str = "L", na
     """Create a new map at path (it must not exist) and open it: width/height in tiles (32-480, steps of 32, the
     playable area is 12 tiles narrower and shorter), tileset letter (data_search kind=tile ids start with it),
     players 1-24 with start locations, one force, a flat terrain of the tileset's first tile, the default Melee
-    Initialization trigger and a generated war3map.j. JASS only for now."""
+    Initialization trigger and a generated war3map.j, or war3map.lua for script_language=lua."""
     project = newmap_ops.new_map(path, _catalog("enUS", "Custom_V1", True), width, height, tileset, name, author, players,
                                  script_language, format)
     _projects[_key(path)] = project
@@ -142,9 +142,9 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
              validate: bool = True) -> dict:
     """Save the working copy. By default backs up the original and replaces it atomically. dest/format write a
     copy elsewhere (mpq archive or map folder). Refuses if the original changed on disk since opening unless
-    force=true. rebuild_script: auto regenerates war3map.j when triggers, regions, cameras, sounds, placed objects or
-    map info changed (JASS maps with trigger data), always regenerates whenever possible, never leaves the script
-    alone. validate runs map_validate first and refuses to save on errors."""
+    force=true. rebuild_script: auto regenerates war3map.j / war3map.lua when triggers, regions, cameras, sounds,
+    placed objects or map info changed (maps with trigger data), always regenerates whenever possible, never leaves
+    the script alone. validate runs map_validate first and refuses to save on errors."""
     project = _project(path)
     catalog = _catalog("enUS", script_ops.balance(project), True)
     warnings = []
@@ -161,7 +161,7 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
         try:
             script = script_ops.script_build(project, catalog)
         except ToolError as e:
-            if rebuild_script == "always" or e.code not in ("lua_not_supported", "no_triggers", "no_script",
+            if rebuild_script == "always" or e.code not in ("no_triggers", "no_script",
                                                              "not_editor_script"):
                 raise
             script = {"changed": False, "skipped": str(e)}
@@ -411,8 +411,9 @@ def terrain_render(path: str, scale: int | None = None, objects: bool = True) ->
 def script_build(path: str) -> dict:
     """Regenerate the editor-generated parts of war3map.j exactly as the World Editor writes them (variable globals,
     InitGlobals, custom script code, trigger functions, regions, cameras, sounds, placed units, items and
-    destructables, item tables, random groups); the rest of the script is kept. map_save does this automatically
-    when those sources changed. Lua maps are not rebuilt yet: save them in the World Editor."""
+    destructables, item tables, random groups, map info); the rest of the script is kept. Lua maps get their whole
+    war3map.lua rebuilt the way the editor transpiles it; the map header, custom text triggers and Custom Script
+    actions are Lua there. map_save does this automatically when those sources changed."""
     project = _project(path)
     return script_ops.script_build(project, _catalog("enUS", script_ops.balance(project), True))
 

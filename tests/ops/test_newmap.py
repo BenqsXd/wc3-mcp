@@ -52,11 +52,21 @@ def test_new_folder_map(tmp_path, catalog):
     assert w3e.parse(project.read("war3map.w3e")).width == 33
 
 
+def test_new_lua_map(tmp_path, catalog):
+    project = newmap.new_map(tmp_path / "Lua.w3x", catalog, players=2, name="Lua Arena", script_language="lua")
+    assert info_get(project)["script_language"] == "lua"
+    assert "war3map.j" not in {f["name"] for f in project.list_files()}
+    text = project.read("war3map.lua").decode("utf-8")
+    assert "\r\nfunction InitTrig_Melee_Initialization()\r\n" in text and "\r\nSetPlayers(2)\r\n" in text
+    assert script_build(project, catalog)["changed"] is False
+    assert script_validate(project, catalog)["ok"] and map_validate(project, catalog)["errors"] == []
+
+
 def test_new_map_errors(tmp_path, catalog):
     (tmp_path / "Taken.w3x").write_bytes(b"x")
     bad = [({"path": tmp_path / "Taken.w3x"}, "exists"), ({"width": 33}, "bad_value"), ({"height": 512}, "bad_value"),
            ({"tileset": "?"}, "bad_value"), ({"tileset": "LL"}, "bad_value"), ({"players": 0}, "bad_value"),
-           ({"players": 25}, "bad_value"), ({"script_language": "lua"}, "lua_not_supported"),
+           ({"players": 25}, "bad_value"), ({"script_language": "python"}, "bad_value"),
            ({"format": "zip"}, "bad_value")]
     for args, code in bad:
         with pytest.raises(ToolError) as e:

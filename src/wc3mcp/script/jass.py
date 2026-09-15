@@ -11,9 +11,15 @@ BOOLEAN_CALLS = ("GetBooleanAnd", "GetBooleanOr")
 BLOCKS = {"IfThenElseMultiple", "ForLoopAMultiple", "ForLoopBMultiple", "ForLoopVarMultiple"} | CALLBACKS
 
 
+def raw_lines(text: str, raw: str) -> str:
+    """Newline-terminated `text` with every line prefixed by `raw` (the Lua transpiler's pass-through marker)."""
+    return "".join(raw + line + "\n" for line in text.split("\n")[:-1])
+
+
 class JassGen:
-    def __init__(self, td, variables: dict):
-        self.td, self.variables = td, variables
+    def __init__(self, td, variables: dict, raw: str = ""):
+        """raw: prefix for lines that are Lua already (custom text and Custom Script actions of Lua maps)."""
+        self.td, self.variables, self.raw = td, variables, raw
 
     # ---- structure -------------------------------------------------------------------------------------------
     def add(self, name: str, returns: str, body: list[str]) -> str:
@@ -33,7 +39,11 @@ class JassGen:
             head += ["// " + line for line in lines]
         head.append(BAR)
         if t.custom_text:
-            return "\n".join(head) + "\n" + (text or "").replace("\r\n", "\n") + "\n"
+            body = (text or "").replace("\r\n", "\n") + "\n"
+            if self.raw:  # Lua maps: the editor emits an empty InitTrig ahead of the trigger's own Lua
+                return ("\n".join(head) + f"\nfunction InitTrig_{self.name} takes nothing returns nothing\nendfunction\n"
+                        + raw_lines(body, self.raw))
+            return "\n".join(head) + "\n" + body
         conditions = [(i, e) for i, e in enumerate(t.ecas, 1) if e.kind == CONDITION and e.enabled]
         actions = [(i, e) for i, e in enumerate(t.ecas, 1) if e.kind == ACTION and e.enabled]
         events = [e for e in t.ecas if e.kind == EVENT and e.enabled]
@@ -110,7 +120,7 @@ class JassGen:
             target = self.var(e.params[0], f"{path}001")
             return [f"{ind}set {target} = {self.expr(e.params[1], vt, path, 2)}"]
         if name == "CustomScriptCode":
-            return [ind + e.params[0].value]
+            return [self.raw + ind + e.params[0].value]
         if name == "CommentString":
             return [ind + "// " + (e.params[0].value or "ERROR")]   # empty text: one corpus sample (ROC Orc01)
         if name == "ReturnAction":

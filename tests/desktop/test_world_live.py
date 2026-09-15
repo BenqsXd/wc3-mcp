@@ -13,6 +13,27 @@ from wc3mcp.mpq.reader import Archive
 RESULTS = "wc3mcp\\world_test.txt"
 
 
+def assert_script_build_keeps(tmp_path, target, name: str) -> None:
+    """script_build on the editor-saved map leaves the editor's script as it is."""
+    from wc3mcp.gamedata.catalog import Catalog
+    from wc3mcp.ops.script import balance, script_build
+    from wc3mcp.project.workspace import MapProject
+
+    project = MapProject.open(target)
+    try:
+        if not script_build(project, Catalog(_storage(), balance=balance(project)))["changed"]:
+            return
+        ours, edited = project.read(name).decode("utf-8"), Archive.open(target).read(name).decode("utf-8")
+    finally:
+        project.close(discard=True)
+    (tmp_path / ("editor." + name)).write_text(edited, "utf-8", newline="")
+    (tmp_path / ("script_build." + name)).write_text(ours, "utf-8", newline="")
+    a, b = edited.splitlines(), ours.splitlines()
+    first = next(i for i, (x, y) in enumerate(zip(a + [""], b + [""])) if x != y)
+    pytest.fail(f"script_build changes the editor's script (both in {tmp_path}); first difference at line "
+                f"{first + 1}:\n{a[first:first + 3]}\n{b[first:first + 3]}")
+
+
 def build_map(target):
     from wc3mcp.gamedata.catalog import Catalog
     from wc3mcp.ops.elements import elements_edit
@@ -101,19 +122,7 @@ def test_world_content_opens_and_saves_in_the_editor(tmp_path):
 
     # the editor snaps new destructables, upgrades file versions and rewrites random items with filters, so compare
     # script_build with the editor's own output for the files it saved
-    from wc3mcp.gamedata.catalog import Catalog
-    from wc3mcp.ops.script import balance, script_build
-    from wc3mcp.project.workspace import MapProject
-
-    project = MapProject.open(target)
-    if script_build(project, Catalog(_storage(), balance=balance(project)))["changed"]:
-        ours = project.read("war3map.j").decode("utf-8")
-        (tmp_path / "editor.j").write_text(edited, "utf-8")
-        (tmp_path / "script_build.j").write_text(ours, "utf-8")
-        a, b = edited.splitlines(), ours.splitlines()
-        first = next(i for i, (x, y) in enumerate(zip(a + [""], b + [""])) if x != y)
-        pytest.fail(f"script_build changes the editor's script (both in {tmp_path}); first difference at line "
-                    f"{first + 1}:\n{a[first:first + 3]}\n{b[first:first + 3]}")
+    assert_script_build_keeps(tmp_path, target, "war3map.j")
 
 
 @pytest.mark.game
@@ -128,19 +137,44 @@ def test_world_content_runs_in_the_game(tmp_path):
     assert result["closed"]
 
 
+def custom_lua(project, catalog) -> None:
+    """Lua written by the map maker: a header, two custom text triggers and Custom Script actions in GUI blocks."""
+    from wc3mcp.ops.triggers import triggers_edit
+
+    def custom(line):
+        return {"fn": "CustomScriptCode", "args": [line]}
+
+    first = {"call": "GetConvertedPlayerId", "args": [{"preset": "Player00"}]}
+    triggers_edit(project, catalog, [
+        {"op": "header", "script": "-- helpers\nfunction Twice(x)\n    return 2 * x\nend\n\n\nLimit = 3"},
+        {"op": "trigger", "name": "Text One", "script": "function InitTrig_Text_One()\n    print(Twice(Limit))\nend\n"},
+        {"op": "trigger", "name": "Gui", "events": [{"fn": "MapInitializationEvent"}], "actions": [
+            custom("local total = Twice(1)"),
+            {"fn": "IfThenElseMultiple", "args": [], "if": [
+                {"fn": "OperatorCompareInteger", "args": [first, {"preset": "OperatorEqual"}, 1]}],
+             "then": [custom("print('first', total)")], "else": [custom("for i = 1, Limit do print(i) end")]}]},
+        {"op": "trigger", "name": "Text Two", "script": "function InitTrig_Text_Two()\nend"}])
+
+
 @pytest.mark.editor
-def test_new_map_opens_and_saves_in_the_editor(tmp_path):
+@pytest.mark.parametrize("language", ["jass", "lua"])
+def test_new_map_opens_and_saves_in_the_editor(tmp_path, language):
     from wc3mcp.gamedata.catalog import Catalog
     from wc3mcp.ops.newmap import new_map
-    from wc3mcp.ops.script import balance, script_build
-    from wc3mcp.project.workspace import MapProject
+    from wc3mcp.ops.script import script_build
 
     editor = ed.Editor()
     if editor.status()["running"]:
         pytest.skip("a World Editor is already running")
     target = tmp_path / "New Tool Map.w3x"
-    new_map(target, Catalog(_storage(), balance="Custom_V1"), width=64, height=64, tileset="L", players=4,
-            name="New Tool Map").close()
+    catalog = Catalog(_storage(), balance="Custom_V1")
+    project = new_map(target, catalog, width=64, height=64, tileset="L", players=4, name="New Tool Map",
+                      script_language=language)
+    if language == "lua":
+        custom_lua(project, catalog)
+        assert script_build(project, catalog)["changed"]
+        project.save()
+    project.close()
     try:
         status = editor.launch(target)
         assert status["map"] == str(target) and status["dialogs"] == []
@@ -148,13 +182,6 @@ def test_new_map_opens_and_saves_in_the_editor(tmp_path):
         assert saved["saved"] and saved["errors"] == []
     finally:
         editor.quit(discard=True)
-    project = MapProject.open(target)
-    assert len([u for u in unitsdoo.parse(project.read("war3mapUnits.doo")).units if u.id == b"sloc"]) == 4
-    if script_build(project, Catalog(_storage(), balance=balance(project)))["changed"]:
-        ours, edited = project.read("war3map.j").decode("utf-8"), Archive.open(target).read("war3map.j").decode("utf-8")
-        (tmp_path / "editor.j").write_text(edited, "utf-8")
-        (tmp_path / "script_build.j").write_text(ours, "utf-8")
-        a, b = edited.splitlines(), ours.splitlines()
-        first = next(i for i, (x, y) in enumerate(zip(a + [""], b + [""])) if x != y)
-        pytest.fail(f"script_build changes the editor's script (both in {tmp_path}); first difference at line "
-                    f"{first + 1}:\n{a[first:first + 3]}\n{b[first:first + 3]}")
+    arc = Archive.open(target)
+    assert len([u for u in unitsdoo.parse(arc.read("war3mapUnits.doo")).units if u.id == b"sloc"]) == 4
+    assert_script_build_keeps(tmp_path, target, "war3map.lua" if language == "lua" else "war3map.j")

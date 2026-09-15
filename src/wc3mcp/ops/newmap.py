@@ -43,7 +43,8 @@ def _bad(field: str, message: str) -> ToolError:
     return ToolError("bad_value", f"{field}: {message}", hint="map_new(path, width, height, tileset, players)", path=field)
 
 
-def _files(catalog, name: str, width: int, height: int, tileset: str, author: str, players: int) -> tuple[dict, w3i.MapInfo]:
+def _files(catalog, name: str, width: int, height: int, tileset: str, author: str, players: int,
+           lua: bool = False) -> tuple[dict, w3i.MapInfo]:
     tiles = [t.encode("latin-1") for t in catalog.ids("tile") if t[0] == tileset]
     cliffs = [c.encode("latin-1") for c in catalog.ids("cliff") if c[1] == tileset][:2]
     if not tiles:
@@ -72,7 +73,7 @@ def _files(catalog, name: str, width: int, height: int, tileset: str, author: st
     info.camera_bounds = [bounds[0], bounds[1], bounds[2], bounds[3], bounds[0], bounds[3], bounds[2], bounds[1]]
     info.camera_complements = [left, right, bottom, top]
     info.playable_width, info.playable_height = width - left - right, height - top - bottom
-    info.flags, info.tileset = MAP_FLAGS, ord(tileset)
+    info.flags, info.tileset, info.script_language = MAP_FLAGS, ord(tileset), int(lua)
     info.fog_start_z, info.fog_end_z, info.fog_density = 3000.0, 5000.0, 0.5
     cx, cy = (play[0] + play[2]) / 2, (play[1] + play[3]) / 2
     radius = 0.35 * min(play[2] - play[0], play[3] - play[1])
@@ -112,12 +113,9 @@ def new_map(path, catalog, width: int = 64, height: int = 64, tileset: str = "L"
         raise _bad("tileset", "expected a tileset letter such as L (Lordaeron Summer) or V (Village)")
     if not isinstance(players, int) or isinstance(players, bool) or not 1 <= players <= 24:
         raise _bad("players", "expected 1 to 24")
-    if script_language == "lua":
-        raise ToolError("lua_not_supported", "new Lua maps need Lua script generation, which is not supported yet",
-                        hint="create the map with script_language=jass and switch it in the World Editor")
-    if script_language != "jass" or format not in ("mpq", "folder"):
-        raise _bad("script_language" if script_language != "jass" else "format", "expected jass / mpq or folder")
-    files, _ = _files(catalog, name, width, height, tileset, author, players)
+    if script_language not in ("jass", "lua") or format not in ("mpq", "folder"):
+        raise _bad("format" if script_language in ("jass", "lua") else "script_language", "expected jass or lua / mpq or folder")
+    files, _ = _files(catalog, name, width, height, tileset, author, players, script_language == "lua")
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
         if format == "folder":
@@ -133,10 +131,13 @@ def new_map(path, catalog, width: int = 64, height: int = 64, tileset: str = "L"
              "description": "Default melee game initialization for all players",
              "events": [{"fn": "MapInitializationEvent"}], "actions": [{"fn": fn} for fn in MELEE_ACTIONS]}])
         tf, ct = script_ops._load(project, catalog.trigger_data)
-        objects, scene = script_ops._Objects(project, catalog), script_ops._world(project, catalog)
-        text = build.new_script(tf, ct, catalog.trigger_data, scene, script_ops._placed(project, catalog, objects),
-                                script_ops._mapinfo(project, catalog, objects, scene.terrain))
-        project.write("war3map.j", text.encode("utf-8"))
+        if script_language == "lua":
+            project.write("war3map.lua", script_ops.lua_script(project, catalog, tf, ct).encode("utf-8"))
+        else:
+            objects, scene = script_ops._Objects(project, catalog), script_ops._world(project, catalog)
+            text = build.new_script(tf, ct, catalog.trigger_data, scene, script_ops._placed(project, catalog, objects),
+                                    script_ops._mapinfo(project, catalog, objects, scene.terrain))
+            project.write("war3map.j", text.encode("utf-8"))
         project.save(force=True)
         return project
     except BaseException:

@@ -17,9 +17,9 @@ CAMERA_FIELDS = (("z_offset", "ZOFFSET"), ("rotation", "ROTATION"), ("angle_of_a
                  ("near_z", "NEARZ"), ("local_pitch", "LOCAL_PITCH"), ("local_yaw", "LOCAL_YAW"),
                  ("local_roll", "LOCAL_ROLL"), ("depth_of_field_distance", "DEPTH_OF_FIELD_DISTANCE"),
                  ("depth_of_field_scale", "DEPTH_OF_FIELD_SCALE"), ("z_absolute", "ZABSOLUTE"))
-_CREATE = re.compile(r'^    set (gg_snd_\w+) = CreateSound\( ("(?:[^"\\]|\\.)*"),', re.M)
-_DURATION = re.compile(r"^    call SetSoundDuration\( (gg_snd_\w+), (\d+) \)", re.M)
-_POSITION = re.compile(r"^    call SetSoundPosition\( (gg_snd_\w+), ([-\d.]+), ([-\d.]+), ([-\d.]+) \)", re.M)
+_CREATE = re.compile(r'^\s*(?:set )?(gg_snd_\w+) = CreateSound\( ?("(?:[^"\\]|\\.)*"),', re.M)  # JASS or Lua
+_DURATION = re.compile(r"^\s*(?:call )?SetSoundDuration\( ?(gg_snd_\w+), (\d+) ?\)", re.M)
+_POSITION = re.compile(r"^\s*(?:call )?SetSoundPosition\( ?(gg_snd_\w+), ([-\d.]+), ([-\d.]+), ([-\d.]+) ?\)", re.M)
 
 
 @dataclass

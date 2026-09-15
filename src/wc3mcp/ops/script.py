@@ -4,7 +4,7 @@ import posixpath
 from ..errors import ToolError
 from ..formats import doo, unitsdoo, w3e, w3i
 from ..formats.binary import FormatError
-from ..script import build, mapinfo, placed, world
+from ..script import build, lua, mapinfo, placed, world
 from ..script import validate as scripts
 from . import objdata
 from . import validate as checks
@@ -180,21 +180,38 @@ def _placed(project, catalog, objects: "_Objects | None" = None) -> placed.Place
                          _load_file(project, "region")[0], unit, ability, destructible, item)
 
 
+def lua_script(project, catalog, tf, ct, reference: str = "") -> str:
+    """The editor's war3map.lua for the map files: its JASS script transpiled in the style of `reference`."""
+    objects, scene = _Objects(project, catalog), _world(project, catalog)
+    jass = build.new_script(tf, ct, catalog.trigger_data, scene, _placed(project, catalog, objects),
+                            _mapinfo(project, catalog, objects, scene.terrain), reference=reference, raw=lua.RAW)
+    return lua.transpile(jass, lua.natives(catalog), *lua.style(reference))
+
+
 def script_build(project, catalog) -> dict:
     lang = language(project)
-    if lang == "lua":
-        # ponytail: the editor transpiles its JASS to Lua (jass2lua); regenerate Lua here once Phase 3 can compare
-        # against editor-saved Lua maps with GUI triggers
-        raise ToolError("lua_not_supported", "regenerating war3map.lua is not supported yet",
-                        hint="save the map in the World Editor to regenerate war3map.lua; script_validate still checks it")
     td = catalog.trigger_data
     tf, ct = _load(project, td)
-    name = _script_file(project, lang)
-    before = project.read(name)
+    names = _names(project)
+    found = {k: next((names[n.lower()] for n in files if n.lower() in names), None) for k, files in SCRIPT_FILES.items()}
+    name = found[lang] or SCRIPT_FILES[lang][0]
+    before = project.read(name) if found[lang] else b""
+    other = found["jass" if lang == "lua" else "lua"]
     try:
-        objects, scene = _Objects(project, catalog), _world(project, catalog)
-        text = build.splice(before.decode("utf-8", "surrogateescape"), tf, ct, td, world=scene,
-                            placed=_placed(project, catalog, objects), info=_mapinfo(project, catalog, objects, scene.terrain))
+        original = before.decode("utf-8", "surrogateescape")
+        # a missing script (a new map, or one switched to the other language) is generated whole; the other
+        # language's script still supplies sound lengths and object order
+        reference = original if original.strip() or other is None else project.read(other).decode("utf-8", "surrogateescape")
+        if lang == "lua":
+            if original.strip() and not lua.editor_generated(original):
+                raise ValueError("no main and config functions")
+            text = lua_script(project, catalog, tf, ct, reference)
+        else:
+            objects, scene = _Objects(project, catalog), _world(project, catalog)
+            parts = dict(world=scene, placed=_placed(project, catalog, objects),
+                         info=_mapinfo(project, catalog, objects, scene.terrain))
+            text = (build.splice(original, tf, ct, td, **parts) if original.strip()
+                    else build.new_script(tf, ct, td, reference=reference, **parts))
     except ValueError as e:
         raise ToolError("not_editor_script", f"{name}: {e}",
                         hint="this script was not written by the World Editor; edit it with map_file_write") from e
