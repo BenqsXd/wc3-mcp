@@ -107,7 +107,7 @@ def test_text_trigger_header_and_renames(melee, catalog):
             {"fn": "SetVariable", "args": [{"var": "Score", "index": 1}, 5]},
             {"fn": "ConditionalTriggerExecute", "args": [{"var": "gg_trg_Setup"}]}]},
         {"op": "header", "script": "// shared helpers"}])
-    assert trigger_get(melee, catalog, "Setup")["script"].startswith("function InitTrig_Setup")
+    assert trigger_get(melee, catalog, "Setup")["script"] == "function InitTrig_Setup takes nothing returns nothing\r\nendfunction"
     assert trigger_get(melee, catalog)["script"] == "// shared helpers"
     triggers_edit(melee, catalog, [{"op": "variable", "name": "Score", "new_name": "Points"},
                                    {"op": "trigger", "name": "Setup", "new_name": "Game Setup"}])

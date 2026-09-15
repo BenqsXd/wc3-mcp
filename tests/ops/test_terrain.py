@@ -72,7 +72,7 @@ def test_paint_cliff_water_and_flags(version):
               {"op": "water", "x": 256, "y": 256, "radius": 1, "level": 10},
               {"op": "ramp", "x": 0, "y": 0, "radius": 1}, {"op": "blight", "x": -128, "y": 0, "radius": 1},
               {"op": "boundary", "x": 512, "y": 512, "radius": 1})
-    assert t.tiles == [b"Ldrt", b"Lgrs"] and t.cliff_tiles == [b"CLdi", b"CLgr"]
+    assert t.tiles == [b"Ldrt", b"Lgrs"] and t.cliff_tiles == [b"CLdi", b"CLgr"] and t.custom_tileset == 1
     center, edge = w3e.corner(t, 4, 4), w3e.corner(t, 4, 3)
     assert (center["texture"], center["layer"], center["cliff_texture"], center["ramp"]) == (1, 3, 1, True)
     assert center["ground_variation"] in terrain.VARIATIONS and edge["texture"] == 1 and w3e.corner(t, 2, 4)["texture"] == 0

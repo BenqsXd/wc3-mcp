@@ -74,19 +74,29 @@ def references(tf: wtg.TriggerFile, ct: wct.CustomText) -> tuple[set[str], set[s
 
 
 # ---- drop tables -------------------------------------------------------------------------------------------------
-def _item_expr(raw: bytes, any_style: bool) -> str:
+def random_item_style(script: str) -> str:
+    """How the script's editor spelled random items: "filter" (current editor, also for scripts without any),
+    "any" or "plain" (older editors: ChooseRandomItemEx, with ITEM_TYPE_ANY or ChooseRandomItem for any class)."""
+    if "ChooseRandomItemExWithFilter(" in script or not re.search(r"ChooseRandomItem(?:Ex)?\(", script):
+        return "filter"
+    return "any" if "ITEM_TYPE_ANY" in script else "plain"
+
+
+def _item_expr(raw: bytes, style: str) -> str:
     t = _id(raw)
     if raw == NO_ID:
         return "-1"
-    if t[0] == "Y" and t[2] == "I" and t[3].isdigit():
-        if t[1] == "Y":
-            return f"ChooseRandomItemEx( ITEM_TYPE_ANY, {t[3]} )" if any_style else f"ChooseRandomItem( {t[3]} )"
-        if t[1] in ITEM_CLASS:
-            return f"ChooseRandomItemEx( {ITEM_CLASS[t[1]]}, {t[3]} )"
+    if t[0] == "Y" and t[2] == "I" and t[3].isdigit() and (t[1] == "Y" or t[1] in ITEM_CLASS):
+        kind = "ITEM_TYPE_ANY" if t[1] == "Y" else ITEM_CLASS[t[1]]
+        if style == "filter":
+            return f"ChooseRandomItemExWithFilter( {kind}, {t[3]}, EQUIPMENT_TYPE_ANY, ITEMTAG_TYPE_ANY)"
+        if t[1] == "Y" and style == "plain":
+            return f"ChooseRandomItem( {t[3]} )"
+        return f"ChooseRandomItemEx( {kind}, {t[3]} )"
     return f"'{t}'"
 
 
-def _drop_function(name: str, sets: list, any_style: bool) -> str:
+def _drop_function(name: str, sets: list, style: str) -> str:
     lines = ["    local widget  trigWidget = null", "    local unit    trigUnit   = null",
              "    local integer itemID     = 0", "    local boolean canDrop    = true", "",
              "    set trigWidget = bj_lastDyingWidget", "    if (trigWidget == null) then",
@@ -97,7 +107,7 @@ def _drop_function(name: str, sets: list, any_style: bool) -> str:
              "        endif", "    endif", "", "    if (canDrop) then"]
     for k, entries in enumerate(sets):
         lines += [f"        // Item set {k}", "        call RandomDistReset(  )"]
-        lines += [f"        call RandomDistAddItem( {_item_expr(item, any_style)}, {chance} )" for item, chance in entries]
+        lines += [f"        call RandomDistAddItem( {_item_expr(item, style)}, {chance} )" for item, chance in entries]
         rest = 100 - sum(chance for _, chance in entries)
         if rest > 0:
             lines.append(f"        call RandomDistAddItem( -1, {rest} )")
@@ -112,7 +122,7 @@ def _drop_function(name: str, sets: list, any_style: bool) -> str:
 class _Gen:
     def __init__(self, p: Placed, script: str, named: set[str]):
         self.p, self.named = p, named
-        self.any_style = "ITEM_TYPE_ANY" in script  # older editors; the current one writes ChooseRandomItem
+        self.item_style = random_item_style(script)
         self.groups = [t.id for t in p.info.random_unit_tables] if p.info else []
         self.region_names = {g.index: "gg_rct_" + script_name(g.name) for g in (p.regions.regions if p.regions else [])}
         self.previous = {}  # objects already created by the script keep their order within their type
@@ -149,17 +159,17 @@ class _Gen:
         if not tables:
             return None
         return _banner("Map Item Tables") + "".join(
-            _drop_function(f"ItemTable{t.id:06d}_DropItems", [[(i, c) for c, i in s] for s in t.sets], self.any_style)
+            _drop_function(f"ItemTable{t.id:06d}_DropItems", [[(i, c) for c, i in s] for s in t.sets], self.item_style)
             for t in tables) + "\n"
 
     def unit_item_tables(self) -> str | None:
-        body = "".join(_drop_function(f"Unit{i:06d}_DropItems", u.item_sets, self.any_style)
+        body = "".join(_drop_function(f"Unit{i:06d}_DropItems", u.item_sets, self.item_style)
                        for i, u in enumerate(self.p.units.units if self.p.units else [])
                        if u.item_table < 0 and any(u.item_sets))
         return _banner("Unit Item Tables") + body + "\n" if body else None
 
     def destructible_item_tables(self) -> str | None:
-        body = "".join(_drop_function(f"Doodad{i:06d}_DropItems", d.item_sets, self.any_style)
+        body = "".join(_drop_function(f"Doodad{i:06d}_DropItems", d.item_sets, self.item_style)
                        for i, d in enumerate(self.p.doodads.doodads if self.p.doodads else [])
                        if d.item_table < 0 and any(d.item_sets) and self.p.destructible(_id(d.id)) is not None)
         return _banner("Destructible Item Tables") + body + "\n" if body else None

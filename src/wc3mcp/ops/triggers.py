@@ -140,6 +140,13 @@ def _all_params(ecas, enabled_only: bool = False):
         yield from _all_params(e.children, enabled_only)
 
 
+def _editor_lines(text) -> str:
+    """Custom script text with the Trigger Editor's CRLF line ends (the editor copies it into war3map.j verbatim)."""
+    if not isinstance(text, str):
+        raise ToolError("bad_value", "script must be text", hint=_HINT)
+    return text.replace("\r\n", "\n").replace("\n", "\r\n")
+
+
 def script_users(tf, ct, script: str) -> list[str]:
     """Triggers whose GUI parameters or custom script text use the global `script` ("map header" for the header)."""
     gui = [t.name for t in _triggers(tf) if any(p.type == VARIABLE and p.value == script for p in _all_params(t.ecas))]
@@ -343,7 +350,7 @@ class _Edit:
         if "script" in op:
             if not isinstance(op["script"], str):
                 raise ToolError("bad_value", f"{path}: script must be text", path=f"{path}.script")
-            t.custom_text, t.ecas, self.text[t.id] = 1, [], op["script"]
+            t.custom_text, t.ecas, self.text[t.id] = 1, [], _editor_lines(op["script"])
         elif sections:
             variables = {v.name: v for v in self.tf.variables}
             current = {key: ([] if t.custom_text else [e for e in t.ecas if e.kind == kind]) for key, kind in SECTIONS}
@@ -403,7 +410,7 @@ class _Edit:
             if key in op and not isinstance(op[key], str):
                 raise ToolError("bad_value", f"{path}: {key} must be text", path=f"{path}.{key}")
         if "script" in op:
-            self.ct.header = op["script"] or None
+            self.ct.header = _editor_lines(op["script"]) if op["script"] else None
         if "comment" in op:
             self.ct.comment = op["comment"]
 

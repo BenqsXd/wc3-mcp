@@ -240,6 +240,7 @@ class _Brush:
                 raise _bad(path, f"the map already uses {len(self.t.tiles)} ground tiles, the most the World Editor "
                                  "allows; paint with one of terrain_get's tiles")
             self.t.tiles.append(tile)
+            self.t.custom_tileset = 1  # without it the World Editor resets the list to the tileset's own tiles
         return self.t.tiles.index(tile)
 
     def _cliff_index(self, value, path: str) -> int:
@@ -248,6 +249,7 @@ class _Brush:
             if len(self.t.cliff_tiles) >= 2:
                 raise _bad(path, "the map already uses 2 cliff tiles, the most the World Editor allows")
             self.t.cliff_tiles.append(cliff)
+            self.t.custom_tileset = 1
         return self.t.cliff_tiles.index(cliff)
 
 
