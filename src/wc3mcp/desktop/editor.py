@@ -265,5 +265,91 @@ class Editor:
         """Save through the editor to regenerate and check the map script (JassHelper for JASS maps)."""
         return self.save(timeout)
 
+    # ---- UI access -------------------------------------------------------------------------------------------
+    def _window(self, title: str | None) -> int:
+        if title in (None, "", "main"):
+            return self.main()
+        h = self.find_window(title)
+        if h is None:
+            s = self.status()
+            raise ToolError("no_window", f"no editor window titled {title!r}",
+                            hint="editor_status lists dialogs and modules", choices=s["dialogs"] + s["modules"])
+        return h
+
+    def menu(self, window: str | None = None) -> list[dict]:
+        tree = win.window_menu(self._window(window))
+        if not tree:
+            raise ToolError("no_menu", f"{window or 'the main window'} has no menu bar")
+        return tree
+
+    def invoke(self, path: str, window: str | None = None) -> dict:
+        h = self._window(window)
+        win.post_command(h, win.find_command(win.window_menu(h), path))
+        time.sleep(0.5)
+        return self.status()
+
+    @staticmethod
+    def _snapshot(h: int) -> list[dict]:
+        return [{k: v for k, v in c.items() if k not in ("hwnd", "visible")} for c in win.controls(h) if c["visible"]]
+
+    def dialogs(self, include_palettes: bool = False) -> list[dict]:
+        pid = self.status()["pid"]
+        if pid is None:
+            raise ToolError("editor_not_running", "no World Editor is running", hint="editor_launch starts one")
+        return [{"title": win32gui.GetWindowText(h), "controls": self._snapshot(h)} for h in win.windows(pid)
+                if win32gui.GetClassName(h) == "#32770" and not win32gui.GetMenu(h)
+                and (include_palettes or win32gui.GetWindowText(h) not in PALETTES)]
+
+    def dialog_act(self, dialog: str, actions: list[dict]) -> dict:
+        h = self.find_window(dialog)
+        if h is None or win32gui.GetClassName(h) != "#32770":
+            raise ToolError("no_dialog", f"no editor dialog titled {dialog!r}", hint="editor_dialogs lists them",
+                            choices=self.status()["dialogs"])
+        if not isinstance(actions, list):
+            raise ToolError("bad_op", "actions must be a list", hint='[{"control": 14, "set_text": "My Map"}, '
+                                                                     '{"control": "OK", "click": true}]')
+        for i, action in enumerate(actions):
+            if not isinstance(action, dict) or "control" not in action:
+                raise ToolError("bad_op", f"actions[{i}] needs a control (id or text)")
+            controls = [c for c in win.controls(h) if c["visible"]]
+            key = action["control"]
+            control = next((c for c in controls if (c["id"] == key if isinstance(key, int) else
+                                                    c["text"].replace("&", "").strip().lower() == str(key).lower())), None)
+            if control is None:
+                raise ToolError("no_control", f"actions[{i}]: no control {key!r} in {dialog!r}", op_index=i,
+                                choices=[c["text"] or c["id"] for c in controls][:60])
+            if "set_text" in action:
+                win.set_text(control["hwnd"], str(action["set_text"]))
+            elif action.get("click"):
+                win.click(control["hwnd"])
+            elif "check" in action:
+                win.check(control["hwnd"], bool(action["check"]))
+            elif "select" in action:
+                win.select(control["hwnd"], action["select"])
+            else:
+                raise ToolError("bad_op", f"actions[{i}]: expected set_text, click, check or select", op_index=i)
+            time.sleep(0.2)
+        time.sleep(0.5)
+        if not (win32gui.IsWindow(h) and win32gui.IsWindowVisible(h)):
+            return {"title": dialog, "closed": True, "status": self.status()}
+        return {"title": dialog, "closed": False, "controls": self._snapshot(h)}
+
+    def input(self, window: str | None, actions: list[dict]) -> dict:
+        win.send_input(self._window(window), actions)
+        return self.status()
+
+    def screenshot(self, target: str | None = "main", region: list[int] | None = None) -> bytes:
+        return win.screenshot(self._window(target), region)
+
+    @staticmethod
+    def log(lines: int = 200) -> dict:
+        path = config.documents() / "Logs" / "War3EditorLog.txt"
+        text = path.read_text("utf-8", "replace").splitlines()[-lines:] if path.exists() else []
+        folder = config.documents() / "Errors"
+        crashes = sorted((p for p in folder.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime,
+                         reverse=True)[:5] if folder.is_dir() else []
+        return {"log": text, "crashes": [{"folder": p.name, "files": sorted(f.name for f in p.iterdir())}
+                                         for p in crashes]}
+
 
 EDITOR = Editor()

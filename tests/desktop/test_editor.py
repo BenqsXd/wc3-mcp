@@ -88,3 +88,38 @@ def test_editor_lifecycle(maps):
     finally:
         editor.quit(discard=True)
     assert editor.status()["running"] is False
+
+
+@pytest.mark.editor
+def test_editor_ui_access(maps):
+    plain, _ = maps
+    editor = ed.Editor()
+    if editor.status()["running"]:
+        pytest.skip("a World Editor is already running")
+    try:
+        editor.launch(plain)
+        assert "File" in [m["label"] for m in editor.menu()]
+        editor.invoke("Scenario/Map Description...")
+        editor.wait_window("Map Properties")
+        [props] = [d for d in editor.dialogs() if d["title"] == "Map Properties"]
+        assert any(c["id"] == 14 for c in props["controls"])
+        after = editor.dialog_act("Map Properties", [{"control": 14, "set_text": "UI Test"}, {"control": "OK", "click": True}])
+        assert after["closed"] is True
+        for _ in range(40):
+            if editor.status()["dirty"]:
+                break
+            time.sleep(0.25)
+        assert editor.status()["dirty"] is True
+        with pytest.raises(ToolError) as e:
+            editor.dialog_act("No Such Dialog", [])
+        assert e.value.code == "no_dialog"
+
+        editor.invoke("Module/Trigger Editor")
+        editor.wait_window("Trigger Editor")
+        assert editor.menu(window="Trigger Editor") and editor.status()["modules"] == ["Trigger Editor"]
+        assert editor.screenshot()[:8] == b"\x89PNG\r\n\x1a\n"
+        assert editor.screenshot("Trigger Editor", region=[0, 0, 120, 60])[:8] == b"\x89PNG\r\n\x1a\n"
+        editor.input("Trigger Editor", [{"wait": 0.1}])
+        assert set(editor.log(lines=20)) >= {"log", "crashes"}
+    finally:
+        editor.quit(discard=True)

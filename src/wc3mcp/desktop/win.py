@@ -246,7 +246,7 @@ def close(hwnd: int) -> None:
 
 
 # ---- foreground, screenshots, input ----------------------------------------------------------------------------
-def _activate(hwnd: int) -> None:
+def activate(hwnd: int) -> None:
     fg = win32gui.GetForegroundWindow()
     ours = win32api.GetCurrentThreadId()
     theirs = win32process.GetWindowThreadProcessId(fg)[0] if fg else 0
@@ -268,13 +268,13 @@ def foreground(hwnd: int):
     """Bring `hwnd` to the front for the duration and give the focus back to the previous window afterwards."""
     previous = win32gui.GetForegroundWindow()
     if previous != hwnd:
-        _activate(hwnd)
+        activate(hwnd)
         time.sleep(0.3)
     try:
         yield
     finally:
         if previous and previous != hwnd and win32gui.IsWindow(previous):
-            _activate(previous)
+            activate(previous)
 
 
 def screenshot(hwnd: int | None = None, region: list[int] | None = None) -> bytes:
