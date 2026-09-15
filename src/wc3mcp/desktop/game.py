@@ -94,6 +94,10 @@ class Game:
                   "missing": [n for n in wanted if n not in found], "exited_early": process.poll() is not None,
                   "log": interesting(self._log_lines(started - 5))[-200:],
                   "crash": next(iter(sorted(self._crash_folders() - crashes)), None)}
+        if result["missing"]:
+            result["hint"] = ("no result file was written: a Battle.net login screen or a dialog stops the game before the "
+                              "map loads (log in once with 'Keep me logged in'; screenshot=true shows the window), or the "
+                              "map script failed (script_validate)")
         if screenshot and process.poll() is None:
             window = next(iter(win.windows(process.pid)), None)
             if window:
