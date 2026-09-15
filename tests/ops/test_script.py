@@ -2,11 +2,12 @@ import re
 
 import pytest
 
-from corpus import HAVE_INSTALL, _storage, ladder_maps, open_sample
+from corpus import HAVE_INSTALL, _storage, ladder_maps, open_sample, sample_map_ids
 from wc3mcp.errors import ToolError
 from wc3mcp.gamedata.catalog import Catalog
 from wc3mcp.ops.elements import elements_edit
-from wc3mcp.ops.script import map_validate, script_build, script_validate
+from wc3mcp.ops.placed import placed_edit, placed_list
+from wc3mcp.ops.script import balance, map_validate, script_build, script_validate
 from wc3mcp.ops.triggers import triggers_edit
 from wc3mcp.project.workspace import MapProject
 
@@ -62,6 +63,64 @@ def test_regions_cameras_and_sounds_are_built_into_the_script(tmp_path, catalog)
     elements_edit(project, catalog, "region", [{"op": "delete", "name": "Arena"}])
     script_build(project, catalog)
     assert "gg_rct_Arena" not in project.read("war3map.j").decode("utf-8")
+
+
+@pytest.fixture(scope="module")
+def layers():
+    cache = {}
+    return lambda project: cache.setdefault(balance(project), Catalog(_storage(), balance=balance(project)))
+
+
+@pytest.mark.parametrize("map_id", sample_map_ids())
+def test_script_build_keeps_editor_scripts(tmp_path, layers, map_id):
+    arc = open_sample(map_id)
+    if arc.read("war3map.j") is None or arc.read("war3map.wtg") is None:
+        pytest.skip("not a JASS map with triggers")
+    src = tmp_path / "map.w3x"
+    src.write_bytes(arc.data)
+    project = MapProject.open(src)
+    assert script_build(project, layers(project))["changed"] is False
+
+
+def test_placed_objects_are_built_into_the_script(tmp_path, catalog):
+    project = open_copy(tmp_path, ladder("war3map.j"))
+    result = placed_edit(project, catalog, [
+        {"op": "add", "kind": "unit", "type": "Hpal", "x": 128, "y": -256, "owner": 1, "hero": {"level": 3},
+         "abilities": [{"id": "AHhb", "level": 2}], "inventory": [{"slot": 0, "item": "ratc"}], "life": 50,
+         "drops": {"sets": [[{"item": "ratc", "chance": 60}]]}},
+        {"op": "add", "kind": "item", "type": "ratc", "x": 64, "y": 64},
+        {"op": "add", "kind": "destructible", "type": "LTbr", "x": 512, "y": 512,
+         "drops": {"sets": [[{"item": "YiI1", "chance": 100}]]}}])
+    hero, item, barrel = (next(x for x in placed_list(project, catalog, limit=5000)["items"] if x["ref"] == r)
+                          for r in result["created"])
+    triggers_edit(project, catalog, [{"op": "trigger", "name": "Uses", "script":
+                                      f"function InitTrig_Uses takes nothing returns nothing\n"
+                                      f"    call KillUnit( {hero['script_name']} )\nendfunction"}])
+    assert script_build(project, catalog)["changed"]
+    text = project.read("war3map.j").decode("utf-8").replace("\r\n", "\n")
+    name = hero["script_name"]
+    assert f"    unit                    {name}          = null\n" in text
+    assert (f"    set {name} = BlzCreateUnitWithSkin( p, 'Hpal', 128.0, -256.0, 270.000, 'Hpal' )\n"
+            f"    call SetHeroLevel( {name}, 3, false )\n    set life = GetUnitState( {name}, UNIT_STATE_LIFE )\n"
+            f"    call SetUnitState( {name}, UNIT_STATE_LIFE, 0.50 * life )\n"
+            f"    call SelectHeroSkill( {name}, 'AHhb' )\n    call SelectHeroSkill( {name}, 'AHhb' )\n"
+            f"    call UnitAddItemToSlotById( {name}, 'ratc', 0 )\n") in text
+    assert "function CreateUnitsForPlayer1 takes nothing returns nothing" in text and "call CreateUnitsForPlayer1(  )" in text
+    assert "call RandomDistAddItem( 'ratc', 60 )\n        call RandomDistAddItem( -1, 40 )" in text
+    assert "    call BlzCreateItemWithSkin( 'ratc', 64.0, 64.0, 'ratc' )" in text and "    call CreateAllItems(  )" in text
+    assert "call TriggerAddAction( t, function SaveDyingWidget )" in text
+    assert "call RandomDistAddItem( ChooseRandomItemEx( ITEM_TYPE_PERMANENT, 1 ), 100 )" in text
+    main = text[text.index("function main takes"):]
+    calls = [main.index(f"    call {fn}(  )") for fn in ("CreateAllDestructables", "CreateAllItems", "CreateAllUnits",
+                                                             "InitBlizzard")]
+    assert calls == sorted(calls)
+    assert script_build(project, catalog)["changed"] is False
+    assert script_validate(project, catalog)["ok"]
+
+    placed_edit(project, catalog, [{"op": "delete", "ref": r} for r in (item["ref"], barrel["ref"])])
+    script_build(project, catalog)
+    text = project.read("war3map.j").decode("utf-8")
+    assert "CreateAllItems" not in text and "Destructable Objects" not in text and "Doodad" not in text
 
 
 def test_script_errors_point_at_their_trigger(tmp_path, catalog):

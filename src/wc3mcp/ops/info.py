@@ -27,7 +27,7 @@ RACES = {0: "none", 1: "human", 2: "orc", 3: "undead", 4: "night_elf"}
 AVAILABILITY = {0: "unavailable", 1: "available", 2: "researched"}
 SCRIPT_LANGUAGES = {0: "jass", 1: "lua"}
 POSITION_TYPES = {0: "unit", 1: "building", 2: "item"}
-SCRIPT_KEYS = ("players", "forces", "upgrades", "tech", "random_unit_tables", "random_item_tables", "camera_bounds",
+SCRIPT_KEYS = ("players", "forces", "upgrades", "tech", "camera_bounds",  # random tables: map_save rebuilds them
                "camera_bounds_complements", "playable_width", "playable_height", "script_language")
 SCRIPT_FLAGS = ("modify_ally_priorities", "melee_map", "fixed_player_settings_for_custom_forces", "use_custom_forces",
                 "use_custom_techtree", "use_custom_abilities", "use_custom_upgrades")

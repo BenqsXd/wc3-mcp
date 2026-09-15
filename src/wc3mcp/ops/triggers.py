@@ -125,8 +125,10 @@ _HINT = ('ops: {"op": "category", "name": "Spawns"}, {"op": "variable", "name": 
          '{"op": "delete", "what": "trigger", "name": "Spawn"}, {"op": "header", "script": "..."}')
 
 
-def _all_params(ecas):
+def _all_params(ecas, enabled_only: bool = False):
     for e in ecas:
+        if enabled_only and not e.enabled:
+            continue
         stack = list(e.params)
         while stack:
             p = stack.pop()
@@ -135,7 +137,7 @@ def _all_params(ecas):
                 stack.append(p.index)
             if p.call is not None:
                 stack.extend(p.call.params or [])
-        yield from _all_params(e.children)
+        yield from _all_params(e.children, enabled_only)
 
 
 def script_users(tf, ct, script: str) -> list[str]:

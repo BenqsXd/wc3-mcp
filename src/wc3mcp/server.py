@@ -116,7 +116,8 @@ def map_close(path: str, discard: bool = False) -> dict:
     return result
 
 
-SCRIPT_SOURCES = {"war3map.wtg", "war3map.wct", "war3map.w3r", "war3map.w3c", "war3map.w3s"}
+SCRIPT_SOURCES = {"war3map.wtg", "war3map.wct", "war3map.w3r", "war3map.w3c", "war3map.w3s", "war3map.doo",
+                  "war3mapunits.doo", "war3map.w3i"}
 
 
 @_tool
@@ -125,10 +126,11 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
              validate: bool = True) -> dict:
     """Save the working copy. By default backs up the original and replaces it atomically. dest/format write a
     copy elsewhere (mpq archive or map folder). Refuses if the original changed on disk since opening unless
-    force=true. rebuild_script: auto regenerates war3map.j when triggers, regions, cameras or sounds changed (JASS
-    maps with trigger data), always regenerates whenever possible, never leaves the script alone. validate runs
-    map_validate first and refuses to save on errors."""
-    project, catalog = _project(path), _catalog("enUS", "Custom_V1", True)
+    force=true. rebuild_script: auto regenerates war3map.j when triggers, regions, cameras, sounds, placed objects or
+    map info changed (JASS maps with trigger data), always regenerates whenever possible, never leaves the script
+    alone. validate runs map_validate first and refuses to save on errors."""
+    project = _project(path)
+    catalog = _catalog("enUS", script_ops.balance(project), True)
     warnings = []
     if dest is None:  # take turns with the World Editor on the same file
         seen = desktop_editor.EDITOR.status()
@@ -360,11 +362,12 @@ def placed_edit(path: str, ops: list[dict]) -> dict:
 
 @_tool
 def script_build(path: str) -> dict:
-    """Regenerate the trigger-dependent parts of war3map.j exactly as the World Editor writes them (variable
-    globals, InitGlobals, custom script code, trigger functions, InitCustomTriggers, RunInitializationTriggers);
-    the rest of the script is kept. map_save does this automatically when triggers changed. Lua maps are not
-    rebuilt yet: save them in the World Editor."""
-    return script_ops.script_build(_project(path), _catalog("enUS", "Custom_V1", True))
+    """Regenerate the editor-generated parts of war3map.j exactly as the World Editor writes them (variable globals,
+    InitGlobals, custom script code, trigger functions, regions, cameras, sounds, placed units, items and
+    destructables, item tables, random groups); the rest of the script is kept. map_save does this automatically
+    when those sources changed. Lua maps are not rebuilt yet: save them in the World Editor."""
+    project = _project(path)
+    return script_ops.script_build(project, _catalog("enUS", script_ops.balance(project), True))
 
 
 @_tool

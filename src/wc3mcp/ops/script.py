@@ -2,10 +2,11 @@
 import posixpath
 
 from ..errors import ToolError
-from ..formats import w3e, w3i
+from ..formats import doo, unitsdoo, w3e, w3i
 from ..formats.binary import FormatError
-from ..script import build, world
+from ..script import build, placed, world
 from ..script import validate as scripts
+from . import objdata
 from . import validate as checks
 from .elements import SOUND_EXTENSIONS, _load_file
 from .strings import load_strings
@@ -63,6 +64,99 @@ def _world(project, catalog) -> world.World:
                        _load_file(project, "sound")[0], terrain, load_strings(project), label_row, audio)
 
 
+def balance(project) -> str:
+    """The game data layer the editor uses for this map's script: melee (latest patch) for data set 2, else custom."""
+    try:
+        return "Melee_V1" if w3i.parse(project.read("war3map.w3i")).game_data_set == 2 else "Custom_V1"
+    except (ToolError, FormatError):
+        return "Custom_V1"
+
+
+class _Objects:
+    """The map's object data (war3map.* and war3mapSkin.* changes) over the catalog's objects."""
+    FIELDS = {"unit": ["ubdg", "uabi", "utco"], "ability": ["aher", "aord", "aoro", "aorf"],
+              "destructible": ["btco", "bvcr", "bvcg", "bvcb"], "item": ["itco"]}
+
+    def __init__(self, project, catalog):
+        self.project, self.catalog = project, catalog
+        self._mods, self._ids, self._rows = {}, {}, {}
+
+    def _changes(self, kind: str) -> dict[str, tuple[str, dict]]:
+        if kind not in self._mods:
+            table = {}
+            for om in objdata._load(self.project, kind)[:2]:
+                for custom, entries in ((False, om.original), (True, om.custom)):
+                    for e in entries:
+                        oid = (e.new_id if custom else e.base_id).decode("latin-1")
+                        table.setdefault(oid, (e.base_id.decode("latin-1"), {}))[1].update(
+                            {m.id.decode("latin-1"): m.value for m in e.mods if m.level <= 1})
+            self._mods[kind] = table
+        return self._mods[kind]
+
+    def exists(self, kind: str, oid: str) -> bool:
+        if kind not in self._ids:
+            self._ids[kind] = set(self.catalog.ids(kind)) | {k for k, (base, _) in self._changes(kind).items() if k != base}
+        return oid in self._ids[kind]
+
+    def value(self, kind: str, oid: str, field: str):
+        base, changes = self._changes(kind).get(oid, (oid, {}))
+        if field in changes:
+            return changes[field]
+        if (kind, base) not in self._rows:
+            try:
+                doc = self.catalog.get(kind, base, self.FIELDS[kind])["fields"]
+                self._rows[(kind, base)] = {k: v.get("value") for k, v in doc.items()}
+            except ToolError:
+                self._rows[(kind, base)] = {}
+        return self._rows[(kind, base)].get(field)
+
+
+def _int(value, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _placed(project, catalog) -> placed.Placed:
+    objects = _Objects(project, catalog)
+
+    def parsed(name: str, codec):
+        data = _read(project, name)
+        try:
+            return codec.parse(data) if data is not None else None
+        except FormatError as e:
+            raise ToolError("bad_file", f"{name}: {e}", hint="map_file_write can replace a damaged file") from e
+
+    def item(t: str) -> dict | None:
+        if t != "iDNR" and not objects.exists("item", t):
+            return None
+        return {"team_color": _int(objects.value("item", t, "itco"), 0)}
+
+    def unit(t: str) -> dict | None:
+        if t == "sloc" or item(t) is not None:
+            return None
+        if t in ("uDNR", "bDNR"):
+            return {"building": t == "bDNR", "abilities": [], "team_color": -1}
+        return {"building": objects.value("unit", t, "ubdg") in (1, "1"),
+                "abilities": str(objects.value("unit", t, "uabi") or "").split(","),
+                "team_color": _int(objects.value("unit", t, "utco"), -1)}
+
+    def ability(a: str) -> dict:
+        return {"hero": objects.value("ability", a, "aher") in (1, "1"), "order": objects.value("ability", a, "aord"),
+                "orderon": objects.value("ability", a, "aoro"), "orderoff": objects.value("ability", a, "aorf")}
+
+    def destructible(t: str) -> dict | None:
+        if not objects.exists("destructible", t):
+            return None
+        return {"team_color": _int(objects.value("destructible", t, "btco"), 24),
+                "vertex": tuple(objects.value("destructible", t, f) for f in ("bvcr", "bvcg", "bvcb"))}
+
+    info = parsed("war3map.w3i", w3i)
+    return placed.Placed(parsed("war3mapUnits.doo", unitsdoo), parsed("war3map.doo", doo), info,
+                         _load_file(project, "region")[0], unit, ability, destructible, item)
+
+
 def script_build(project, catalog) -> dict:
     lang = language(project)
     if lang == "lua":
@@ -75,7 +169,8 @@ def script_build(project, catalog) -> dict:
     name = _script_file(project, lang)
     before = project.read(name)
     try:
-        text = build.splice(before.decode("utf-8", "surrogateescape"), tf, ct, td, world=_world(project, catalog))
+        text = build.splice(before.decode("utf-8", "surrogateescape"), tf, ct, td, world=_world(project, catalog),
+                            placed=_placed(project, catalog))
     except ValueError as e:
         raise ToolError("not_editor_script", f"{name}: {e}",
                         hint="this script was not written by the World Editor; edit it with map_file_write") from e

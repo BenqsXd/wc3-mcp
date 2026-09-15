@@ -5,6 +5,7 @@ import re
 from ..formats import wtg
 from ..gamedata.triggerdata import EVENT
 from ..ops.gui import RAWCODE_TYPES, script_name
+from . import placed as placedgen
 from . import world as worldgen
 from .jass import BAR, JassGen
 
@@ -125,9 +126,12 @@ def _find(s: str, sub: str, start: int = 0) -> int:
 
 
 WORLD_SECTIONS = (("Sound Assets", "InitSounds"), ("Regions", "CreateRegions"), ("Cameras", "CreateCameras"))
-SOUND_ANCHORS = ("Destructable Objects", "Items", "Unit Creation")   # banners that follow Sound Assets
-MAIN_ANCHORS = ("InitUpgrades", "InitTechTree", "CreateAllDestructables", "CreateAllItems", "InitRandomGroups",
-                "CreateAllUnits", "InitBlizzard")
+ZONE = ("Random Groups", "Map Item Tables", "Unit Item Tables", "Destructible Item Tables", "Sound Assets",
+        "Destructable Objects", "Items", "Unit Creation", "Regions", "Cameras")  # between the Custom Script Code sections
+MAIN_ORDER = ("InitSounds", "CreateRegions", "CreateCameras", "InitUpgrades", "InitTechTree", "CreateAllDestructables",
+              "CreateAllItems", "InitRandomGroups", "CreateAllUnits", "InitBlizzard")
+PLACED_DECL = ("gg_unit_", "gg_item_", "gg_dest_")
+_BANNER_LINE = re.compile(r"^//\*{75}\r\n//\*\r\n//\*  (.*)\r\n//\*\r\n//\*{75}\r\n", re.M)
 
 
 def _trigger_start(o: str, after: int) -> tuple[int, int]:
@@ -139,57 +143,83 @@ def _trigger_start(o: str, after: int) -> tuple[int, int]:
     return (last_csc if last_csc != first_csc else t0), t0
 
 
-def _splice_world(o: str, parts: dict) -> str:
-    for title, _ in WORLD_SECTIONS:
-        start = o.find(_crlf(banner(title)))
-        if start >= 0:
-            end = _find(o, "\r\nendfunction\r\n", start) + len("\r\nendfunction\r\n")
-            o = o[:start] + o[end + (2 if o.startswith("\r\n", end) else 0):]
+def _splice_zone(o: str, texts: dict, calls: dict) -> str:
+    """Replace the sections named in `texts` (title -> text or None) between the empty Custom Script Code section and
+    the triggers, and the main calls named in `calls` (function -> present), keeping the editor's order."""
+    first = _crlf(banner("Custom Script Code") + "\n")
+    z0 = _find(o, first) + len(first)
+    z1 = _trigger_start(o, z0 - len(first))[0]
+    zone = o[z0:z1]
+    starts = [m.start() for m in _BANNER_LINE.finditer(zone)]
+    if zone[:starts[0] if starts else len(zone)].strip():
+        raise ValueError("not an editor-generated war3map.j: unexpected text after the Custom Script Code banner")
+    existing = {}
+    for a, b in zip(starts, starts[1:] + [len(zone)]):
+        title = _BANNER_LINE.match(zone, a).group(1)
+        if title not in ZONE:
+            raise ValueError(f"not an editor-generated war3map.j: unexpected section {title!r}")
+        existing[title] = zone[a:b]
+    parts = [(_crlf(texts[t]) if texts[t] else None) if t in texts else existing.get(t) for t in ZONE]
+    o = o[:z0] + "".join(x for x in parts if x) + o[z1:]
 
-    def section(title: str, fn: str) -> str:
-        return _crlf(banner(title) + "\n" + parts[fn] + "\n") if parts[fn] else ""
-
-    if parts["InitSounds"]:
-        anchors = [i for i in (o.find(_crlf(banner(t))) for t in SOUND_ANCHORS) if i >= 0]
-        at = min(anchors) if anchors else _trigger_start(o, 0)[0]
-        o = o[:at] + section("Sound Assets", "InitSounds") + o[at:]
-    at = _trigger_start(o, 0)[0]
-    o = o[:at] + section("Regions", "CreateRegions") + section("Cameras", "CreateCameras") + o[at:]
     m0 = _find(o, "\r\nfunction main takes nothing returns nothing\r\n")
     m1 = _find(o, "\r\nendfunction\r\n", m0 + 2)
-    main = o[m0:m1]
-    for _, fn in WORLD_SECTIONS:
-        main = main.replace(f"\r\n    call {fn}(  )", "")
-    anchors = [i for i in (main.find(f"\r\n    call {fn}(  )") for fn in MAIN_ANCHORS) if i >= 0]
-    at = min(anchors) if anchors else len(main)
-    calls = "".join(f"\r\n    call {fn}(  )" for _, fn in WORLD_SECTIONS if parts[fn])
-    return o[:m0] + main[:at] + calls + main[at:] + o[m1:]
+    lines = [x for x in o[m0:m1].split("\r\n") if not (x.startswith("    call ") and x[9:-4] in calls
+                                                      and x.endswith("(  )"))]
+    for k, fn in enumerate(MAIN_ORDER):
+        if calls.get(fn):
+            later = {f"    call {g}(  )" for g in MAIN_ORDER[k + 1:]}
+            at = next((i for i, x in enumerate(lines) if x in later), len(lines))
+            lines.insert(at, f"    call {fn}(  )")
+    return o[:m0] + "\r\n".join(lines) + o[m1:]
 
 
-def splice(original: str, tf, ct, td, world=None) -> str:
+def splice(original: str, tf, ct, td, world=None, placed=None) -> str:
     """Regenerate globals (user-defined and gg_trg_ lines), InitGlobals, the header's Custom Script Code section and
     the Triggers section (sections, InitCustomTriggers, RunInitializationTriggers) of an editor-generated script.
-    With a world.World also the Sound Assets, Regions and Cameras sections, their main calls and globals."""
+    With a world.World also the Sound Assets, Regions and Cameras sections; with a placed.Placed the placed object,
+    item table and random group sections; both with their main calls and globals."""
     o = _crlf(original.replace("\r\n", "\n")) if "\r\n" not in original else original
-    parts = None
-    if world is not None:
-        parts = worldgen.sections(world, o)
-        o = _splice_world(o, parts)
+    world_parts = worldgen.sections(world, o) if world is not None else None
+    placed_parts = placedgen.sections(placed, o, tf, ct) if placed is not None else None
+    texts, calls = {}, {}
+    if world_parts is not None:
+        for title, fn in WORLD_SECTIONS:
+            texts[title] = banner(title) + "\n" + world_parts[fn] + "\n" if world_parts[fn] else None
+            calls[fn] = bool(world_parts[fn])
+    if placed_parts is not None:
+        texts.update({t: placed_parts[t] for t in placedgen.TITLES})
+        calls.update({fn: fn in placed_parts["main"] for fn in placedgen.MAIN_CALLS})
+    if texts:
+        o = _splice_zone(o, texts, calls)
+
     g0 = _find(o, "\r\nglobals\r\n") + len("\r\nglobals\r\n")
     g1 = _find(o, "\r\nendglobals\r\n", g0 - 2) + 2
     lines = o[g0:g1].split("\r\n")[:-1]
-    generated = lines[lines.index("    // Generated") + 1:] if "    // Generated" in lines else []
+    rg = lines.index("    // Random Groups") if "    // Random Groups" in lines else len(lines)
+    random_block = lines[rg:]
+    head = lines[:rg - 1] if rg < len(lines) and rg and lines[rg - 1] == "" else lines[:rg]
+    generated = head[head.index("    // Generated") + 1:] if "    // Generated" in head else []
     generated = [x for x in generated if not TRIGGER_DECL.fullmatch(x)]
-    if parts is None:
-        at = next((k for k, x in enumerate(generated) if not (x.split() + ["", ""])[1].startswith(BEFORE_TRIGGERS)),
-                  len(generated))
+    name_of = lambda x: (x.split() + ["", ""])[1]  # noqa: E731
+    if world_parts is None:
+        at = next((k for k, x in enumerate(generated) if not name_of(x).startswith(BEFORE_TRIGGERS)), len(generated))
     else:
-        generated = [x for x in generated if not (x.split() + ["", ""])[1].startswith(BEFORE_TRIGGERS)]
-        decls = [declaration(jass_type, name, False, value) for jass_type, name, value in parts["globals"]]
+        generated = [x for x in generated if not name_of(x).startswith(BEFORE_TRIGGERS)]
+        decls = [declaration(jass_type, name, False, value) for jass_type, name, value in world_parts["globals"]]
         generated[0:0] = decls
         at = len(decls)
-    generated[at:at] = trigger_globals(tf)
+    triggers_decls = trigger_globals(tf)
+    generated[at:at] = triggers_decls
+    if placed_parts is not None:
+        generated = [x for x in generated if not name_of(x).startswith(PLACED_DECL)]
+        at += len(triggers_decls)
+        generated[at:at] = [declaration(jass_type, name, False, "null") for jass_type, name in placed_parts["globals"]]
+        count = placed_parts["random_groups"]
+        random_block = ["    // Random Groups"] + [f"    integer array gg_rg_{k:03d}" for k in range(count)] if count else []
     globals_text = user_globals(tf, td) + ("    // Generated\n" + "".join(x + "\n" for x in generated) if generated else "")
+    if random_block:
+        globals_text += "\n" + "".join(x + "\n" for x in random_block)
 
     i0 = _find(o, "\r\nfunction InitGlobals takes nothing returns nothing\r\n", g1) + 2
     i1 = _find(o, "\r\nendfunction\r\n", i0) + len("\r\nendfunction\r\n")

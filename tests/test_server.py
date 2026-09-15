@@ -189,6 +189,9 @@ def test_placed_tools(tmp_path):
     assert ref in [x["ref"] for x in listed["items"]] and listed["bounds"]["playable"]
     err = call("placed_edit", {"path": path, "ops": [{"op": "delete", "ref": "unit:99999"}]})
     assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "not_found"
+    if Archive.open(src).read("war3map.j") is not None:
+        saved = payload(call("map_save", {"path": path}))
+        assert saved["script"]["changed"] and b"CreateUnitsForPlayer1(  )" in Archive.open(src).read("war3map.j")
 
 
 @needs_install
