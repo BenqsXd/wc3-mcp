@@ -191,6 +191,22 @@ def test_script_tools_and_save_rebuild(tmp_path):
     assert payload(call("script_build", {"path": path}))["changed"] is False
 
 
+@needs_install
+def test_map_save_rebuilds_the_script_after_element_edits(tmp_path):
+    maps = [p for p in ladder_maps() if Archive.open(p).read("war3map.j") is not None]
+    if not maps:
+        pytest.skip("no JASS ladder maps in Documents")
+    src = tmp_path / maps[0].name
+    src.write_bytes(maps[0].read_bytes())
+    path = str(src)
+    payload(call("map_open", {"path": path}))
+    payload(call("elements_edit", {"path": path, "kind": "region", "ops": [
+        {"op": "upsert", "name": "Arena", "left": -256, "bottom": -256, "right": 256, "top": 256}]}))
+    saved = payload(call("map_save", {"path": path}))
+    assert saved["script"]["changed"] and saved["validation"]["errors"] == []
+    assert b"set gg_rct_Arena = Rect( -256.0, -256.0, 256.0, 256.0 )" in Archive.open(src).read("war3map.j")
+
+
 def test_map_save_takes_turns_with_the_editor(tmp_path, monkeypatch):
     from wc3mcp.desktop import editor
 

@@ -28,8 +28,9 @@ def blocks(name: str) -> tuple[tuple[str, int, str], ...]:
 
 def script_name(name: str) -> str:
     """The identifier the editor derives from a trigger name (gg_trg_<this>): trailing spaces dropped, leading kept,
-    and a trailing '_' followed by 'u' (JASS identifiers cannot end with an underscore)."""
-    ident = re.sub(r"[^A-Za-z0-9_]", "_", name.rstrip())
+    and a trailing '_' followed by 'u' (JASS identifiers cannot end with an underscore). Every byte of a non-ASCII
+    character becomes its own '_', as in the editor."""
+    ident = re.sub(rb"[^A-Za-z0-9_]", b"_", name.rstrip().encode("utf-8", "surrogateescape")).decode("ascii")
     return ident + "u" if ident.endswith("_") else ident
 
 

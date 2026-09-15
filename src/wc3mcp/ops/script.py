@@ -1,11 +1,15 @@
-"""Script tools on an open map: rebuild the trigger-dependent script parts, validate the script, cross-check files."""
+"""Script tools on an open map: rebuild the editor-generated script parts, validate the script, cross-check files."""
+import posixpath
+
 from ..errors import ToolError
-from ..formats import w3i
+from ..formats import w3e, w3i
 from ..formats.binary import FormatError
-from ..script import build
+from ..script import build, world
 from ..script import validate as scripts
 from . import validate as checks
-from .triggers import _load
+from .elements import SOUND_EXTENSIONS, _load_file
+from .strings import load_strings
+from .triggers import _load, _read
 
 SCRIPT_FILES = {"jass": ("war3map.j", "scripts\\war3map.j"), "lua": ("war3map.lua", "scripts\\war3map.lua")}
 
@@ -31,6 +35,34 @@ def _script_file(project, lang: str) -> str:
     return name
 
 
+def _world(project, catalog) -> world.World:
+    terrain = _read(project, "war3map.w3e")
+    try:
+        terrain = w3e.parse(terrain) if terrain is not None else None
+    except FormatError:
+        terrain = None
+
+    def label_row(label: str) -> dict | None:
+        try:
+            return catalog.get("sound", label)["fields"]
+        except ToolError:
+            return None
+
+    def audio(path: str) -> bytes | None:
+        data = _read(project, path)
+        if data is not None:
+            return data
+        stem = posixpath.splitext(path.replace("\\", "/"))[0]
+        for ext in SOUND_EXTENSIONS:
+            full = catalog.storage.resolve(stem + ext, **{**catalog.layer, "hd": False})
+            if full:
+                return catalog.storage.read(full)
+        return None
+
+    return world.World(_load_file(project, "region")[0], _load_file(project, "camera")[0],
+                       _load_file(project, "sound")[0], terrain, load_strings(project), label_row, audio)
+
+
 def script_build(project, catalog) -> dict:
     lang = language(project)
     if lang == "lua":
@@ -43,7 +75,7 @@ def script_build(project, catalog) -> dict:
     name = _script_file(project, lang)
     before = project.read(name)
     try:
-        text = build.splice(before.decode("utf-8", "surrogateescape"), tf, ct, td)
+        text = build.splice(before.decode("utf-8", "surrogateescape"), tf, ct, td, world=_world(project, catalog))
     except ValueError as e:
         raise ToolError("not_editor_script", f"{name}: {e}",
                         hint="this script was not written by the World Editor; edit it with map_file_write") from e

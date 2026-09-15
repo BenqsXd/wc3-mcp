@@ -5,6 +5,7 @@ import re
 from ..formats import wtg
 from ..gamedata.triggerdata import EVENT
 from ..ops.gui import RAWCODE_TYPES, script_name
+from . import world as worldgen
 from .jass import BAR, JassGen
 
 BANNER = "//" + "*" * 75
@@ -123,17 +124,70 @@ def _find(s: str, sub: str, start: int = 0) -> int:
     return i
 
 
-def splice(original: str, tf, ct, td) -> str:
+WORLD_SECTIONS = (("Sound Assets", "InitSounds"), ("Regions", "CreateRegions"), ("Cameras", "CreateCameras"))
+SOUND_ANCHORS = ("Destructable Objects", "Items", "Unit Creation")   # banners that follow Sound Assets
+MAIN_ANCHORS = ("InitUpgrades", "InitTechTree", "CreateAllDestructables", "CreateAllItems", "InitRandomGroups",
+                "CreateAllUnits", "InitBlizzard")
+
+
+def _trigger_start(o: str, after: int) -> tuple[int, int]:
+    """(start of the header's Custom Script Code section or of the Triggers banner, start of the Triggers banner)"""
+    t0 = _find(o, _crlf(banner("Triggers") + "\n"), after)
+    csc = _crlf(banner("Custom Script Code"))
+    first_csc = _find(o, csc, after)
+    last_csc = o.rfind(csc, 0, t0)
+    return (last_csc if last_csc != first_csc else t0), t0
+
+
+def _splice_world(o: str, parts: dict) -> str:
+    for title, _ in WORLD_SECTIONS:
+        start = o.find(_crlf(banner(title)))
+        if start >= 0:
+            end = _find(o, "\r\nendfunction\r\n", start) + len("\r\nendfunction\r\n")
+            o = o[:start] + o[end + (2 if o.startswith("\r\n", end) else 0):]
+
+    def section(title: str, fn: str) -> str:
+        return _crlf(banner(title) + "\n" + parts[fn] + "\n") if parts[fn] else ""
+
+    if parts["InitSounds"]:
+        anchors = [i for i in (o.find(_crlf(banner(t))) for t in SOUND_ANCHORS) if i >= 0]
+        at = min(anchors) if anchors else _trigger_start(o, 0)[0]
+        o = o[:at] + section("Sound Assets", "InitSounds") + o[at:]
+    at = _trigger_start(o, 0)[0]
+    o = o[:at] + section("Regions", "CreateRegions") + section("Cameras", "CreateCameras") + o[at:]
+    m0 = _find(o, "\r\nfunction main takes nothing returns nothing\r\n")
+    m1 = _find(o, "\r\nendfunction\r\n", m0 + 2)
+    main = o[m0:m1]
+    for _, fn in WORLD_SECTIONS:
+        main = main.replace(f"\r\n    call {fn}(  )", "")
+    anchors = [i for i in (main.find(f"\r\n    call {fn}(  )") for fn in MAIN_ANCHORS) if i >= 0]
+    at = min(anchors) if anchors else len(main)
+    calls = "".join(f"\r\n    call {fn}(  )" for _, fn in WORLD_SECTIONS if parts[fn])
+    return o[:m0] + main[:at] + calls + main[at:] + o[m1:]
+
+
+def splice(original: str, tf, ct, td, world=None) -> str:
     """Regenerate globals (user-defined and gg_trg_ lines), InitGlobals, the header's Custom Script Code section and
-    the Triggers section (sections, InitCustomTriggers, RunInitializationTriggers) of an editor-generated script."""
+    the Triggers section (sections, InitCustomTriggers, RunInitializationTriggers) of an editor-generated script.
+    With a world.World also the Sound Assets, Regions and Cameras sections, their main calls and globals."""
     o = _crlf(original.replace("\r\n", "\n")) if "\r\n" not in original else original
+    parts = None
+    if world is not None:
+        parts = worldgen.sections(world, o)
+        o = _splice_world(o, parts)
     g0 = _find(o, "\r\nglobals\r\n") + len("\r\nglobals\r\n")
     g1 = _find(o, "\r\nendglobals\r\n", g0 - 2) + 2
     lines = o[g0:g1].split("\r\n")[:-1]
     generated = lines[lines.index("    // Generated") + 1:] if "    // Generated" in lines else []
     generated = [x for x in generated if not TRIGGER_DECL.fullmatch(x)]
-    at = next((k for k, x in enumerate(generated) if not (x.split() + ["", ""])[1].startswith(BEFORE_TRIGGERS)),
-              len(generated))
+    if parts is None:
+        at = next((k for k, x in enumerate(generated) if not (x.split() + ["", ""])[1].startswith(BEFORE_TRIGGERS)),
+                  len(generated))
+    else:
+        generated = [x for x in generated if not (x.split() + ["", ""])[1].startswith(BEFORE_TRIGGERS)]
+        decls = [declaration(jass_type, name, False, value) for jass_type, name, value in parts["globals"]]
+        generated[0:0] = decls
+        at = len(decls)
     generated[at:at] = trigger_globals(tf)
     globals_text = user_globals(tf, td) + ("    // Generated\n" + "".join(x + "\n" for x in generated) if generated else "")
 
@@ -141,11 +195,7 @@ def splice(original: str, tf, ct, td) -> str:
     i1 = _find(o, "\r\nendfunction\r\n", i0) + len("\r\nendfunction\r\n")
 
     trig_banner = _crlf(banner("Triggers") + "\n")
-    t0 = _find(o, trig_banner, i1)
-    csc = _crlf(banner("Custom Script Code"))
-    first_csc = _find(o, csc, i1)
-    last_csc = o.rfind(csc, 0, t0)
-    c0 = last_csc if last_csc != first_csc else t0
+    c0, t0 = _trigger_start(o, i1)
 
     ict = o.rfind(_crlf(f"{BAR}\nfunction InitCustomTriggers takes nothing returns nothing\n"))
     if ict < t0:

@@ -47,6 +47,7 @@ def test_script_names_follow_the_editor():
     assert script_name("Doom06Cripple ") == "Doom06Cripple"                         # NightElf02: trailing spaces dropped
     assert script_name("  Footman01 End Movement") == "__Footman01_End_Movement"   # Human01: leading spaces kept
     assert script_name("----Observatory Quest----") == "____Observatory_Quest____u"  # HumanX01: no trailing '_'
+    assert script_name("Área") == "__rea"                 # one '_' per UTF-8 byte
 
 
 def test_json_converts_both_ways(catalog):

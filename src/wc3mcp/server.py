@@ -115,15 +115,18 @@ def map_close(path: str, discard: bool = False) -> dict:
     return result
 
 
+SCRIPT_SOURCES = {"war3map.wtg", "war3map.wct", "war3map.w3r", "war3map.w3c", "war3map.w3s"}
+
+
 @_tool
 def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"] | None = None,
              force: bool = False, rebuild_script: Literal["auto", "always", "never"] = "auto",
              validate: bool = True) -> dict:
     """Save the working copy. By default backs up the original and replaces it atomically. dest/format write a
     copy elsewhere (mpq archive or map folder). Refuses if the original changed on disk since opening unless
-    force=true. rebuild_script: auto regenerates war3map.j when triggers changed (JASS maps with trigger data),
-    always regenerates whenever possible, never leaves the script alone. validate runs map_validate first and
-    refuses to save on errors."""
+    force=true. rebuild_script: auto regenerates war3map.j when triggers, regions, cameras or sounds changed (JASS
+    maps with trigger data), always regenerates whenever possible, never leaves the script alone. validate runs
+    map_validate first and refuses to save on errors."""
     project, catalog = _project(path), _catalog("enUS", "Custom_V1", True)
     warnings = []
     if dest is None:  # take turns with the World Editor on the same file
@@ -135,7 +138,7 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
             warnings.append("the map is open in the World Editor; editor_map reload shows the saved version there")
     script = None
     dirty = {name.lower() for name in project.status()["dirty"]}
-    if rebuild_script == "always" or (rebuild_script == "auto" and dirty & {"war3map.wtg", "war3map.wct"}):
+    if rebuild_script == "always" or (rebuild_script == "auto" and dirty & SCRIPT_SOURCES):
         try:
             script = script_ops.script_build(project, catalog)
         except ToolError as e:

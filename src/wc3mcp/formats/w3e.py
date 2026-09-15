@@ -123,3 +123,17 @@ def set_corner(t: Terrain, x: int, y: int, **fields) -> None:
     t.textures[i] = t.textures[i] & ~((1 << (bits + 4)) - 1) | c["texture"] | flags
     t.variations[i] = c["ground_variation"] | c["cliff_variation"] << 5
     t.cliffs[i] = c["cliff_texture"] << 4 | c["layer"]
+
+
+def ground_height(t: Terrain, x: float, y: float) -> float:
+    """Ground z at world (x, y), bilinear between the four surrounding corners (height and cliff layer)."""
+    fx = min(max((x - t.offset_x) / 128, 0.0), t.width - 1.0)
+    fy = min(max((y - t.offset_y) / 128, 0.0), t.height - 1.0)
+    ix, iy = min(int(fx), t.width - 2), min(int(fy), t.height - 2)
+    ax, ay = fx - ix, fy - iy
+
+    def z(cx: int, cy: int) -> float:
+        i = cy * t.width + cx
+        return (t.heights[i] - 0x2000) / 4 + ((t.cliffs[i] & 15) - 2) * 128
+
+    return (z(ix, iy) * (1 - ax) + z(ix + 1, iy) * ax) * (1 - ay) + (z(ix, iy + 1) * (1 - ax) + z(ix + 1, iy + 1) * ax) * ay
