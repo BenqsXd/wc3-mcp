@@ -6,6 +6,7 @@ from corpus import HAVE_INSTALL, _storage, ladder_maps, open_sample, sample_map_
 from wc3mcp.errors import ToolError
 from wc3mcp.gamedata.catalog import Catalog
 from wc3mcp.ops.elements import elements_edit
+from wc3mcp.ops.info import info_edit, info_get
 from wc3mcp.ops.placed import placed_edit, placed_list
 from wc3mcp.ops.script import balance, map_validate, script_build, script_validate
 from wc3mcp.ops.triggers import triggers_edit
@@ -121,6 +122,18 @@ def test_placed_objects_are_built_into_the_script(tmp_path, catalog):
     script_build(project, catalog)
     text = project.read("war3map.j").decode("utf-8")
     assert "CreateAllItems" not in text and "Destructable Objects" not in text and "Doodad" not in text
+
+
+def test_map_info_is_built_into_the_script(tmp_path, catalog):
+    project = open_copy(tmp_path, ladder("war3map.j"))
+    info_edit(project, [{"op": "set", "path": "players[0].race", "value": "orc"},
+                        {"op": "set", "path": "author", "value": "Script Test"}])
+    assert script_build(project, catalog)["changed"]
+    text = project.read("war3map.j").decode("utf-8")
+    assert "//   Map Author: Script Test" in text
+    players = info_get(project)["players"]
+    assert f"call SetPlayerRacePreference( Player({players[0]['id']}), RACE_PREF_ORC )" in text
+    assert script_build(project, catalog)["changed"] is False and script_validate(project, catalog)["ok"]
 
 
 def test_script_errors_point_at_their_trigger(tmp_path, catalog):

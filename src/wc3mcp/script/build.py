@@ -5,6 +5,7 @@ import re
 from ..formats import wtg
 from ..gamedata.triggerdata import EVENT
 from ..ops.gui import RAWCODE_TYPES, script_name
+from . import mapinfo
 from . import placed as placedgen
 from . import world as worldgen
 from .jass import BAR, JassGen
@@ -174,11 +175,12 @@ def _splice_zone(o: str, texts: dict, calls: dict) -> str:
     return o[:m0] + "\r\n".join(lines) + o[m1:]
 
 
-def splice(original: str, tf, ct, td, world=None, placed=None) -> str:
+def splice(original: str, tf, ct, td, world=None, placed=None, info=None) -> str:
     """Regenerate globals (user-defined and gg_trg_ lines), InitGlobals, the header's Custom Script Code section and
     the Triggers section (sections, InitCustomTriggers, RunInitializationTriggers) of an editor-generated script.
     With a world.World also the Sound Assets, Regions and Cameras sections; with a placed.Placed the placed object,
-    item table and random group sections; both with their main calls and globals."""
+    item table and random group sections; both with their main calls and globals. With a mapinfo.MapInfoParts also
+    the file header and everything after the triggers (upgrades, tech tree, players, main, config)."""
     o = _crlf(original.replace("\r\n", "\n")) if "\r\n" not in original else original
     world_parts = worldgen.sections(world, o) if world is not None else None
     placed_parts = placedgen.sections(placed, o, tf, ct) if placed is not None else None
@@ -236,5 +238,16 @@ def splice(original: str, tf, ct, td, world=None, placed=None) -> str:
         end = _find(o, "\r\nendfunction\r\n\r\n", end) + len("\r\nendfunction\r\n\r\n")
     triggers_text = trigger_sections(tf, ct, td) + init_custom_triggers(tf) + run_initialization_triggers(tf)
 
-    return (o[:g0] + _crlf(globals_text) + o[g1:i0] + _crlf(init_globals(tf, td)) + o[i1:c0]
-            + _crlf(custom_script(ct)) + trig_banner + _crlf(triggers_text) + o[end:])
+    head, rest = o[:g0], o[end:]
+    if info is not None:
+        m0 = _find(o, "\r\nfunction main takes nothing returns nothing\r\n")
+        body = o[m0:_find(o, "\r\nendfunction\r\n", m0 + 2)] + "\r\n"
+        present = {fn for fn in mapinfo.MAIN_CALLS if f"\r\n    call {fn}(  )\r\n" in body}
+        parts = mapinfo.tail(info, present)
+        rest = _crlf("".join(parts[t] for t in mapinfo.TITLES if parts[t]))
+        if not o.startswith(_crlf(BAR + "\n")):
+            raise ValueError("not an editor-generated war3map.j: no header comment")
+        header_end = _find(o, _crlf("\n" + BAR + "\n\n"), 2) + len(_crlf("\n" + BAR + "\n\n"))
+        head = _crlf(mapinfo.header(info)) + o[header_end:g0]
+    return (head + _crlf(globals_text) + o[g1:i0] + _crlf(init_globals(tf, td)) + o[i1:c0]
+            + _crlf(custom_script(ct)) + trig_banner + _crlf(triggers_text) + rest)

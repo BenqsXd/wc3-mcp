@@ -4,7 +4,7 @@ import posixpath
 from ..errors import ToolError
 from ..formats import doo, unitsdoo, w3e, w3i
 from ..formats.binary import FormatError
-from ..script import build, placed, world
+from ..script import build, mapinfo, placed, world
 from ..script import validate as scripts
 from . import objdata
 from . import validate as checks
@@ -118,15 +118,38 @@ def _int(value, default: int) -> int:
         return default
 
 
-def _placed(project, catalog) -> placed.Placed:
-    objects = _Objects(project, catalog)
+def _parsed(project, name: str, codec):
+    data = _read(project, name)
+    try:
+        return codec.parse(data) if data is not None else None
+    except FormatError as e:
+        raise ToolError("bad_file", f"{name}: {e}", hint="map_file_write can replace a damaged file") from e
 
-    def parsed(name: str, codec):
-        data = _read(project, name)
-        try:
-            return codec.parse(data) if data is not None else None
-        except FormatError as e:
-            raise ToolError("bad_file", f"{name}: {e}", hint="map_file_write can replace a damaged file") from e
+
+def _world_edit_data(catalog) -> dict:
+    """UI/WorldEditData.txt as section -> key -> value (first value of a repeated key wins)."""
+    sections, current = {}, None
+    for line in (catalog._read("UI/WorldEditData.txt") or b"").decode("utf-8", "replace").splitlines():
+        line = line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            current = sections.setdefault(line[1:-1], {})
+        elif current is not None and "=" in line and not line.startswith("//"):
+            key, value = line.split("=", 1)
+            current.setdefault(key, value)
+    return sections
+
+
+def _mapinfo(project, catalog, objects: "_Objects", terrain) -> mapinfo.MapInfoParts | None:
+    info = _parsed(project, "war3map.w3i", w3i)
+    if info is None:
+        return None
+    return mapinfo.MapInfoParts(info, load_strings(project), _world_edit_data(catalog), terrain,
+                                lambda i: objects.exists("ability", i) and not objects.exists("unit", i))
+
+
+def _placed(project, catalog, objects: "_Objects | None" = None) -> placed.Placed:
+    objects = objects or _Objects(project, catalog)
+    parsed = lambda name, codec: _parsed(project, name, codec)  # noqa: E731
 
     def item(t: str) -> dict | None:
         if t != "iDNR" and not objects.exists("item", t):
@@ -169,8 +192,9 @@ def script_build(project, catalog) -> dict:
     name = _script_file(project, lang)
     before = project.read(name)
     try:
-        text = build.splice(before.decode("utf-8", "surrogateescape"), tf, ct, td, world=_world(project, catalog),
-                            placed=_placed(project, catalog))
+        objects, scene = _Objects(project, catalog), _world(project, catalog)
+        text = build.splice(before.decode("utf-8", "surrogateescape"), tf, ct, td, world=scene,
+                            placed=_placed(project, catalog, objects), info=_mapinfo(project, catalog, objects, scene.terrain))
     except ValueError as e:
         raise ToolError("not_editor_script", f"{name}: {e}",
                         hint="this script was not written by the World Editor; edit it with map_file_write") from e
