@@ -37,7 +37,7 @@ def tool_dir(catalog) -> Path:
             raise ToolError("no_tools", f"{src} not found", hint="the Warcraft III install ships JassHelper there")
         if not dst.is_file() or dst.stat().st_size != src.stat().st_size:
             shutil.copy2(src, dst)
-    for rel in ("Scripts/common.j", "Scripts/Blizzard.j"):
+    for rel in ("Scripts/common.j", "Scripts/Blizzard.j", "Scripts/common.ai"):
         data = catalog._read(rel)
         if data is None:
             raise ToolError("no_tools", f"{rel} is missing from the game data")
@@ -81,9 +81,9 @@ def _locate(script_text, errors):
     return errors
 
 
-def _pjass(script_text, tools: Path, timeout):
+def _pjass(script_text, tools: Path, timeout, headers=("common.j", "Blizzard.j")):
     exe = str(tools / "pjass.exe")
-    r = subprocess.run([exe, str(tools / "common.j"), str(tools / "Blizzard.j"), "-"],
+    r = subprocess.run([exe, *(str(tools / h) for h in headers), "-"],
                        input=script_text.encode("utf-8", "surrogateescape"), capture_output=True, timeout=timeout)
     out, errors = r.stdout.decode("utf-8", "replace"), []
     for line in out.splitlines():
@@ -170,6 +170,19 @@ def validate_jass(text: str, catalog, vjass: bool | None = None, timeout: int = 
         result = (_jasshelper if (is_vjass(text) if vjass is None else vjass) else _pjass)(text, tools, timeout)
     except subprocess.TimeoutExpired as e:
         raise ToolError("timeout", f"script validation took longer than {timeout} s") from e
+    result["seconds"] = round(time.perf_counter() - started, 3)
+    return result
+
+
+def validate_ai(text: str, catalog, timeout: int = 60) -> dict:
+    """pjass over an AI script (.ai), which builds on common.j and common.ai instead of Blizzard.j."""
+    started = time.perf_counter()
+    try:
+        result = _pjass(text, tool_dir(catalog), timeout, ("common.j", "common.ai"))
+    except subprocess.TimeoutExpired as e:
+        raise ToolError("timeout", f"script validation took longer than {timeout} s") from e
+    for e in result["errors"]:
+        e["section"] = e["trigger"] = None
     result["seconds"] = round(time.perf_counter() - started, 3)
     return result
 

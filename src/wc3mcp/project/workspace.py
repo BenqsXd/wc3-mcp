@@ -20,6 +20,33 @@ def project_id(source) -> str:
     return hashlib.sha1(os.path.normcase(os.path.abspath(source)).encode("utf-8")).hexdigest()[:12]
 
 
+def backup(dest: Path) -> str | None:
+    """Copy a file or folder about to be replaced into the backups folder (the newest BACKUPS_KEPT are kept)."""
+    if not dest.exists():
+        return None
+    folder = config.home() / "backups" / f"{dest.stem}-{project_id(dest)}"
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / (time.strftime("%Y%m%d-%H%M%S") + f"-{time.time_ns() % 1_000_000:06d}{dest.suffix}")
+    if dest.is_dir():
+        shutil.copytree(dest, target)
+    else:
+        shutil.copy2(dest, target)
+    for old in sorted(folder.iterdir())[:-BACKUPS_KEPT]:
+        shutil.rmtree(old) if old.is_dir() else old.unlink()
+    return str(target)
+
+
+def write_file(dest: Path, data: bytes) -> str | None:
+    """Back up and atomically replace a single file; returns the backup path."""
+    pathguard.ensure_writable(dest)
+    saved = backup(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".wc3mcp-tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, dest)
+    return saved
+
+
 def fingerprint(path: Path) -> dict:
     if path.is_dir():
         h, size = hashlib.sha256(), 0
@@ -221,19 +248,7 @@ class MapProject:
         elif old.exists():
             old.unlink()
 
-    def _backup(self, dest: Path) -> str | None:
-        if not dest.exists():
-            return None
-        folder = config.home() / "backups" / f"{dest.stem}-{project_id(dest)}"
-        folder.mkdir(parents=True, exist_ok=True)
-        target = folder / (time.strftime("%Y%m%d-%H%M%S") + f"-{time.time_ns() % 1_000_000:06d}{dest.suffix}")
-        if dest.is_dir():
-            shutil.copytree(dest, target)
-        else:
-            shutil.copy2(dest, target)
-        for old in sorted(folder.iterdir())[:-BACKUPS_KEPT]:
-            shutil.rmtree(old) if old.is_dir() else old.unlink()
-        return str(target)
+    _backup = staticmethod(backup)
 
     # snapshots
     def snapshot(self, action: str, label: str | None = None) -> dict:

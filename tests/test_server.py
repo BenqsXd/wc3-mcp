@@ -21,7 +21,7 @@ EXPECTED = {"map_new", "map_open", "map_close", "map_save", "map_status", "map_f
             "editor_menu", "editor_screenshot", "editor_dialogs", "editor_dialog_act", "editor_input", "editor_log",
             "game_test", "game_status", "game_close", "elements_list", "elements_edit", "placed_list",
             "placed_edit", "terrain_get", "terrain_edit", "terrain_render", "campaign_new", "campaign_get",
-            "campaign_edit"}
+            "campaign_edit", "ai_get", "ai_edit", "ai_export"}
 
 
 def call(name: str, args: dict):

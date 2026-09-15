@@ -8,7 +8,7 @@ from . import objmods, wtg
 from .binary import FormatError, Reader, Writer
 
 VERSION = 2
-CONDITION_KINDS = (1, 3)                   # a condition's top function is a trigger condition or a boolean call
+CONDITION_KIND = 1                         # a condition's top function is a trigger condition (the editor rejects calls)
 PRIORITY_BUILD, PRIORITY_HARVEST, PRIORITY_TARGET = 0, 1, 2
 TARGET_CREEPS = 5
 NO_CONDITION, CUSTOM_CONDITION = -1, -2    # condition_index of priorities and group units
@@ -140,7 +140,7 @@ def _condition(r: Reader, count: ArgCount) -> Condition:
         raise FormatError(f"condition {c.name!r}: flag {has} at offset {r.pos - 4}")
     c.function = r.cstr()
     c.has_params = r.u32()
-    n = next((count(kind, c.function) for kind in CONDITION_KINDS if count(kind, c.function) is not None), None)
+    n = count(CONDITION_KIND, c.function)
     if n is None:
         raise FormatError(f"unknown AI condition function {c.function!r}")
     c.params = [wtg._param(r, count) for _ in range(n)] if c.has_params else []

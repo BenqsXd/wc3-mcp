@@ -16,6 +16,7 @@ from .desktop import editor as desktop_editor
 from .desktop import game as desktop_game
 from .errors import ToolError
 from .gamedata.catalog import Catalog
+from .ops import ai as ai_ops
 from .ops import campaign as campaign_ops
 from .ops import elements as elements_ops
 from .ops import imports as imports_ops
@@ -465,6 +466,47 @@ def map_validate(path: str) -> dict:
     variables, trigger names, references to generated objects, TRIGSTR strings, object data base ids and fields,
     imports. Errors break the map; warnings are defects that shipped maps also carry."""
     return script_ops.map_validate(_project(path), _catalog("enUS", "Custom_V1", True))
+
+
+# ---- AI Editor -------------------------------------------------------------------------------------------------
+def _ai_source(path: str):
+    """An open map (its war3map.wai) or a .wai file."""
+    project = _projects.get(_key(path))
+    if project is not None:
+        return project
+    if Path(path).suffix.lower() != ".wai":
+        raise ToolError("bad_value", f"{path} is neither an open map nor a .wai file", hint="map_open the map first",
+                        path="path")
+    return Path(path).resolve()
+
+
+@_tool
+def ai_get(path: str) -> dict:
+    """AI Editor data of a .wai file or an open map (war3map.wai): name, race, options, workers, named conditions
+    (GUI condition JSON as in triggers_edit), heroes with skills per hero order, hero order percentages, build /
+    harvest / target priorities, attack groups, attack waves, test game settings."""
+    return ai_ops.ai_get(_ai_source(path), _catalog("enUS", "Custom_V1", True))
+
+
+@_tool
+def ai_edit(path: str, ops: list[dict]) -> dict:
+    """All-or-nothing AI Editor changes on the ai_get document ({"op": "set" | "append" | "remove", "path", "value"}).
+    A missing .wai file is created from a new-AI starting point; an existing one is backed up and replaced atomically;
+    for an open map war3map.wai changes in the working copy. Conditions are referenced by name, or
+    {"custom": <condition>}; towns are "any", "main", "expansion<n>", "mine<n>"; group units use hero1-hero3 for
+    the heroes and "all" quantities."""
+    return ai_ops.ai_edit(_ai_source(path), _catalog("enUS", "Custom_V1", True), ops)
+
+
+@_tool
+def ai_export(path: str, dest: str | None = None, map_path: str | None = None, player: int | None = None,
+              import_path: str | None = None) -> dict:
+    """Export the AI script (.ai) exactly as the AI Editor's File > Export Script does, checked with pjass. Writes
+    dest (default: next to the .wai), or with map_path (an open map) imports it as war3mapImported\\<name>.ai and,
+    with player (0 = Player 1), adds a map-initialization trigger that starts it (StartMeleeAI for melee AI, else
+    StartCampaignAI)."""
+    project = _project(map_path) if map_path else None
+    return ai_ops.ai_export(_ai_source(path), _catalog("enUS", "Custom_V1", True), dest, project, player, import_path)
 
 
 # ---- World Editor ----------------------------------------------------------------------------------------------
