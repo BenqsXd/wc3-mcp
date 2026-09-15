@@ -27,8 +27,10 @@ def blocks(name: str) -> tuple[tuple[str, int, str], ...]:
 
 
 def script_name(name: str) -> str:
-    """The identifier the editor derives from a trigger name (gg_trg_<this>): trailing spaces dropped, leading kept."""
-    return re.sub(r"[^A-Za-z0-9_]", "_", name.rstrip())
+    """The identifier the editor derives from a trigger name (gg_trg_<this>): trailing spaces dropped, leading kept,
+    and a trailing '_' followed by 'u' (JASS identifiers cannot end with an underscore)."""
+    ident = re.sub(r"[^A-Za-z0-9_]", "_", name.rstrip())
+    return ident + "u" if ident.endswith("_") else ident
 
 
 def var_type(name: str, variables: dict) -> str | None:
