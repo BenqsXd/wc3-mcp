@@ -112,6 +112,23 @@ def test_info_and_import_tools(tmp_path):
 
 
 @needs_install
+def test_campaign_tools(tmp_path):
+    chapter = str(tmp_path / "Ch1.w3x")
+    payload(call("map_new", {"path": chapter, "width": 32, "height": 32, "players": 1}))
+    payload(call("map_close", {"path": chapter}))
+    path = str(tmp_path / "Saga.w3n")
+    payload(call("campaign_new", {"path": path, "name": "Saga"}))
+    payload(call("campaign_edit", {"path": path, "ops": [
+        {"op": "add_map", "source": chapter},
+        {"op": "append", "path": "buttons", "value": {"chapter": "One", "title": "Start", "map": "Ch1.w3x"}}]}))
+    saved = payload(call("map_save", {"path": path}))
+    assert saved["saved"] and "script" not in saved and saved["validation"]["errors"] == []
+    assert payload(call("campaign_get", {"path": path}))["buttons"][0]["title"] == "Start"
+    err = call("campaign_get", {"path": chapter})
+    assert err.isError and "not_open" in err.content[0].text
+
+
+@needs_install
 def test_object_data_tools(tmp_path):
     maps = ladder_maps()
     if not maps:
