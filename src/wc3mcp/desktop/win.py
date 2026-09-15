@@ -115,8 +115,11 @@ def image(pid: int) -> str:
 
 
 def processes(image_name: str) -> list[int]:
+    """Running processes of an image. Exited ones stay listed while a handle is open (subprocess keeps one for a
+    child it launched), so they are left out."""
     name = image_name.lower()
-    return [pid for pid in win32process.EnumProcesses() if pid and image(pid).rsplit("\\", 1)[-1].lower() == name]
+    return [pid for pid in win32process.EnumProcesses()
+            if pid and image(pid).rsplit("\\", 1)[-1].lower() == name and running(pid)]
 
 
 def running(pid: int) -> bool:
