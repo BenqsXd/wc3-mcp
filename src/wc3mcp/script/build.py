@@ -175,15 +175,17 @@ def _splice_zone(o: str, texts: dict, calls: dict) -> str:
     return o[:m0] + "\r\n".join(lines) + o[m1:]
 
 
-def splice(original: str, tf, ct, td, world=None, placed=None, info=None) -> str:
+def splice(original: str, tf, ct, td, world=None, placed=None, info=None, reference: str | None = None) -> str:
     """Regenerate globals (user-defined and gg_trg_ lines), InitGlobals, the header's Custom Script Code section and
     the Triggers section (sections, InitCustomTriggers, RunInitializationTriggers) of an editor-generated script.
     With a world.World also the Sound Assets, Regions and Cameras sections; with a placed.Placed the placed object,
     item table and random group sections; both with their main calls and globals. With a mapinfo.MapInfoParts also
-    the file header and everything after the triggers (upgrades, tech tree, players, main, config)."""
+    the file header and everything after the triggers (upgrades, tech tree, players, main, config). `reference`, an
+    earlier script of the map, supplies sound lengths, object order and random item spelling (default: `original`)."""
     o = _crlf(original.replace("\r\n", "\n")) if "\r\n" not in original else original
-    world_parts = worldgen.sections(world, o) if world is not None else None
-    placed_parts = placedgen.sections(placed, o, tf, ct) if placed is not None else None
+    reference = o if reference is None else reference
+    world_parts = worldgen.sections(world, reference) if world is not None else None
+    placed_parts = placedgen.sections(placed, reference, tf, ct) if placed is not None else None
     texts, calls = {}, {}
     if world_parts is not None:
         for title, fn in WORLD_SECTIONS:
@@ -251,3 +253,12 @@ def splice(original: str, tf, ct, td, world=None, placed=None, info=None) -> str
         head = _crlf(mapinfo.header(info)) + o[header_end:g0]
     return (head + _crlf(globals_text) + o[g1:i0] + _crlf(init_globals(tf, td)) + o[i1:c0]
             + _crlf(custom_script(ct)) + trig_banner + _crlf(triggers_text) + rest)
+
+
+def new_script(tf, ct, td, world, placed, info, reference: str = "") -> str:
+    """A whole editor-style war3map.j built from the map files alone (see splice for `reference`)."""
+    skeleton = (BAR + "\n" + BAR + "\n\n" + banner("Global Variables") + "\nglobals\nendglobals\n\n"
+                "function InitGlobals takes nothing returns nothing\nendfunction\n\n" + banner("Custom Script Code") + "\n"
+                + banner("Triggers") + "\n" + f"{BAR}\nfunction InitCustomTriggers takes nothing returns nothing\nendfunction\n\n"
+                + f"{BAR}\nfunction main takes nothing returns nothing\nendfunction\n\n")
+    return splice(skeleton, tf, ct, td, world=world, placed=placed, info=info, reference=reference)

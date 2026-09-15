@@ -8,9 +8,10 @@ from wc3mcp.gamedata.catalog import Catalog
 from wc3mcp.ops.elements import elements_edit
 from wc3mcp.ops.info import info_edit, info_get
 from wc3mcp.ops.placed import placed_edit, placed_list
-from wc3mcp.ops.script import balance, map_validate, script_build, script_validate
-from wc3mcp.ops.triggers import triggers_edit
+from wc3mcp.ops.script import _mapinfo, _Objects, _placed, _world, balance, map_validate, script_build, script_validate
+from wc3mcp.ops.triggers import _load, triggers_edit
 from wc3mcp.project.workspace import MapProject
+from wc3mcp.script import build
 
 pytestmark = pytest.mark.skipif(not HAVE_INSTALL or not ladder_maps(), reason="needs the install and ladder maps")
 HELLO = {"op": "trigger", "name": "Hello", "actions": [
@@ -80,7 +81,13 @@ def test_script_build_keeps_editor_scripts(tmp_path, layers, map_id):
     src = tmp_path / "map.w3x"
     src.write_bytes(arc.data)
     project = MapProject.open(src)
-    assert script_build(project, layers(project))["changed"] is False
+    catalog = layers(project)
+    assert script_build(project, catalog)["changed"] is False
+    tf, ct = _load(project, catalog.trigger_data)
+    objects, scene = _Objects(project, catalog), _world(project, catalog)
+    whole = build.new_script(tf, ct, catalog.trigger_data, scene, _placed(project, catalog, objects),
+                             _mapinfo(project, catalog, objects, scene.terrain), reference=arc.read("war3map.j").decode("utf-8"))
+    assert whole == arc.read("war3map.j").decode("utf-8")
 
 
 def test_placed_objects_are_built_into_the_script(tmp_path, catalog):
