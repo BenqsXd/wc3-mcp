@@ -375,3 +375,46 @@ def test_data_search_scopes_tiles_to_a_tileset():
     assert {r["id"] for r in result["results"]} >= {"Lgrs", "Ldrt"}
     err = call("data_search", {"kind": "unit", "tileset": "L"})
     assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "bad_value"
+
+
+def test_bulk_ops_come_from_a_file(tmp_path):
+    maps = ladder_maps()
+    if not maps:
+        pytest.skip("no ladder maps in Documents")
+    src = tmp_path / maps[0].name
+    src.write_bytes(maps[0].read_bytes())
+    path = str(src)
+    payload(call("map_open", {"path": path}))
+    ops = tmp_path / "trees.json"
+    ops.write_text(json.dumps([{"op": "add", "kind": "destructible", "columns": ["type", "x", "y"],
+                                "rows": [["LTlt", x, 256] for x in range(-512, 512, 128)]}]), "utf-8")
+    added = payload(call("placed_edit", {"path": path, "ops_file": str(ops)}))
+    assert added["created_count"] == 8 and len(added["created"]) == 1 and ".." in added["created"][0]
+    script = tmp_path / "hello.j"
+    script.write_text('call BJDebugMsg("hello")\n', "utf-8")
+    trig = tmp_path / "triggers.json"
+    trig.write_text(json.dumps({"ops": [{"op": "trigger", "name": "Hello", "script_file": str(script)}]}), "utf-8")
+    if Archive.open(src).read("war3map.wtg") is not None:
+        edited = payload(call("triggers_edit", {"path": path, "ops_file": str(trig)}))
+        assert edited["changed"] and "Hello" in payload(call("trigger_get", {"path": path, "name": "Hello"}))["script"]
+    for args in ({"path": path}, {"path": path, "ops": [], "ops_file": str(ops)},
+                 {"path": path, "ops_file": str(tmp_path / "missing.json")}):
+        err = call("terrain_edit", args)
+        assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "bad_value"
+    payload(call("map_close", {"path": path, "discard": True}))
+
+
+def test_map_save_merges_an_editor_save(tmp_path):
+    src = tmp_path / "merged.w3x"
+    src.write_bytes(write_archive({"war3map.j": b"old", "war3map.wpm": b"old path"}))
+    path = str(src)
+    payload(call("map_open", {"path": path}))
+    payload(call("map_file_write", {"path": path, "name": "war3map.j", "content": "mine"}))
+    src.write_bytes(write_archive({"war3map.j": b"old", "war3map.wpm": b"editor path"}))
+    err = call("map_save", {"path": path, "validate": False, "rebuild_script": "never"})
+    assert err.isError and "merge_external" in err.content[0].text
+    saved = payload(call("map_save", {"path": path, "validate": False, "rebuild_script": "never", "merge_external": True}))
+    assert saved["saved"] and saved["merged"]["taken"] == ["war3map.wpm"] and saved["merged"]["kept"] == ["war3map.j"]
+    arc = Archive.open(src)
+    assert (arc.read("war3map.j"), arc.read("war3map.wpm")) == (b"mine", b"editor path")
+    payload(call("map_close", {"path": path}))

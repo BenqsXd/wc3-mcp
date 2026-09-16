@@ -1,6 +1,7 @@
 """Placed units, items and start locations (war3mapUnits.doo) and doodads and destructibles (war3map.doo) as JSON
 with all-or-nothing add/set/move/delete edits. Refs are "<kind>:<editor id>", angles degrees, positions world units."""
 import math
+import random
 import re
 
 from ..errors import ToolError
@@ -29,9 +30,13 @@ FIELDS = {
 }
 DERIVED_WARNING = ("war3map.wpm (pathing), war3map.shd (shadows) and war3map.mmp (minimap icons) are recomputed by "
                    "the World Editor only: editor_map open + save refreshes them")
-_HINT = ('ops: {"op": "add", "kind": "unit", "type": "hfoo", "x": 0, "y": 0, "owner": 0}, {"op": "set", "ref": '
+_HINT = ('ops: {"op": "add", "kind": "unit", "type": "hfoo", "x": 0, "y": 0, "owner": 0}, {"op": "add", "kind": '
+         '"destructible", "columns": ["type", "x", "y"], "rows": [["LTlt", 0, 0], ["LTlt", 128, 0]]}, {"op": "scatter", '
+         '"kind": "destructible", "types": {"LTlt": 3, "LTlf": 1}, "count": 200, "rect": [-2048, -2048, 2048, 2048], '
+         '"exclude": [{"x": 0, "y": 0, "radius": 600}], "min_distance": 96, "seed": 1}, {"op": "set", "ref": '
          '"unit:12", "life": 50}, {"op": "move", "ref": "doodad:3", "x": 128, "y": -64}, {"op": "delete", "ref": '
          '"item:7"}; placed_list shows refs and fields')
+SCATTER_KEYS = {"op", "kind", "types", "count", "rect", "x", "y", "radius", "exclude", "min_distance", "seed", "where"}
 
 
 def _id(raw: bytes) -> str:
@@ -199,6 +204,7 @@ class _Edit(_Map):
         self.region_list = None
         self.created: list[str] = []
         self.warnings: list[str] = []
+        self.starts: list = []   # start locations placed or moved: war3map.w3i keeps its own copy of the position
 
     def _find(self, ref, path: str):
         if not isinstance(ref, str) or ":" not in ref:
@@ -441,10 +447,142 @@ class _Edit(_Map):
         self._apply(kind, o, {k: v for k, v in fields.items() if k != "type"}, path)
         pool.append(o)
         self.created.append(f"{kind}:{o.editor_id}")
+        if kind == "start_location":
+            self.starts.append(o)
+        elif kind in ("doodad", "destructible"):
+            self._check_model(kind, o)
+
+    def _check_model(self, kind: str, o) -> None:
+        t = _id(o.id)
+        model = self.catalog.model(kind, t) if t in self.catalog.ids(kind) else None
+        if model is None:
+            return
+        paths = self.catalog.model_paths(*model, o.variation if model[1] > 1 else None)
+        missing = [x for x in paths if not self.catalog.model_exists(x)]
+        note = f"{kind} {t} variation {o.variation}: the installed game has no {', '.join(missing)}, so it renders nothing"
+        if missing and note not in self.warnings:
+            self.warnings.append(note)
+
+    def _variations(self, kind: str, t: str) -> list[int]:
+        """Variations of a type whose model the installed game has (variation 0 for map-defined types)."""
+        model = self.catalog.model(kind, t) if kind in ("doodad", "destructible") and t in self.catalog.ids(kind) else None
+        if model is None:
+            return [0]
+        if model[1] <= 1:
+            return [0] if self.catalog.model_exists(self.catalog.model_paths(*model)[0]) else []
+        return [v for v in range(model[1]) if self.catalog.model_exists(self.catalog.model_paths(*model, v)[0])]
+
+    def op_scatter(self, op: dict, path: str) -> None:
+        """Random placements of weighted types inside an area, away from exclusion zones and each other."""
+        kind = op.get("kind")
+        if kind not in ("unit", "item", "doodad", "destructible"):
+            raise ToolError("bad_kind", f"{path}: scatter places units, items, doodads or destructibles", hint=_HINT)
+        fields = {k: v for k, v in op.items() if k not in SCATTER_KEYS}
+        extra = (set(fields) - FIELDS[kind]) | ({"type"} & set(fields))
+        if extra:
+            raise ToolError("bad_op", f"{path}: scatter has no fields {sorted(extra)}", hint=_HINT)
+        types = op.get("types")
+        if isinstance(types, list):
+            types = {t: 1 for t in types}
+        if not isinstance(types, dict) or not types:
+            raise _bad(f"{path}.types", 'expected {"type id": weight, ...} or a list of type ids')
+        weights = {}
+        for t, w in types.items():
+            self._type(kind, t, f"{path}.types.{t}")
+            weights[t] = _num(w, f"{path}.types.{t}")
+            if weights[t] <= 0:
+                raise _bad(f"{path}.types.{t}", "weights are > 0")
+        variations = {t: self._variations(kind, t) for t in weights}
+        broken = [t for t, v in variations.items() if not v and "variation" not in fields]
+        if broken:
+            raise _bad(f"{path}.types", f"the installed game has no model for {broken} (data_search shows model_ok)")
+        count = _int(op.get("count"), f"{path}.count", 1, 20000)
+        rng = random.Random(op.get("seed"))
+        units = kind in ("unit", "item")
+        bounds = self.playable() or self.whole() or [-4096.0, -4096.0, 4096.0, 4096.0]
+        if "rect" in op:
+            rect = op["rect"]
+            if not isinstance(rect, list) or len(rect) != 4:
+                raise _bad(f"{path}.rect", "expected [left, bottom, right, top]")
+            left, bottom, right, top = (_num(v, f"{path}.rect[{i}]") for i, v in enumerate(rect))
+            circle = None
+        elif "radius" in op:
+            cx, cy = _num(op.get("x"), f"{path}.x"), _num(op.get("y"), f"{path}.y")
+            r = _num(op["radius"], f"{path}.radius")
+            left, bottom, right, top = cx - r, cy - r, cx + r, cy + r
+            circle = (cx, cy, r)
+        else:
+            left, bottom, right, top = bounds
+            circle = None
+        left, bottom = max(left, bounds[0]), max(bottom, bounds[1])
+        right, top = min(right, bounds[2]), min(top, bounds[3])
+        if left >= right or bottom >= top:
+            raise _bad(path, f"the area does not overlap the playable area {bounds}")
+        zones = []
+        for i, z in enumerate(op.get("exclude") or []):
+            zpath = f"{path}.exclude[{i}]"
+            if isinstance(z, dict) and set(z) == {"rect"} and isinstance(z["rect"], list) and len(z["rect"]) == 4:
+                zones.append(("rect", *(_num(v, zpath) for v in z["rect"])))
+            elif isinstance(z, dict) and set(z) == {"x", "y", "radius"}:
+                zones.append(("circle", _num(z["x"], zpath), _num(z["y"], zpath), _num(z["radius"], zpath)))
+            else:
+                raise _bad(zpath, 'expected {"x", "y", "radius"} or {"rect": [left, bottom, right, top]}')
+        where = op.get("where", "land")
+        if where not in ("land", "water", "any"):
+            raise _bad(f"{path}.where", 'expected "land", "water" or "any"')
+        gap = _num(op.get("min_distance", 0), f"{path}.min_distance")
+        cell, taken = max(gap, 1.0), {}   # ponytail: spacing only among this op's placements, not existing objects
+        ids = list(weights)
+        total = sum(weights.values())
+        placed, attempts = 0, 0
+        while placed < count and attempts < count * 50:
+            attempts += 1
+            x, y = rng.uniform(left, right), rng.uniform(bottom, top)
+            if circle and (x - circle[0]) ** 2 + (y - circle[1]) ** 2 > circle[2] ** 2:
+                continue
+            if any(_in_zone(z, x, y) for z in zones) or not self._ground_ok(x, y, where):
+                continue
+            key = (int(x // cell), int(y // cell))
+            if gap and any((x - px) ** 2 + (y - py) ** 2 < gap * gap
+                           for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+                           for px, py in taken.get((key[0] + dx, key[1] + dy), ())):
+                continue
+            taken.setdefault(key, []).append((x, y))
+            pick, t = rng.uniform(0, total), ids[-1]
+            for candidate in ids:
+                pick -= weights[candidate]
+                if pick <= 0:
+                    t = candidate
+                    break
+            add = {"op": "add", "kind": kind, "type": t, "x": round(x, 1), "y": round(y, 1), **fields}
+            if not units:
+                add.setdefault("variation", rng.choice(variations[t]) if variations[t] else 0)
+                if "angle" not in fields:
+                    fixed = -1.0
+                    if t in self.catalog.ids(kind):
+                        fixed = _float_or(self.catalog.field(kind, t, "dfxr" if kind == "doodad" else "bfxr"), -1.0)
+                    add["angle"] = fixed if fixed >= 0 else round(rng.uniform(0, 360), 1)
+            self.op_add(add, f"{path}[{placed}]")
+            placed += 1
+        if placed < count:
+            self.warnings.append(f"{path}: placed {placed} of {count}; the area is too full for min_distance, "
+                                 "exclude and where")
+
+    def _ground_ok(self, x: float, y: float, where: str) -> bool:
+        t = self.terrain
+        if where == "any" or t is None:
+            return True
+        cx = min(max(round((x - t.offset_x) / 128), 0), t.width - 1)
+        cy = min(max(round((y - t.offset_y) / 128), 0), t.height - 1)
+        c = w3e.corner(t, cx, cy)
+        wet = c["water"] and (c["water_level"] - c["height"]) / 4 - 89.6 - (c["layer"] - 2) * 128 > 0  # as rendered
+        return not c["boundary"] and wet == (where == "water")
 
     def op_set(self, op: dict, path: str) -> None:
         kind, o = self._find(op.get("ref"), f"{path}.ref")
         self._apply(kind, o, {k: v for k, v in op.items() if k not in ("op", "ref")}, path)
+        if kind == "start_location":
+            self.starts.append(o)
 
     def op_move(self, op: dict, path: str) -> None:
         if set(op) != {"op", "ref", "x", "y"}:
@@ -470,8 +608,26 @@ class _Edit(_Map):
         pool = self.units.units if isinstance(o, unitsdoo.Unit) else self.doodads.doodads
         pool.remove(o)
 
-    def finish(self) -> dict:
-        changed = []
+    def _sync_starts(self) -> list[str]:
+        """Move war3map.w3i's player start (what the map script uses) along with its start location marker."""
+        synced = []
+        for o in self.starts:
+            if o not in self.units.units:
+                continue
+            player = next((p for p in self.info.players if p.id == o.owner), None) if self.info else None
+            if player is None:
+                self.warnings.append(f"start_location:{o.editor_id} belongs to player {o.owner}, which war3map.w3i does "
+                                     "not list (info_edit players)")
+            elif (player.start_x, player.start_y) != (o.x, o.y):
+                player.start_x, player.start_y = o.x, o.y
+                synced.append(f"players[{self.info.players.index(player)}].start")
+        if synced:
+            self.project.write("war3map.w3i", w3i.serialize(self.info))
+        return synced
+
+    def finish(self, verbose: bool = False) -> dict:
+        synced = self._sync_starts()
+        changed = ["war3map.w3i"] if synced else []
         for name, model, before, codec in ((UNITS_FILE, self.units, self.units_before, unitsdoo),
                                            (DOODADS_FILE, self.doodads, self.doodads_before, doo)):
             if before is None and not (model.units if codec is unitsdoo else model.doodads):
@@ -485,21 +641,70 @@ class _Edit(_Map):
                 changed.append(name)
         if changed:
             self.warnings += [SCRIPT_WARNING, DERIVED_WARNING]
-        return {"changed": bool(changed), "files": changed, "created": self.created, "warnings": self.warnings}
+        result = {"changed": bool(changed), "files": changed, "created_count": len(self.created),
+                  "created": self.created if verbose else ref_ranges(self.created), "warnings": self.warnings}
+        if synced:
+            result["synced"] = synced
+        return result
 
 
-def placed_edit(project, catalog, ops: list) -> dict:
+def _in_zone(zone: tuple, x: float, y: float) -> bool:
+    if zone[0] == "rect":
+        return zone[1] <= x <= zone[3] and zone[2] <= y <= zone[4]
+    return (x - zone[1]) ** 2 + (y - zone[2]) ** 2 <= zone[3] ** 2
+
+
+def _float_or(value, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def ref_ranges(refs: list[str]) -> list[str]:
+    """["doodad:4", "doodad:5", "doodad:6", "unit:2"] -> ["doodad:4..6", "unit:2"]"""
+    runs = []
+    for ref in refs:
+        kind, _, number = ref.rpartition(":")
+        n = int(number)
+        if runs and runs[-1][0] == kind and runs[-1][2] == n - 1:
+            runs[-1][2] = n
+        else:
+            runs.append([kind, n, n])
+    return [f"{k}:{a}" if a == b else f"{k}:{a}..{b}" for k, a, b in runs]
+
+
+def _rows(op: dict, path: str) -> list[tuple[dict, str]]:
+    """The compact add form {"op": "add", <shared fields>, "columns": [...], "rows": [[...], ...]} as single adds."""
+    columns, rows = op.get("columns"), op.get("rows")
+    if (not isinstance(columns, list) or not all(isinstance(c, str) and c != "op" for c in columns)
+            or not isinstance(rows, list)):
+        raise _bad(path, 'expected "columns": [field names] and "rows": [[values], ...]')
+    shared = {k: v for k, v in op.items() if k not in ("columns", "rows")}
+    out = []
+    for j, row in enumerate(rows):
+        if not isinstance(row, list) or len(row) != len(columns):
+            raise _bad(f"{path}.rows[{j}]", f"expected {len(columns)} values ({', '.join(columns)})")
+        out.append(({**shared, **dict(zip(columns, row))}, f"{path}.rows[{j}]"))
+    return out
+
+
+def placed_edit(project, catalog, ops: list, verbose: bool = False) -> dict:
     edit = _Edit(project, catalog)
     for i, op in enumerate(ops):
         path = f"ops[{i}]"
         try:
             action = op.get("op") if isinstance(op, dict) else None
-            if action not in ("add", "set", "move", "delete"):
+            if action not in ("add", "set", "move", "delete", "scatter"):
                 raise ToolError("bad_op", f"{path}: unknown op {action!r}", hint=_HINT)
-            getattr(edit, f"op_{action}")(op, path)
+            if action == "add" and ("rows" in op or "columns" in op):
+                for single, where in _rows(op, path):
+                    edit.op_add(single, where)
+            else:
+                getattr(edit, f"op_{action}")(op, path)
         except ToolError as e:
             e.details.setdefault("op_index", i)
             if e.code == "bad_value" and not e.hint:
                 e.hint = "placed_list shows refs and fields"
             raise
-    return edit.finish()
+    return edit.finish(verbose)

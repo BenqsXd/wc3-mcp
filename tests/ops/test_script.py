@@ -100,7 +100,7 @@ def test_placed_objects_are_built_into_the_script(tmp_path, catalog):
          "drops": {"sets": [[{"item": "ratc", "chance": 60}]]}},
         {"op": "add", "kind": "item", "type": "ratc", "x": 64, "y": 64},
         {"op": "add", "kind": "destructible", "type": "LTbr", "x": 512, "y": 512,
-         "drops": {"sets": [[{"item": "YiI1", "chance": 100}]]}}])
+         "drops": {"sets": [[{"item": "YiI1", "chance": 100}]]}}], verbose=True)
     hero, item, barrel = (next(x for x in placed_list(project, catalog, limit=5000)["items"] if x["ref"] == r)
                           for r in result["created"])
     triggers_edit(project, catalog, [{"op": "trigger", "name": "Uses", "script":

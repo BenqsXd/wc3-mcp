@@ -76,7 +76,7 @@ class MapProject:
 
     # opening
     @classmethod
-    def open(cls, source) -> "MapProject":
+    def open(cls, source, merge_external: bool = False) -> "MapProject":
         source = Path(source).resolve()
         if not source.exists():
             raise ToolError("not_found", f"map not found: {source}")
@@ -87,8 +87,12 @@ class MapProject:
             if not p.source_changed():
                 return p  # resume, keeping unsaved edits
             if p.m["dirty"] or p.m["deleted"]:
+                if merge_external:
+                    p.merge_source()
+                    return p
                 raise ToolError("stale_work", "the map changed on disk while the working copy has unsaved edits",
-                                hint="map_close with discard=true, then map_open again")
+                                hint="map_open with merge_external=true keeps those edits and takes every other file "
+                                     "from the map, or map_close with discard=true drops them")
             shutil.rmtree(work)
         return cls._extract(source, work)
 
@@ -163,6 +167,35 @@ class MapProject:
     def notes(self) -> dict:
         return self.m.get("notes", {})
 
+    def merge_source(self) -> dict:
+        """Take the map file's current version of every file this working copy has not changed or deleted itself
+        (for example what a World Editor save recomputed), keeping its own changed files."""
+        fresh_work = self.work.with_name(self.work.name + "-merge")
+        shutil.rmtree(fresh_work, ignore_errors=True)
+        fresh = MapProject._extract(self.source, fresh_work)
+        mine = {n.upper() for n in self.m["dirty"]}
+        gone = {n.upper() for n in self.m["deleted"]}
+        old = self.m["files"]
+
+        def data(work: Path, entry: dict) -> bytes:
+            return (work / "files" / entry["path"]).read_bytes()
+
+        taken = sorted(e["name"] for k, e in fresh.m["files"].items() if k not in mine | gone
+                       and (k not in old or data(fresh_work, e) != data(self.work, old[k])))
+        removed = sorted(e["name"] for k, e in old.items() if k not in fresh.m["files"] and k not in mine)
+        for key in mine:
+            fresh._put(old[key]["name"], data(self.work, old[key]))
+        for key in gone & fresh.m["files"].keys():
+            (fresh_work / "files" / fresh.m["files"].pop(key)["path"]).unlink()
+        fresh.m.update(dirty=self.m["dirty"], deleted=self.m["deleted"], notes=dict(self.m.get("notes", {})))
+        if "WAR3MAP.WPM" in {n.upper() for n in taken} and "WAR3MAP.W3E" not in mine:
+            fresh.m["notes"]["terrain_edited"] = False   # an editor save recomputed pathing for this terrain
+        fresh._flush()
+        shutil.rmtree(self.work)
+        os.replace(fresh_work, self.work)
+        self.m = fresh.m
+        return {"taken": taken, "removed": removed, "kept": sorted(self.m["dirty"]), "deleted": sorted(self.m["deleted"])}
+
     def source_changed(self) -> bool:
         return fingerprint(self.source).get("sha256") != self.m["fingerprint"].get("sha256")
 
@@ -206,7 +239,9 @@ class MapProject:
                             hint="save with format='mpq'")
         if in_place and not force and self.source_changed():
             raise ToolError("source_changed", "the map was modified outside this working copy since it was opened",
-                            hint="map_close(discard=true) and reopen to pick up those changes, or force=true to overwrite them")
+                            hint="map_save(merge_external=true) keeps this working copy's changed files and takes every "
+                                 "other file from the map (e.g. what a World Editor save recomputed); force=true "
+                                 "overwrites the map with the working copy; map_close(discard=true) drops the edits")
         if in_place and not (self.m["dirty"] or self.m["deleted"]) and not force:
             return {"saved": False, "reason": "no changes", "path": str(dest)}
         pathguard.ensure_writable(dest)

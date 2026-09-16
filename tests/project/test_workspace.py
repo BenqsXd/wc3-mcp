@@ -133,3 +133,35 @@ def test_save_reports_a_locked_file(tmp_path, monkeypatch):
     with pytest.raises(ToolError) as e:
         p.save()
     assert e.value.code == "file_in_use" and "editor_map action=close" in e.value.hint
+
+
+def test_merge_takes_the_map_files_the_working_copy_did_not_change(tmp_path):
+    src = make_map(tmp_path / "m.w3x", {"war3map.w3e": b"terrain", "war3map.wpm": b"old path", "war3map.j": b"s",
+                                        "gone.txt": b"x", "mine.txt": b"1"})
+    p = MapProject.open(src)
+    p.write("war3map.w3e", b"my terrain")
+    p.delete("mine.txt")
+    p.note("terrain_edited")
+    # the World Editor saved: new pathing, a new file, one file dropped, and its own take on the terrain
+    make_map(src, {"war3map.w3e": b"editor terrain", "war3map.wpm": b"new path", "war3map.j": b"s",
+                   "war3map.shd": b"shadows", "mine.txt": b"1"})
+    merged = p.merge_source()
+    assert merged == {"taken": ["war3map.shd", "war3map.wpm"], "removed": ["gone.txt"], "kept": ["war3map.w3e"],
+                      "deleted": ["mine.txt"]}
+    assert (p.read("war3map.w3e"), p.read("war3map.wpm"), p.read("war3map.shd")) == (b"my terrain", b"new path", b"shadows")
+    assert not p.source_changed() and p.notes()["terrain_edited"] is True
+    assert sorted(f["name"] for f in p.list_files()) == ["war3map.j", "war3map.shd", "war3map.w3e", "war3map.wpm"]
+    assert p.save()["saved"]
+    arc = Archive.open(src)
+    assert (arc.read("war3map.w3e"), arc.read("war3map.wpm"), arc.read("mine.txt")) == (b"my terrain", b"new path", None)
+
+
+def test_open_can_merge_instead_of_refusing(tmp_path):
+    src = make_map(tmp_path / "m.w3x", {"a.txt": b"1", "b.txt": b"1"})
+    MapProject.open(src).write("a.txt", b"mine")
+    make_map(src, {"a.txt": b"theirs", "b.txt": b"theirs"})
+    with pytest.raises(ToolError) as e:
+        MapProject.open(src)
+    assert e.value.code == "stale_work" and "merge_external" in e.value.hint
+    p = MapProject.open(src, merge_external=True)
+    assert (p.read("a.txt"), p.read("b.txt"), p.status()["dirty"]) == (b"mine", b"theirs", ["a.txt"])

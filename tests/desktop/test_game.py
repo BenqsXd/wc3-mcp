@@ -54,9 +54,10 @@ def test_benign_log_lines_are_separated():
     lines = ["9/15 08:52:52.967  GameMain Started",
              r"9/15 08:52:55.802  SysMsg: Could not load file: Doodads\x\y.mdl",
              r"9/15 08:52:55.802  model creation failed - Doodads\x\y.mdl",
-             "9/15 08:53:03.032  [CLoginCallbacks] LoginDoorClose called"]
-    keep, benign = game.split_log(lines)
-    assert keep == [lines[0], lines[3]] and benign == [lines[1], lines[2]]
+             "9/15 08:53:03.032  [CLoginCallbacks] LoginDoorClose called",
+             r"9/15 08:53:04.000  SysMsg: Could not load file: Doodads\x\y.mdl"]
+    keep, benign, missing = game.split_log(lines)
+    assert keep == [lines[0], lines[3]] and benign == [lines[2]] and missing == [r"Doodads\x\y.mdl"]
 
 
 def test_screenshot_only_captures_a_game_window(monkeypatch):
@@ -68,7 +69,10 @@ def test_screenshot_only_captures_a_game_window(monkeypatch):
     monkeypatch.setattr(game.win32gui, "GetWindowText", lambda h: "Warcraft III")
     monkeypatch.setattr(game.win, "activate", lambda h: None)
     monkeypatch.setattr(game.win32gui, "GetForegroundWindow", lambda: 99)   # something else took the foreground
+    monkeypatch.setattr(game.win, "capture", lambda h: None)
     assert runner._screenshot(1234) == (None, "game_window_not_in_front")
+    monkeypatch.setattr(game.win, "capture", lambda h: b"DRAWN" if h == 7 else None)
+    assert runner._screenshot(1234) == (b"DRAWN", "Warcraft III (captured behind other windows)")
     monkeypatch.setattr(game.win32gui, "GetForegroundWindow", lambda: 7)
     monkeypatch.setattr(game.win, "screenshot", lambda h: b"PNG" if h == 7 else b"wrong")
     assert runner._screenshot(1234) == (b"PNG", "Warcraft III")
@@ -96,3 +100,25 @@ def test_probe_reports_a_running_map(tmp_path):
     assert result["missing"] == [], result
     report = probe.parse(result["results"][probe.REPORT])
     assert report["probe"] == "ok" and report["player0.units"] > 0 and target.read_bytes() == jass.read_bytes()
+
+
+def test_capture_draws_a_window_behind_others():
+    import win32gui
+    from PIL import Image
+    import io
+
+    from wc3mcp.desktop import win
+
+    shown = []
+    win32gui.EnumWindows(lambda h, _: shown.append(h) if win32gui.IsWindowVisible(h) and not win32gui.IsIconic(h)
+                         and win32gui.GetWindowText(h) else None, None)
+    for h in shown:
+        left, top, right, bottom = win32gui.GetWindowRect(h)
+        if right - left > 100 and bottom - top > 100:
+            png = win.capture(h)
+            if png:
+                assert Image.open(io.BytesIO(png)).size == (right - left, bottom - top)
+                break
+    else:
+        pytest.skip("no capturable window on this desktop")
+    assert win.capture(0) is None

@@ -76,9 +76,11 @@ def test_add_set_move_delete_round_trip(melee, catalog):
         {"op": "add", "kind": "destructible", "type": "LTlt", "x": 512, "y": 512, "life": 40},
         {"op": "add", "kind": "doodad", "type": "LRrk", "x": -512, "y": 512, "scale": [1, 1, 2], "z": 300},
         {"op": "add", "kind": "start_location", "x": 256, "y": 256, "owner": 5},
-        {"op": "add", "kind": "unit", "type": "uDNR", "x": 64, "y": 64, "owner": 24, "random": {"level": 4}}])
+        {"op": "add", "kind": "unit", "type": "uDNR", "x": 64, "y": 64, "owner": 24, "random": {"level": 4}}],
+        verbose=True)
     assert result["changed"] and set(result["files"]) == {"war3mapUnits.doo", "war3map.doo"}
-    assert len(result["created"]) == 6 and len(result["warnings"]) == 2
+    assert len(result["created"]) == result["created_count"] == 6 and len(result["warnings"]) == 3
+    assert "belongs to player 5, which war3map.w3i does not list" in result["warnings"][0]
     items = {x["ref"]: x for x in placed_list(melee, catalog, limit=5000)["items"]}
     hero, item, tree, rock, start, creep = (items[r] for r in result["created"])
     terrain = w3e.parse(melee.read("war3map.w3e"))
@@ -170,3 +172,61 @@ def test_campaign_map_edit_keeps_other_objects(tmp_path, catalog):
     assert len(changed) == 1 and (after.units[changed[0]].owner, after.units[changed[0]].color) == (3, 5)
     assert (after.version, after.subversion) == (before.version, before.subversion)
     assert project.read("war3map.doo") == doodads
+
+
+def test_rows_add_many_and_created_is_a_range(melee, catalog):
+    result = placed_edit(melee, catalog, [
+        {"op": "add", "kind": "destructible", "life": 80, "columns": ["type", "x", "y", "variation", "angle"],
+         "rows": [["LTlt", -512, 512, 2, 113], ["LTlt", -256, 512, 3, 20], ["ATtr", 0, 512, 1, 0]]},
+        {"op": "add", "kind": "unit", "type": "hfoo", "x": 0, "y": 0}])
+    first = int(result["created"][0].split(":")[1].split("..")[0])
+    assert result["created"] == [f"destructible:{first}..{first + 2}", f"unit:{result['created'][1].split(':')[1]}"]
+    assert result["created_count"] == 4
+    trees = {x["ref"]: x for x in placed_list(melee, catalog, kind="destructible", limit=5000)["items"]}
+    assert (trees[f"destructible:{first}"]["variation"], trees[f"destructible:{first}"]["angle"],
+            trees[f"destructible:{first + 2}"]["type"], trees[f"destructible:{first + 1}"]["life"]) == (2, 113.0, "ATtr", 80)
+    err = _error(placed_edit, melee, catalog, [{"op": "add", "kind": "doodad", "columns": ["type", "x"],
+                                                "rows": [["LTlt", 0, 0]]}])
+    assert err.code == "bad_value" and err.details["path"] == "ops[0].rows[0]"
+
+
+def test_scatter_places_weighted_types_away_from_exclusions(melee, catalog):
+    ops = [{"op": "scatter", "kind": "destructible", "types": {"LTlt": 3, "ATtr": 1}, "count": 60,
+            "rect": [-1536, -1536, 1536, 1536], "exclude": [{"x": 0, "y": 0, "radius": 600},
+                                                            {"rect": [-1536, -1536, -1000, 1536]}],
+            "min_distance": 128, "seed": 5, "life": 90}]
+    before = {x["ref"] for x in placed_list(melee, catalog, kind="destructible", limit=5000)["items"]}
+    result = placed_edit(melee, catalog, ops, verbose=True)
+    assert result["created_count"] == 60 and len(result["created"]) == 60
+    new = [x for x in placed_list(melee, catalog, kind="destructible", limit=5000)["items"] if x["ref"] not in before]
+    assert len(new) == 60 and {x["type"] for x in new} == {"LTlt", "ATtr"} and {x["life"] for x in new} == {90}
+    for a in new:
+        assert -1000 < a["x"] <= 1536 and -1536 <= a["y"] <= 1536 and a["x"] ** 2 + a["y"] ** 2 > 600 ** 2
+        assert all((a["x"] - b["x"]) ** 2 + (a["y"] - b["y"]) ** 2 >= 127.9 ** 2 for b in new if b is not a)
+        assert a["angle"] == 270.0   # trees stand at their fixed rotation
+    assert len({x["variation"] for x in new if x["type"] == "LTlt"}) > 1
+    melee.close(discard=True)
+    again = MapProject.open(melee.source)
+    placed_edit(again, catalog, ops)
+    assert [(x["x"], x["y"], x["type"]) for x in placed_list(again, catalog, kind="destructible", limit=5000)["items"]
+            if x["ref"] not in before] == [(x["x"], x["y"], x["type"]) for x in new]   # a seed repeats the layout
+    err = _error(placed_edit, again, catalog, [{"op": "scatter", "kind": "doodad", "types": ["LPgp"], "count": 5}])
+    assert err.code == "bad_value" and "no model" in err.message
+    crowded = placed_edit(again, catalog, [{"op": "scatter", "kind": "doodad", "types": ["APms"], "count": 50,
+                                            "x": 0, "y": 0, "radius": 200, "min_distance": 150, "seed": 1}])
+    assert crowded["created_count"] < 50 and any("placed" in w and "of 50" in w for w in crowded["warnings"])
+
+
+def test_moving_a_start_location_moves_the_player_start(melee, catalog):
+    from wc3mcp.ops.info import info_get
+
+    start = placed_list(melee, catalog, kind="start_location")["items"][0]
+    result = placed_edit(melee, catalog, [{"op": "move", "ref": start["ref"], "x": 128, "y": -256}])
+    index = next(i for i, p in enumerate(info_get(melee)["players"]) if p["id"] == start["owner"])
+    assert result["synced"] == [f"players[{index}].start"] and "war3map.w3i" in result["files"]
+    assert info_get(melee)["players"][index]["start"] == [128, -256]
+
+
+def test_adding_a_doodad_without_a_model_warns(melee, catalog):
+    result = placed_edit(melee, catalog, [{"op": "add", "kind": "doodad", "type": "LPgp", "x": 0, "y": 0}])
+    assert any("LPgp" in w and "renders nothing" in w for w in result["warnings"])

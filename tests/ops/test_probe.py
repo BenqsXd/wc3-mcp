@@ -17,8 +17,20 @@ def test_script_reports_through_preload():
 
 
 def test_parse_report():
-    assert probe.parse(["probe=ok", "seconds=10.00", "player0.units=12", "player0.gold=500"]) == {
-        "probe": "ok", "seconds": "10.00", "player0.units": 12, "player0.gold": 500}
+    assert probe.parse(["probe=ok", "seconds=10.00", "player0.units=12", "player0.heroes=1", "message0=hi=there",
+                        "message1=second"]) == {"probe": "ok", "seconds": "10.00", "player0.units": 12,
+                                                "player0.heroes": 1, "messages": ["hi=there", "second"]}
+
+
+def test_debug_messages_reach_the_report():
+    script = ("globals\n    integer udg_x = 0\nendglobals\nfunction A takes nothing returns nothing\n"
+              '    call BJDebugMsg("a")\n    call BJDebugMsgX()\nendfunction\n')
+    routed = probe.route_messages(script)
+    assert routed.index("string array wc3mcpProbe_messages") < routed.index("endglobals")
+    assert routed.index("function wc3mcpProbe_Msg") < routed.index("function A")
+    assert 'call wc3mcpProbe_Msg("a")' in routed and "call BJDebugMsgX()" in routed
+    assert routed.count("call BJDebugMsg(s)") == 1   # the route itself still shows the message
+    assert "BJDebugMsg = function(s)" in probe.script("lua", 5) and "heroes" in probe.script("jass", 5)
 
 
 @pytest.mark.skipif(not HAVE_INSTALL, reason="needs the Warcraft III install")
@@ -35,7 +47,8 @@ def test_build_makes_a_copy_that_reports(tmp_path):
     project = MapProject.open(copy)
     try:
         assert probe.NAME in [t["name"] for t in triggers_tree(project, Catalog(_storage()))["triggers"]]
-        assert "PreloadGenEnd" in project.read("war3map.j").decode("utf-8", "replace")
+        text = project.read("war3map.j").decode("utf-8", "replace")
+        assert "PreloadGenEnd" in text and "function wc3mcpProbe_Msg" in text
         assert any(f["name"].lower() == "war3mapmap.blp" for f in project.list_files())
     finally:
         project.close(discard=True)
