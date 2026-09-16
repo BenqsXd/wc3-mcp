@@ -318,19 +318,24 @@ class _V:
             look = look if look in ids[kind] else t
             base, fields = art[kind].get(look, (look, {}))
             file_field, count_field = MODEL_FIELDS[kind]
-            file = fields.get(file_field) or self.catalog.field(kind, base, file_field)
-            if not file:
-                continue
-            count = int(fields.get(count_field) or self.catalog.field(kind, base, count_field) or 1) if count_field else 1
-            for path in self.catalog.model_paths(file, count, variation if count > 1 else None):
-                if not (self.catalog.model_exists(path) or self.has_file(path) or self.has_file(path[:-4] + ".mdx")):
+            if fields.get(file_field) or (count_field and fields.get(count_field)):   # the map's own model fields
+                file = fields.get(file_field) or self.catalog.field(kind, base, file_field)
+                if not file:
+                    continue
+                count = int(fields.get(count_field) or self.catalog.field(kind, base, count_field) or 1) if count_field else 1
+                missing = [p for p in self.catalog.model_paths(file, count, variation) if not self.catalog.model_exists(p)]
+            else:
+                missing = (self.catalog.missing_models(kind, base, variation) or ([], []))[1]
+            for path in missing:
+                if not (self.has_file(path) or self.has_file(path[:-4] + ".mdx")):
                     entry = broken.setdefault((kind, t), [0, set()])
                     entry[0] += n
                     entry[1].add(path)
         for (kind, t), (n, paths) in sorted(broken.items()):
             self.add(False, "model", "war3map.doo" if kind != "unit" else "war3mapUnits.doo",
-                     f"{n} placed {kind}(s) {t}: {', '.join(sorted(paths))} is in neither the game data nor the map, "
-                     "so they render nothing (data_search shows model_ok per id)")
+                     f"{n} placed {kind}(s) {t}: {', '.join(sorted(paths))} cannot be loaded from the game data "
+                     "(HD or classic graphics, which the World Editor uses) or the map, so they render nothing there "
+                     "(data_search shows model_ok and variations_ok per id)")
         if units is None or self.mi is None:
             return
         players = {p.id: p for p in self.mi.players}

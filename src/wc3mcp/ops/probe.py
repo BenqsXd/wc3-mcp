@@ -51,7 +51,7 @@ function Trig_{name}_Actions takes nothing returns nothing
         endif
         set i = i + 1
     endloop
-    set i = 0
+{call_user}    set i = 0
     loop
         exitwhen i >= wc3mcpProbe_count
         call Preload("message" + I2S(i) + "=" + wc3mcpProbe_messages[i])
@@ -88,7 +88,7 @@ function Trig_{name}_Actions()
             DestroyGroup(g)
         end
     end
-    for i, text in ipairs(wc3mcpProbe_messages) do
+{call_user}    for i, text in ipairs(wc3mcpProbe_messages) do
         Preload("message" .. (i - 1) .. "=" .. text)
     end
     PreloadGenEnd("{report}")
@@ -109,10 +109,46 @@ end
 """
 
 
-def script(language: str, seconds: float) -> str:
-    template = LUA if language == "lua" else JASS
-    return template.format(name=NAME, seconds=f"{float(seconds):.2f}", report=REPORT.replace("\\", "\\\\"),
-                           limit=MAX_MESSAGES)
+# probe_script: the caller's code runs as Trig_wc3mcpProbe_User while the report file is open; ProbeReport(text)
+# writes text in pieces short enough for Preload (report= then report+= lines, joined again by parse)
+JASS_USER = """function ProbeReport takes string s returns nothing
+    local integer i = 200
+    call Preload("report=" + SubString(s, 0, 200))
+    loop
+        exitwhen i >= StringLength(s)
+        call Preload("report+=" + SubString(s, i, i + 200))
+        set i = i + 200
+    endloop
+endfunction
+
+function Trig_{name}_User takes nothing returns nothing
+{body}endfunction
+
+"""
+LUA_USER = """function ProbeReport(s)
+    s = tostring(s)
+    Preload("report=" .. string.sub(s, 1, 200))
+    for i = 201, #s, 200 do
+        Preload("report+=" .. string.sub(s, i, i + 199))
+    end
+end
+
+function Trig_{name}_User()
+{body}end
+
+"""
+
+
+def script(language: str, seconds: float, user: str | None = None) -> str:
+    lua = language == "lua"
+    template = LUA if lua else JASS
+    call = ("" if user is None else f"    Trig_{NAME}_User()\n" if lua else f"    call Trig_{NAME}_User()\n")
+    text = template.format(name=NAME, seconds=f"{float(seconds):.2f}", report=REPORT.replace("\\", "\\\\"),
+                           limit=MAX_MESSAGES, call_user=call)
+    if user is None:
+        return text
+    body = "".join(f"    {line}\n" if line.strip() else "\n" for line in user.splitlines())
+    return (LUA_USER if lua else JASS_USER).replace("{name}", NAME).replace("{body}", body) + text
 
 
 def route_messages(script_text: str) -> str:
@@ -125,8 +161,9 @@ def route_messages(script_text: str) -> str:
     return head + JASS_GLOBALS + sep + JASS_MESSAGES.format(limit=MAX_MESSAGES) + body
 
 
-def build(source, dest, catalog, project=None, seconds: float = 10.0) -> Path:
-    """Write a copy of the map (the open working copy when `project` is given) with the probe trigger in it."""
+def build(source, dest, catalog, project=None, seconds: float = 10.0, user: str | None = None) -> Path:
+    """Write a copy of the map (the open working copy when `project` is given) with the probe trigger in it, running
+    the caller's `user` code (JASS or Lua statements, as the map's language) when given."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     if project is not None:
@@ -136,7 +173,7 @@ def build(source, dest, catalog, project=None, seconds: float = 10.0) -> Path:
     copy = MapProject.open(dest)
     try:
         language = script_ops.language(copy)
-        triggers_edit(copy, catalog, [{"op": "trigger", "name": NAME, "script": script(language, seconds)}])
+        triggers_edit(copy, catalog, [{"op": "trigger", "name": NAME, "script": script(language, seconds, user)}])
         script_ops.script_build(copy, catalog)
         if language != "lua":
             name = next(n for n in ("war3map.j", "scripts\\war3map.j")
@@ -144,9 +181,11 @@ def build(source, dest, catalog, project=None, seconds: float = 10.0) -> Path:
             copy.write(name, route_messages(copy.read(name).decode("utf-8", "replace")).encode("utf-8"))
         checked = script_ops.script_validate(copy, catalog)
         if not checked["ok"]:
-            raise ToolError("probe_script_failed", f"the probed map's script does not compile: "
-                            f"{checked['errors'][0]['message']}", hint="fix the map script (script_validate)",
-                            errors=checked["errors"][:5])
+            first = checked["errors"][0]
+            mine = user is not None and first.get("trigger") == NAME
+            raise ToolError("probe_script_failed", f"the probed map's script does not compile: {first['message']}",
+                            hint="fix probe_script (it runs as the body of Trig_wc3mcpProbe_User; declare locals "
+                            "first)" if mine else "fix the map script (script_validate)", errors=checked["errors"][:5])
         if not any(f["name"].lower() == "war3mapmap.blp" for f in copy.list_files()):
             copy.write("war3mapMap.blp", terrain_ops.minimap(copy, catalog))   # the game quits on a map without one
         copy.save()
@@ -156,12 +195,17 @@ def build(source, dest, catalog, project=None, seconds: float = 10.0) -> Path:
 
 
 def parse(lines: list[str]) -> dict:
-    """"key=value" report lines as a dict, numbers as numbers; message<n> lines (BJDebugMsg text) as messages."""
-    out: dict = {"messages": []}
+    """"key=value" report lines as a dict, numbers as numbers; message<n> lines (BJDebugMsg text) as messages;
+    ProbeReport text as reports."""
+    out: dict = {"messages": [], "reports": []}
     for line in lines:
         key, sep, value = line.partition("=")
         if re.fullmatch(r"message\d+", key) and sep:
             out["messages"].append(value)
+        elif key == "report" and sep:
+            out["reports"].append(value)
+        elif key == "report+" and sep and out["reports"]:
+            out["reports"][-1] += value
         else:
             out[key] = (int(value) if sep and value.lstrip("-").isdigit() else value if sep else True)
     return out

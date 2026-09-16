@@ -262,19 +262,42 @@ class Catalog:
         stem = file[:-4] if file.lower().endswith((".mdl", ".mdx")) else file
         if count <= 1:
             return [stem + ".mdl"]
-        return [f"{stem}{v}.mdl" for v in (range(count) if variation is None else [variation])]
+        return [f"{stem}{v}.mdl" for v in (range(count) if variation is None else [variation % count])]
 
-    def model_exists(self, path: str) -> bool:
+    @cached_property
+    def sd(self) -> "Catalog":
+        """The data as classic (SD) graphics read it: the World Editor uses it, with other model paths for some types
+        and fewer model files."""
+        if not self.layer["hd"]:
+            return self
+        return Catalog(self.storage, self.layer["locale"], self.layer["balance"], hd=False)
+
+    def model_exists(self, path: str, hd: bool = False) -> bool:
+        """Whether the game data has a model; by default in classic graphics, which then also has it in HD."""
         stem = path[:-4]
-        return any(self.storage.resolve(stem + ext, **self.layer) for ext in (".mdx", ".mdl"))
+        layer = {**self.layer, "hd": hd and self.layer["hd"]}
+        return any(self.storage.resolve(stem + ext, **layer) for ext in (".mdx", ".mdl"))
 
-    def missing_models(self, kind: str, obj_id: str) -> tuple[list[str], list[str]] | None:
-        """(model paths, the ones the game data does not have) for a base doodad, destructible or unit."""
+    def missing_models(self, kind: str, obj_id: str, variation: int | None = None) -> tuple[list[str], list[str]] | None:
+        """(model paths, the ones the game cannot load in HD or classic graphics) of a base doodad, destructible or
+        unit, for every variation or one."""
         found = self.model(kind, obj_id)
         if found is None:
             return None
-        paths = self.model_paths(*found)
-        return paths, [p for p in paths if not self.model_exists(p)]
+        paths = self.model_paths(*found, variation)
+        missing = [p for p in paths if not self.model_exists(p, hd=True)]
+        classic = self.sd.model(kind, obj_id)
+        for p in self.sd.model_paths(*classic, variation) if classic else ():
+            if p not in missing and not self.sd.model_exists(p):
+                missing.append(p)
+        return paths, missing
+
+    def variations_ok(self, kind: str, obj_id: str) -> list[int] | None:
+        """Variations whose models load in both graphics modes (None: the type has no model)."""
+        found = self.model(kind, obj_id)
+        if found is None:
+            return None
+        return [v for v in range(max(found[1], 1)) if not self.missing_models(kind, obj_id, v)[1]]
 
     def tileset_of(self, kind: str, obj_id: str) -> str | None:
         """The tileset letter a tile or cliff id belongs to."""
@@ -309,7 +332,10 @@ class Catalog:
         page = out[offset:offset + limit]
         if kind in TILESET_FIELDS:   # some ids of the data files have no model in the installed game
             for row in page:
-                row["model_ok"] = not (self.missing_models(kind, row["id"]) or ([], []))[1]
+                found, ok = self.model(kind, row["id"]), self.variations_ok(kind, row["id"])
+                row["model_ok"] = ok is None or len(ok) == max(found[1], 1)
+                if ok and not row["model_ok"]:
+                    row["variations_ok"] = ok
         return page
 
     def _search_terrain(self, kind: str, query: str, limit: int, offset: int, tileset: str | None) -> list[dict]:

@@ -56,3 +56,17 @@ def test_placed_objects_without_models_and_moved_starts_are_warnings(catalog):
                       "placed_edit, which updates both"]
     imported = validate(files, catalog, has_file=lambda name: "grasspatch" in name.lower())
     assert not any("LPgp" in w["message"] for w in imported["warnings"] if w["check"] == "model")
+
+
+def test_placed_variations_without_a_classic_model_are_warnings(catalog):
+    from wc3mcp.formats import doo
+
+    arc = open_sample(sample_map_ids()[0])
+    files = map_files(arc)
+    doodads = doo.parse(files["war3map.doo"]) if "war3map.doo" in files else doo.DoodadFile(8, 11)
+    shrub = [doo.Doodad(b"ZPsh", v, 0.0, 0.0, 0.0, 0.0, [1.0, 1.0, 1.0], b"ZPsh", 2, 255) for v in (0, 3)]
+    doodads.doodads += shrub
+    files["war3map.doo"] = doo.serialize(doodads)
+    models = [w["message"] for w in validate(files, catalog, has_file=lambda name: arc.find(name) is not None)["warnings"]
+              if w["check"] == "model" and "ZPsh" in w["message"]]
+    assert len(models) == 1 and models[0].startswith("1 placed doodad(s) ZPsh: ") and "Ruins_Shrub3.mdl" in models[0]

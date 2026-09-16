@@ -47,7 +47,7 @@ def test_map_tools_end_to_end(tmp_path):
     path = str(src)
     assert payload(call("map_open", {"path": path}))["file_count"] == 1
     payload(call("map_file_write", {"path": path, "name": "war3map.j", "content": "new"}))
-    assert payload(call("map_save", {"path": path}))["saved"]
+    assert payload(call("map_save", {"path": path, "validate": False}))["saved"]   # "new" is no valid JASS
     assert payload(call("map_file_read", {"path": path, "name": "war3map.j"}))["content"] == "new"
     assert Archive.open(src).read("war3map.j") == b"new"
     payload(call("map_close", {"path": path}))
@@ -334,7 +334,7 @@ def test_map_save_names_the_editor_when_it_holds_the_file(tmp_path, monkeypatch)
     monkeypatch.setattr(workspace.os, "replace", lambda *a: (_ for _ in ()).throw(PermissionError(5, "Access is denied")))
     monkeypatch.setattr(server.desktop_editor.EDITOR, "status", lambda: {
         "running": True, "map": path, "dirty": False, "campaign": None, "campaign_dirty": False})
-    err = call("map_save", {"path": path})
+    err = call("map_save", {"path": path, "validate": False})
     assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "editor_holds_map"
     monkeypatch.undo()
     payload(call("map_close", {"path": path, "discard": True}))
@@ -417,4 +417,24 @@ def test_map_save_merges_an_editor_save(tmp_path):
     assert saved["saved"] and saved["merged"]["taken"] == ["war3map.wpm"] and saved["merged"]["kept"] == ["war3map.j"]
     arc = Archive.open(src)
     assert (arc.read("war3map.j"), arc.read("war3map.wpm")) == (b"mine", b"editor path")
+    payload(call("map_close", {"path": path}))
+
+
+@needs_install
+def test_map_save_compiles_the_script(tmp_path):
+    maps = [p for p in ladder_maps() if Archive.open(p).read("war3map.j") is not None]
+    if not maps:
+        pytest.skip("no JASS ladder maps in Documents")
+    src = tmp_path / maps[0].name
+    src.write_bytes(maps[0].read_bytes())
+    path = str(src)
+    payload(call("map_open", {"path": path}))
+    payload(call("triggers_edit", {"path": path, "ops": [
+        {"op": "trigger", "name": "Broken", "script": "call NoSuchNativeHere()\n"}]}))
+    refused = call("map_save", {"path": path})
+    assert refused.isError and "does not compile" in refused.content[0].text
+    payload(call("triggers_edit", {"path": path, "ops": [
+        {"op": "script_replace", "name": "Broken", "old": "call NoSuchNativeHere()", "new": 'call BJDebugMsg("ok")'}]}))
+    saved = payload(call("map_save", {"path": path}))
+    assert saved["saved"] and saved["validation"]["script"]["ok"]
     payload(call("map_close", {"path": path}))

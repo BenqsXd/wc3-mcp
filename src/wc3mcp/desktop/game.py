@@ -17,13 +17,21 @@ PRELOAD = re.compile(r'call Preload\( "(.*)" \)')
 NOISE = re.compile(r"^\S+ \S+\s+(?:Opening (?:map|mod) - |prism: Info)")
 # lines the shipped Reforged data produces on every run: not defects of the map being tested
 BENIGN = re.compile(r"model creation failed|Referencing unknown database field|Failed to load Environment Map|"
-                    r"Unable to load MDX")
+                    r"Unable to load MDX|Solid texture substituted - Units[\\/]")
 BENIGN_NOTE = "these come from the shipped game data and appear on any map"
 MISSING = re.compile(r"Could not load file: (.+)$")
+# the game keeps about 259 characters of one Preload string and silently drops the rest
+PRELOAD_LIMIT = 255
 
 
 def parse_preload(text: str) -> list[str]:
     return PRELOAD.findall(text)
+
+
+def truncated_lines(found: dict[str, list[str]]) -> dict[str, list[int]]:
+    """Indexes of result lines long enough that the game has probably cut them off, per result file."""
+    rows = {name: [i for i, line in enumerate(lines) if len(line) >= PRELOAD_LIMIT] for name, lines in found.items()}
+    return {name: hits for name, hits in rows.items() if hits}
 
 
 def interesting(lines: list[str]) -> list[str]:
@@ -131,6 +139,12 @@ class Game:
                   "log": log[-200:], "benign_log": {"count": len(benign), "examples": benign[:3], "note": BENIGN_NOTE},
                   "missing_files": missing_files[:50],
                   "crash": next(iter(sorted(self._crash_folders() - crashes)), None)}
+        truncated = truncated_lines(found)
+        if truncated:
+            result["truncated"] = truncated
+            result["truncated_note"] = ("these result lines (indexes per file) reach the Preload limit of about 259 "
+                                        "characters, so the game probably cut them off: split long reports into "
+                                        "several Preload calls")
         if result["missing"]:
             result["hint"] = ("no result file was written: a Battle.net login screen or a dialog stops the game before the "
                               "map loads (log in once with 'Keep me logged in'; screenshot=true shows the window), or the "

@@ -8,7 +8,7 @@ from ..errors import ToolError
 from ..formats import doo, unitsdoo, w3e, w3i, w3r
 from ..formats.binary import FormatError
 from .elements import _bad, _bool, _int, _num, _out
-from .objdata import objdata_list
+from .objdata import objdata_get, objdata_list
 from .triggers import SCRIPT_WARNING, _load, _read, script_users
 
 KINDS = ("unit", "item", "start_location", "doodad", "destructible")
@@ -36,6 +36,8 @@ _HINT = ('ops: {"op": "add", "kind": "unit", "type": "hfoo", "x": 0, "y": 0, "ow
          '"exclude": [{"x": 0, "y": 0, "radius": 600}], "min_distance": 96, "seed": 1}, {"op": "set", "ref": '
          '"unit:12", "life": 50}, {"op": "move", "ref": "doodad:3", "x": 128, "y": -64}, {"op": "delete", "ref": '
          '"item:7"}; placed_list shows refs and fields')
+# minimum and maximum scale fields: the World Editor clamps placed scales to them when it saves
+SCALE_FIELDS = {"doodad": ("dmis", "dmas"), "destructible": ("bmis", "bmas")}
 SCATTER_KEYS = {"op", "kind", "types", "count", "rect", "x", "y", "radius", "exclude", "min_distance", "seed", "where"}
 
 
@@ -75,6 +77,7 @@ class _Map:
         self.doodads = self.doodads or doo.DoodadFile(*version)
         self._ids: dict[str, set[str]] = {}
         self._names: dict[str, dict[str, str]] = {}
+        self._scales: dict[str, tuple] = {}
 
     # ---- catalog and map object data
     def _objects(self, kind: str) -> None:
@@ -351,6 +354,8 @@ class _Edit(_Map):
             o.scale = [_num(s, f"{path}.scale") for s in scale]
             if kind == "destructible" and len(set(o.scale)) > 1:
                 raise _bad(f"{path}.scale", "destructibles scale uniformly")
+        if kind in SCALE_FIELDS and ("scale" in fields or "type" in fields):
+            self._check_scale(kind, o)
         if "variation" in fields:
             o.variation = _int(fields["variation"], f"{path}.variation", 0)
         if "flags" in fields:
@@ -454,23 +459,35 @@ class _Edit(_Map):
 
     def _check_model(self, kind: str, o) -> None:
         t = _id(o.id)
-        model = self.catalog.model(kind, t) if t in self.catalog.ids(kind) else None
-        if model is None:
+        found = self.catalog.missing_models(kind, t, o.variation) if t in self.catalog.ids(kind) else None
+        if not found or not found[1]:
             return
-        paths = self.catalog.model_paths(*model, o.variation if model[1] > 1 else None)
-        missing = [x for x in paths if not self.catalog.model_exists(x)]
-        note = f"{kind} {t} variation {o.variation}: the installed game has no {', '.join(missing)}, so it renders nothing"
-        if missing and note not in self.warnings:
+        note = (f"{kind} {t} variation {o.variation}: the installed game cannot load {', '.join(found[1])} (in HD or "
+                "classic graphics, which the World Editor uses), so it renders nothing there")
+        if note not in self.warnings:
+            self.warnings.append(note)
+
+    def _check_scale(self, kind: str, o) -> None:
+        """The World Editor clamps a doodad's or destructible's scale to its type's minimum and maximum on save."""
+        t = _id(o.id)
+        if t not in self._scales:
+            doc = objdata_get(self.project, self.catalog, kind, t, list(SCALE_FIELDS[kind]))
+            low, high = (_float_or(doc["fields"].get(f, {}).get("value"), None) for f in SCALE_FIELDS[kind])
+            self._scales[t] = (low, high)
+        low, high = self._scales[t]
+        if low is None or high is None or all(low - 1e-4 <= s <= high + 1e-4 for s in o.scale):
+            return
+        lo, hi = SCALE_FIELDS[kind]
+        note = (f"{kind} {t}: scale {'/'.join(f'{s:g}' for s in o.scale)} is outside its range {low:g}..{high:g} "
+                f"({lo}..{hi}); the World Editor clamps it to that range when it saves the map. For bigger or smaller "
+                f"ones, give a custom {kind} type a wider {lo}/{hi} (objdata_edit)")
+        if not any(w.startswith(f"{kind} {t}: scale ") for w in self.warnings):
             self.warnings.append(note)
 
     def _variations(self, kind: str, t: str) -> list[int]:
         """Variations of a type whose model the installed game has (variation 0 for map-defined types)."""
-        model = self.catalog.model(kind, t) if kind in ("doodad", "destructible") and t in self.catalog.ids(kind) else None
-        if model is None:
-            return [0]
-        if model[1] <= 1:
-            return [0] if self.catalog.model_exists(self.catalog.model_paths(*model)[0]) else []
-        return [v for v in range(model[1]) if self.catalog.model_exists(self.catalog.model_paths(*model, v)[0])]
+        ok = self.catalog.variations_ok(kind, t) if kind in ("doodad", "destructible") and t in self.catalog.ids(kind) else None
+        return [0] if ok is None else ok
 
     def op_scatter(self, op: dict, path: str) -> None:
         """Random placements of weighted types inside an area, away from exclusion zones and each other."""
