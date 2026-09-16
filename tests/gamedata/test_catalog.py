@@ -81,3 +81,22 @@ def test_tiles_carry_their_tileset(cat):
     with pytest.raises(ToolError) as e:
         cat.search("tile", "", tileset="Nowhere")
     assert e.value.code == "not_found"
+
+
+def test_doodads_by_tileset_and_model(cat):
+    ashenvale = cat.search("doodad", "", limit=5000, tileset="A")
+    ids = {r["id"] for r in ashenvale}
+    assert "APms" in ids and "LOch" not in ids and "YOsp" in ids   # YOsp is on every tileset ("*")
+    assert all(r["id"] in {x["id"] for x in cat.search("doodad", "", limit=5000)} for r in ashenvale)
+    assert {r["id"]: r["model_ok"] for r in cat.search("doodad", "Grass Patch")}["LPgp"] is False
+    assert {r["id"]: r["model_ok"] for r in cat.search("doodad", "", limit=5000, tileset="A")}["APms"] is True
+    assert cat.search("destructible", "", limit=5000, tileset="L")[0]["model_ok"] in (True, False)
+    grass = cat.get("doodad", "LSga", ["dfil"])["model"]
+    assert grass["files"] == grass["missing"] == [r"Doodads\LordaeronSummer\Plants\SummerGrass\SummerGrass0.mdl",
+                                                  r"Doodads\LordaeronSummer\Plants\SummerGrass\SummerGrass1.mdl"]
+    assert cat.get("unit", "hfoo", ["umdl"])["model"]["missing"] == []
+    assert cat.model_paths("Doodads\\X\\Tree", 3, 2) == ["Doodads\\X\\Tree2.mdl"]
+    assert cat.model_paths("Doodads\\X\\Rock.mdl", 1) == ["Doodads\\X\\Rock.mdl"]
+    with pytest.raises(ToolError) as e:
+        cat.search("unit", "", tileset="A")
+    assert e.value.code == "bad_value"

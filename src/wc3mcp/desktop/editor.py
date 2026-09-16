@@ -17,6 +17,7 @@ EXE_NAME = "World Editor.exe"
 TITLE = re.compile(r"^Warcraft III World Editor(?: - \[(?P<doc>.*?)(?P<dirty> \*)?\])?$")
 CAMPAIGN_TITLE = re.compile(r"^Campaign Editor - \[(?P<doc>.*?)(?P<dirty> \*)?\]$")
 PALETTES = {"Tool Palette"}
+BENIGN = re.compile(r"Referencing unknown database field|Failed to load Environment Map")  # shipped data, every map
 DISABLED = re.compile(r"Trigger '(?P<name>.*)' has been disabled due to errors")
 
 
@@ -28,6 +29,17 @@ def parse_title(title: str) -> dict | None:
     untitled = doc == "Untitled"
     return {"map": str(Path(doc.replace("/", "\\"))) if doc and not untitled else None, "untitled": untitled,
             "dirty": bool(m.group("dirty"))}
+
+
+def editor_messages(lines: list[str]) -> dict:
+    """The messages the editor shows in its viewport (SysMsg log lines): files it could not load, known-benign
+    shipped-data lines (counted) and the rest."""
+    messages = [line.split("SysMsg: ", 1)[1].strip() for line in lines if "SysMsg: " in line]
+    missing = sorted({m.split("Could not load file: ", 1)[1] for m in messages if m.startswith("Could not load file: ")})
+    rest = [m for m in messages if m and not m.startswith("Could not load file: ")]
+    benign = [m for m in rest if BENIGN.search(m)]
+    return {"missing_files": missing, "messages": [m for m in rest if not BENIGN.search(m)][-50:],
+            "benign_messages": len(benign)}
 
 
 def _same(a: str | None, b: str | None) -> bool:
@@ -404,12 +416,17 @@ class Editor:
     @staticmethod
     def log(lines: int = 200) -> dict:
         path = config.documents() / "Logs" / "War3EditorLog.txt"
-        text = path.read_text("utf-8", "replace").splitlines()[-lines:] if path.exists() else []
+        text = path.read_text("utf-8", "replace").splitlines() if path.exists() else []
         folder = config.documents() / "Errors"
         crashes = sorted((p for p in folder.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime,
                          reverse=True)[:5] if folder.is_dir() else []
-        return {"log": text, "crashes": [{"folder": p.name, "files": sorted(f.name for f in p.iterdir())}
-                                         for p in crashes]}
+        result = {"log": text[-lines:], **editor_messages(text),
+                  "written": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(path.stat().st_mtime)) if text else None,
+                  "crashes": [{"folder": p.name, "files": sorted(f.name for f in p.iterdir())} for p in crashes]}
+        if win.processes(EXE_NAME):
+            result["note"] = ("the World Editor writes this log only when it quits, so this is its previous session; "
+                              "map_validate reports placed objects without a model right away")
+        return result
 
 
 EDITOR = Editor()

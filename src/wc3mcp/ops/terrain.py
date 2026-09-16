@@ -9,7 +9,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from ..errors import ToolError
-from ..formats import blp, unitsdoo, w3e, w3i, w3r, wpm
+from ..formats import blp, doo, unitsdoo, w3e, w3i, w3r, wpm
 from ..formats.binary import FormatError
 from .elements import _bad, _bool, _int, _num, _out
 from .triggers import _read
@@ -356,9 +356,10 @@ def _tile_color(catalog, tile: str, cache: dict) -> tuple[int, int, int]:
     return cache[tile]
 
 
-def terrain_render(project, catalog, scale: int | None = None, objects: bool = True) -> bytes:
+def terrain_render(project, catalog, scale: int | None = None, objects: bool = True, doodads: bool = True) -> bytes:
     """PNG of the map from above, north up: tile colours, height shading, cliffs, water, blight, boundary, and
-    optionally regions (cyan), start locations (white), units (red) and items (yellow)."""
+    optionally regions (cyan), start locations (white), units (red) and items (yellow), with doodads (magenta), trees
+    (dark green) and other destructibles (orange) under them."""
     t, _ = _load(project)
     w, h = t.width - 1, t.height - 1
     scale = scale or max(1, min(8, 1024 // max(w, h, 1)))
@@ -401,6 +402,18 @@ def terrain_render(project, catalog, scale: int | None = None, objects: bool = T
         for g in regions:
             (x0, y0), (x1, y1) = px(g.left, g.top), px(g.right, g.bottom)
             draw.rectangle([x0, y0, x1, y1], outline=(0, 230, 230))
+        ddata = _read(project, "war3map.doo") if doodads else None
+        try:
+            placed = doo.parse(ddata).doodads if ddata else []
+        except FormatError:
+            placed = []
+        destructibles = catalog.table("Units/DestructableData.slk").rows
+        mark = max(0.5, scale / 4)
+        for d in placed:
+            row = destructibles.get(d.id.decode("latin-1"))
+            color = (200, 0, 200) if row is None else (0, 90, 0) if "tree" in (row.get("targType") or "") else (255, 140, 0)
+            x, y = px(d.x, d.y)
+            draw.ellipse([x - mark, y - mark, x + mark, y + mark], fill=color)
         udata = _read(project, "war3mapUnits.doo")
         try:
             units = unitsdoo.parse(udata).units if udata else []

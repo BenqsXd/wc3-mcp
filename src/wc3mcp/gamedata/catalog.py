@@ -9,6 +9,9 @@ from .slk import Table, parse_slk
 from .triggerdata import KIND_NAMES, TriggerData
 
 TRIGGER_KINDS = ("trigger_function", "trigger_type", "trigger_preset")
+# model file field and variation count field of the placeable kinds
+MODEL_FIELDS = {"doodad": ("dfil", "dvar"), "destructible": ("bfil", "bvar"), "unit": ("umdl", None)}
+TILESET_FIELDS = {"doodad": "dtil", "destructible": "btil"}
 KINDS = tuple(OBJECT_KINDS) + tuple(ROW_KINDS) + tuple(PATH_KINDS) + TRIGGER_KINDS
 
 
@@ -151,6 +154,11 @@ class Catalog:
             self._fields[kind] = out
         return self._fields[kind]
 
+    def field(self, kind: str, obj_id: str, field_id: str) -> str | None:
+        """One base value by field raw code (first level)."""
+        meta = next((m for m in self.fields(kind) if m.id == field_id), None)
+        return None if meta is None else self.value(kind, obj_id, meta)
+
     def ids(self, kind: str) -> list[str]:
         if kind in OBJECT_KINDS:
             spec = OBJECT_KINDS[kind]
@@ -232,6 +240,42 @@ class Catalog:
             self._tilesets = out
         return self._tilesets
 
+    def _tileset_letter(self, tileset: str) -> str:
+        names = self.tilesets()
+        wanted = tileset if tileset in names else next(
+            (letter for letter, name in names.items() if name.casefold() == tileset.casefold()), None)
+        if wanted is None:
+            raise ToolError("not_found", f"no tileset {tileset!r}",
+                            hint="a tileset letter or name: " + ", ".join(f"{k} {v}" for k, v in names.items()))
+        return wanted
+
+    # models
+    def model(self, kind: str, obj_id: str) -> tuple[str, int] | None:
+        """(model file, variation count) of a doodad, destructible or unit in the base data."""
+        file_field, count_field = MODEL_FIELDS[kind]
+        file = self.field(kind, obj_id, file_field)
+        return (file, _int(self.field(kind, obj_id, count_field), 1) if count_field else 1) if file else None
+
+    @staticmethod
+    def model_paths(file: str, count: int, variation: int | None = None) -> list[str]:
+        """The model files the editor and the game load: file.mdl, or file<variation>.mdl when there are several."""
+        stem = file[:-4] if file.lower().endswith((".mdl", ".mdx")) else file
+        if count <= 1:
+            return [stem + ".mdl"]
+        return [f"{stem}{v}.mdl" for v in (range(count) if variation is None else [variation])]
+
+    def model_exists(self, path: str) -> bool:
+        stem = path[:-4]
+        return any(self.storage.resolve(stem + ext, **self.layer) for ext in (".mdx", ".mdl"))
+
+    def missing_models(self, kind: str, obj_id: str) -> tuple[list[str], list[str]] | None:
+        """(model paths, the ones the game data does not have) for a base doodad, destructible or unit."""
+        found = self.model(kind, obj_id)
+        if found is None:
+            return None
+        paths = self.model_paths(*found)
+        return paths, [p for p in paths if not self.model_exists(p)]
+
     def tileset_of(self, kind: str, obj_id: str) -> str | None:
         """The tileset letter a tile or cliff id belongs to."""
         if kind == "tile" and len(obj_id) == 4:
@@ -240,6 +284,8 @@ class Catalog:
 
     def search(self, kind: str, query: str = "", limit: int = 50, offset: int = 0, tileset: str | None = None) -> list[dict]:
         self._check(kind)
+        if tileset and kind not in ("tile", "cliff", *TILESET_FIELDS):
+            raise ToolError("bad_value", "tileset filters tiles, cliffs, doodads and destructibles only", path="tileset")
         if kind in ("tile", "cliff"):
             return self._search_terrain(kind, query, limit, offset, tileset)
         if kind in TRIGGER_KINDS:
@@ -251,24 +297,25 @@ class Catalog:
             hits = [p for p in self.storage.list(query)
                     if (not exts or p.lower().endswith(exts)) and needle in p.lower()]
             return [{"id": p} for p in hits[offset:offset + limit]]
+        wanted = self._tileset_letter(tileset) if tileset else None
         q, out = query.casefold(), []
         for obj_id in self.ids(kind):
+            if wanted and not {"*", wanted} & set(split_list(self.field(kind, obj_id, TILESET_FIELDS[kind]) or "")):
+                continue
             name = self.name(kind, obj_id)
             suffix = self._lookup(kind, obj_id, OBJECT_KINDS[kind].suffix_keys) if kind in OBJECT_KINDS else ""
             if q in obj_id.casefold() or q in name.casefold() or q in suffix.casefold():
                 out.append({"id": obj_id, "name": name, "suffix": suffix})
-        return out[offset:offset + limit]
+        page = out[offset:offset + limit]
+        if kind in TILESET_FIELDS:   # some ids of the data files have no model in the installed game
+            for row in page:
+                row["model_ok"] = not (self.missing_models(kind, row["id"]) or ([], []))[1]
+        return page
 
     def _search_terrain(self, kind: str, query: str, limit: int, offset: int, tileset: str | None) -> list[dict]:
         """Tiles and cliffs carry their tileset, and can be filtered and searched by its letter or display name."""
         names = self.tilesets()
-        wanted = None
-        if tileset:
-            wanted = tileset if tileset in names else next(
-                (letter for letter, name in names.items() if name.casefold() == tileset.casefold()), None)
-            if wanted is None:
-                raise ToolError("not_found", f"no tileset {tileset!r}",
-                                hint="a tileset letter or name: " + ", ".join(f"{k} {v}" for k, v in names.items()))
+        wanted = self._tileset_letter(tileset) if tileset else None
         q, out = query.casefold(), []
         for obj_id in self.ids(kind):
             letter = self.tileset_of(kind, obj_id)
@@ -312,4 +359,8 @@ class Catalog:
             else:
                 entry["value"] = self.value(kind, obj_id, meta)
             out[meta.id] = entry
-        return {"kind": kind, "id": obj_id, "name": self.name(kind, obj_id), "levels": levels, "fields": out}
+        doc = {"kind": kind, "id": obj_id, "name": self.name(kind, obj_id), "levels": levels, "fields": out}
+        models = self.missing_models(kind, obj_id) if kind in MODEL_FIELDS else None
+        if models is not None:
+            doc["model"] = {"files": models[0], "missing": models[1]}
+        return doc

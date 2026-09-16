@@ -87,6 +87,23 @@ def _project(path: str) -> MapProject:
     return p
 
 
+def _ops(ops: list | None, ops_file: str | None) -> list:
+    """Inline ops, or the same JSON array from a local file (large generated batches stay out of the conversation)."""
+    if (ops is None) == (ops_file is None):
+        raise ToolError("bad_value", "pass either ops or ops_file", path="ops")
+    if ops_file is None:
+        return ops
+    try:
+        loaded = json.loads(triggers_ops.read_text_file(ops_file, "ops_file"))
+    except json.JSONDecodeError as e:
+        raise ToolError("bad_value", f"ops_file {ops_file} is not JSON: {e}", path="ops_file") from e
+    if isinstance(loaded, dict) and isinstance(loaded.get("ops"), list):
+        loaded = loaded["ops"]
+    if not isinstance(loaded, list):
+        raise ToolError("bad_value", f"ops_file {ops_file} must hold a JSON array of ops", path="ops_file")
+    return loaded
+
+
 def _catalog(locale: str, balance: str | None, hd: bool) -> Catalog:
     global _storage
     if _storage is None:
@@ -113,12 +130,14 @@ def _encode(data: bytes, encoding: str, offset: int, length: int) -> dict:
 
 
 @_tool
-def map_open(path: str) -> dict:
+def map_open(path: str, merge_external: bool = False) -> dict:
     """Open a Warcraft III map (.w3x/.w3m archive or map folder) or campaign (.w3n) into a private working copy.
     Re-opening resumes unsaved edits, and so does any tool call after the server restarts (the working copy lives on
-    disk). Returns the map status. Campaigns work with campaign_get / campaign_edit,
-    objdata_* and imports_edit (their war3campaign.* files); map_save, map_status and map_validate take them too."""
-    p = MapProject.open(path)
+    disk). When the map file changed meanwhile (a World Editor save) and the working copy has edits, merge_external=true
+    keeps the changed files of the working copy and takes every other file from the map. Returns the map status.
+    Campaigns work with campaign_get / campaign_edit, objdata_* and imports_edit (their war3campaign.* files);
+    map_save, map_status and map_validate take them too."""
+    p = MapProject.open(path, merge_external=merge_external)
     _projects[_key(path)] = p
     return p.status()
 
@@ -207,16 +226,19 @@ def _refresh_minimap(project, catalog, dirty: set, warnings: list) -> str | None
 @_tool
 def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"] | None = None,
              force: bool = False, rebuild_script: Literal["auto", "always", "never"] = "auto",
-             validate: bool = True) -> dict:
+             validate: bool = True, merge_external: bool = False) -> dict:
     """Save the working copy. By default backs up the original and replaces it atomically. dest/format write a
-    copy elsewhere (mpq archive or map folder). Refuses if the original changed on disk since opening unless
-    force=true. rebuild_script: auto regenerates war3map.j / war3map.lua when triggers, regions, cameras, sounds,
+    copy elsewhere (mpq archive or map folder). Refuses if the original changed on disk since opening (source_changed,
+    e.g. after a World Editor save) unless merge_external=true, which first takes every file this working copy has not
+    changed from the map on disk (pathing, shadows and minimap the editor recomputed) and keeps the working copy's own
+    changes, or force=true, which overwrites the map with the working copy. rebuild_script: auto regenerates war3map.j / war3map.lua when triggers, regions, cameras, sounds,
     placed objects or map info changed (maps with trigger data), always regenerates whenever possible, never leaves
     the script alone. The minimap war3mapMap.blp is added when missing and redrawn after terrain edits unless the map
     imports its own. validate runs map_validate first and refuses to save on errors. The World Editor keeps the map
     file open, so when it shows the same map the safe round trip is: edits here -> editor_map close -> map_save ->
     editor_map open -> editor_map save (which recomputes pathing, shadows and the minimap)."""
     project = _project(path)
+    merged = project.merge_source() if merge_external and project.source_changed() else None
     catalog = _catalog("enUS", script_ops.balance(project), True)
     warnings = []
     if dest is None:  # take turns with the World Editor on the same file
@@ -254,6 +276,8 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
                             path=str(project.source)) from e
         raise
     result["warnings"] = warnings
+    if merged is not None:
+        result["merged"] = merged
     if script is not None:
         result["script"] = script
     if minimap:
@@ -310,14 +334,13 @@ def data_search(kind: Kind, query: str = "", limit: int = 50, offset: int = 0, l
                 balance: str | None = "Custom_V1", hd: bool = True, tileset: str | None = None) -> dict:
     """Search base game data by id, name or editor suffix (object, terrain and sound kinds) or by path substring or
     glob (model, icon, file); trigger_function / trigger_type / trigger_preset search GUI trigger functions, variable
-    types and preset values. kind=tile and kind=cliff carry the tileset each id belongs to and take tileset (its
-    letter, e.g. "L", or its name, e.g. "Lordaeron Summer") to list only that tileset's terrain. balance selects the
-    gameplay data set: Custom_V1 (current), Custom_V0, Melee_V0, or null for the base files."""
+    types and preset values. tileset (a letter, e.g. "L", or a name, e.g. "Lordaeron Summer") lists only what that
+    tileset offers for kind=tile, cliff, doodad and destructible; tile and cliff results name their tileset. Doodad
+    and destructible results carry model_ok: false when the installed game has no model for the id (it would place
+    but render nothing). balance selects the gameplay data set: Custom_V1 (current), Custom_V0, Melee_V0, or null for
+    the base files."""
     catalog = _catalog(locale, balance, hd)
-    if tileset is not None and kind not in ("tile", "cliff"):
-        raise ToolError("bad_value", "tileset filters kind=tile and kind=cliff only", path="tileset")
-    extra = {"tileset": tileset} if kind in ("tile", "cliff") else {}
-    results = catalog.search(kind, query, limit=min(limit, 500), offset=offset, **extra)
+    results = catalog.search(kind, query, limit=min(limit, 500), offset=offset, tileset=tileset)
     return {"kind": kind, "query": query, "offset": offset, "count": len(results), "results": results,
             **({"tilesets": catalog.tilesets()} if kind in ("tile", "cliff") and not results else {})}
 
@@ -326,7 +349,8 @@ def data_search(kind: Kind, query: str = "", limit: int = 50, offset: int = 0, l
 def data_get(kind: Kind, id: str, fields: list[str] | None = None, locale: str = "enUS",
              balance: str | None = "Custom_V1", hd: bool = True) -> dict:
     """Base data for one object with editor field raw codes, names, types and values (per level for leveled
-    fields). fields filters by raw code (e.g. uhpm), field name, or display-name substring."""
+    fields). fields filters by raw code (e.g. uhpm), field name, or display-name substring. Doodads, destructibles and
+    units also list their model files and the ones missing from the installed game (model.missing)."""
     return _catalog(locale, balance, hd).get(kind, id, fields)
 
 
@@ -385,12 +409,14 @@ def objdata_get(path: str, kind: ObjectKind, id: str, fields: list[str] | None =
 
 
 @_tool
-def objdata_edit(path: str, kind: ObjectKind, ops: list[dict], balance: str | None = "Custom_V1") -> dict:
+def objdata_edit(path: str, kind: ObjectKind, ops: list[dict] | None = None, balance: str | None = "Custom_V1",
+                 ops_file: str | None = None) -> dict:
     """Create and change objects with an all-or-nothing batch: {"op": "create", "base": "hfoo", "set": {"Name":
     "Guard", "HP": 500}} (id optional, allocated like the editor), {"op": "set", "id": "h000", "set": {"Hbz1":
-    {"1": 7, "2": 9}}} (per-level fields take level keys), {"op": "reset", "id": "h000", "fields": ["uhpm"]},
-    {"op": "delete", "id": "h000"}. Fields accept raw codes, field names or display names."""
-    return objdata_ops.objdata_edit(_project(path), _catalog("enUS", balance, True), kind, ops)
+    {"1": 7, "2": 9}}} (per-level fields take level keys; stock ids such as hgtw work too), {"op": "reset", "id":
+    "h000", "fields": ["uhpm"]}, {"op": "delete", "id": "h000"}. Fields accept raw codes, field names or display
+    names. ops_file: a local JSON file holding the ops array instead of ops."""
+    return objdata_ops.objdata_edit(_project(path), _catalog("enUS", balance, True), kind, _ops(ops, ops_file))
 
 
 @_tool
@@ -408,14 +434,15 @@ def trigger_get(path: str, name: str | None = None) -> dict:
 
 
 @_tool
-def triggers_edit(path: str, ops: list[dict], validate: bool = False) -> dict:
+def triggers_edit(path: str, ops: list[dict] | None = None, validate: bool = False, ops_file: str | None = None) -> dict:
     """All-or-nothing Trigger Editor changes. ops:
     {"op": "category", "name", "parent"?, "new_name"?};
     {"op": "variable", "name", "type", "array_size"?, "initial"?, "category"?, "new_name"?};
     {"op": "trigger", "name", "category"?, "description"?, "enabled"?, "initially_on"?, "run_on_init"?,
      "events"/"conditions"/"actions": [{"fn": "KillUnit", "args": [{"call": "GetTriggerUnit"}]}, ...] or
-     "script": "<JASS or Lua>", "new_name"?};
-    {"op": "delete", "what": "trigger"|"category"|"variable", "name"}; {"op": "header", "script"?, "comment"?}.
+     "script": "<JASS or Lua>" or "script_file": "C:/local/trigger.j", "new_name"?};
+    {"op": "delete", "what": "trigger"|"category"|"variable", "name"}; {"op": "header", "script"?, "script_file"?,
+    "comment"?}.
     An argument is a literal, {"preset": name}, {"var": name, "index"?} or {"call": name, "args": [...]}; block
     functions take "if"/"then"/"else" (IfThenElseMultiple), "conditions" (And/OrMultiple) or "actions" (loops).
     GUI code is checked against TriggerData; data_search kind=trigger_function finds functions. run_on_init is for
@@ -423,8 +450,8 @@ def triggers_edit(path: str, ops: list[dict], validate: bool = False) -> dict:
     A "script" trigger gets the editor's InitTrig_<script name> wrapper added when it does not define one, so the
     actions alone are enough (the result says what was added). validate=true regenerates the map script and checks it
     right away (pjass, or the Lua syntax check) instead of waiting for map_save; each error also carries script_line,
-    its line inside the script that was sent."""
-    return triggers_ops.triggers_edit(_project(path), _catalog("enUS", "Custom_V1", True), ops, validate)
+    its line inside the script that was sent. ops_file: a local JSON file holding the ops array instead of ops."""
+    return triggers_ops.triggers_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file), validate)
 
 
 @_tool
@@ -458,16 +485,25 @@ def placed_list(path: str, kind: Literal["unit", "item", "start_location", "dood
 
 
 @_tool
-def placed_edit(path: str, ops: list[dict]) -> dict:
+def placed_edit(path: str, ops: list[dict] | None = None, ops_file: str | None = None, verbose: bool = False) -> dict:
     """All-or-nothing placed object changes. {"op": "add", "kind", "type", "x", "y", ...fields} places an object with
     editor defaults (facing 270, z on the terrain, units owned by player 0, items neutral passive; start locations need
-    owner, no type); {"op": "set", "ref", ...fields} changes fields (type too); {"op": "move", "ref", "x", "y"};
-    {"op": "delete", "ref"} refuses while triggers use its gg_ name. Fields match placed_list: angle, scale (number or
-    [x, y, z]), variation, skin, owner, life (unit %, null default; destructible %), mana, gold, acquisition
-    ("normal", "camp" or a range), hero {level, strength, agility, intelligence}, inventory [{slot 0-5, item}],
-    abilities [{id, autocast, level}], drops {table, sets: [[{item, chance}]]}, random (uDNR/bDNR/iDNR: {level,
-    item_class}, {group, position} or {units: [{type, chance}]}), color, waygate (region name), doodad z and flags."""
-    return placed_ops.placed_edit(_project(path), _catalog("enUS", "Custom_V1", True), ops)
+    owner, no type). Many adds at once: {"op": "add", "kind": "destructible", <fields shared by all>, "columns":
+    ["type", "x", "y", "variation", "angle"], "rows": [["LTlt", -1833, -3653, 2, 113], ...]}. {"op": "scatter", "kind",
+    "types": {"LTlt": 3, "LTlf": 1} (weights) or [ids], "count", area ("rect": [left, bottom, right, top], or "x"/"y"/
+    "radius"; default the playable area), "exclude": [{"x", "y", "radius"} | {"rect": [...]}], "min_distance"?,
+    "seed"?, "where": "land" (default, no water or boundary) | "water" | "any", ...shared fields} places random
+    objects; doodads and destructibles get a random installed variation and their fixed or a random facing.
+    {"op": "set", "ref", ...fields} changes fields (type too); {"op": "move", "ref", "x", "y"} (moving a start
+    location also moves the player's start in war3map.w3i, reported in synced); {"op": "delete", "ref"} refuses while
+    triggers use its gg_ name. Fields match placed_list: angle, scale (number or [x, y, z]), variation, skin, owner,
+    life (unit %, null default; destructible %), mana, gold, acquisition ("normal", "camp" or a range), hero {level,
+    strength, agility, intelligence}, inventory [{slot 0-5, item}], abilities [{id, autocast, level}], drops {table,
+    sets: [[{item, chance}]]}, random (uDNR/bDNR/iDNR: {level, item_class}, {group, position} or {units: [{type,
+    chance}]}), color, waygate (region name), doodad z and flags. created lists the new refs as ranges in op order
+    ("doodad:422..909"; verbose=true lists every ref). ops_file: a local JSON file holding the ops array instead of
+    ops. A doodad or destructible whose model the installed game lacks is placed with a warning."""
+    return placed_ops.placed_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file), verbose)
 
 
 @_tool
@@ -483,7 +519,7 @@ def terrain_get(path: str, area: list[float] | None = None,
 
 
 @_tool
-def terrain_edit(path: str, ops: list[dict]) -> dict:
+def terrain_edit(path: str, ops: list[dict] | None = None, ops_file: str | None = None) -> dict:
     """All-or-nothing terrain brushes. Every op is {"op": <brush>, <area>, <settings>}, for example {"op": "paint",
     "tile": "Lgrs", "x": 0, "y": 0, "radius": 384}. Areas (world units): "x"/"y"/"radius" a circle, "rect": [left,
     bottom, right, top], "path": [[x, y], ...] with "width" a stroke along a line (roads), or no area at all for the
@@ -492,17 +528,19 @@ def terrain_edit(path: str, ops: list[dict]) -> dict:
     {"tile"} (data_search kind=tile, tileset=<letter>), cliff {"level" 0..15, "cliff": cliff tile id}, water
     {"level": surface z, or null to remove}, ramp / blight / boundary {"value": true|false}. The result reports the
     map's tile palette and what the ops added to it (a map holds at most 16 ground tiles). Pathing, shadows and the
-    minimap are recomputed by the World Editor on its next save."""
-    return terrain_ops.terrain_edit(_project(path), _catalog("enUS", "Custom_V1", True), ops)
+    minimap are recomputed by the World Editor on its next save. ops_file: a local JSON file holding the ops array
+    instead of ops."""
+    return terrain_ops.terrain_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file))
 
 
 @_tool
-def terrain_render(path: str, scale: int | None = None, objects: bool = True) -> Image:
+def terrain_render(path: str, scale: int | None = None, objects: bool = True, doodads: bool = True) -> Image:
     """Top-down PNG of the map's terrain, north up, scale pixels per tile (default: fits 1024 px): tile colours,
     height shading, darkened cliffs, water, blight and boundary; objects draws regions (cyan), start locations
-    (white), units (red) and items (yellow)."""
-    return Image(data=terrain_ops.terrain_render(_project(path), _catalog("enUS", "Custom_V1", True), scale, objects),
-                 format="png")
+    (white), units (red) and items (yellow), and with doodads also doodads (magenta), trees (dark green) and other
+    destructibles (orange) as small marks, enough to see coverage, gaps and clumps."""
+    return Image(data=terrain_ops.terrain_render(_project(path), _catalog("enUS", "Custom_V1", True), scale, objects,
+                                                 objects and doodads), format="png")
 
 
 @_tool
@@ -705,7 +743,10 @@ def editor_input(actions: list[dict], window: str = "main") -> dict:
 
 @_tool
 def editor_log(lines: int = 200) -> dict:
-    """The World Editor log tail and the newest crash report folders."""
+    """The World Editor log: its tail, the messages the editor showed in its viewport (missing_files it could not load,
+    other messages, a count of known-benign shipped-data lines) and the newest crash report folders. The editor writes
+    this file only when it quits, so while it runs the log is its previous session (note says so); map_validate
+    reports placed objects without a model without the editor."""
     return desktop_editor.EDITOR.log(lines)
 
 

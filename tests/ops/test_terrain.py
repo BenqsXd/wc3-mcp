@@ -189,3 +189,26 @@ def test_map_validate_warns_while_the_derived_files_are_stale(tmp_path):
         assert not [w for w in map_validate(project, catalog)["warnings"] if w["check"] == "derived_files"]
     finally:
         project.close(discard=True)
+
+
+@needs_maps
+def test_render_marks_doodads_and_destructibles(tmp_path):
+    from wc3mcp.ops.placed import placed_edit, placed_list
+
+    catalog = Catalog(_storage())
+    src = tmp_path / ladder_maps()[0].name
+    src.write_bytes(ladder_maps()[0].read_bytes())
+    project = MapProject.open(src)
+    try:
+        t = w3e.parse(project.read("war3map.w3e"))
+        x, y = next((t.offset_x + k * 128, t.offset_y + k * 128) for k in range(12, t.width - 12)
+                    if not placed_list(project, catalog, area=[t.offset_x + k * 128 - 300, t.offset_y + k * 128 - 300,
+                                                               t.offset_x + k * 128 + 300, t.offset_y + k * 128 + 300])["total"])
+        placed_edit(project, catalog, [{"op": "add", "kind": "destructible", "type": "LTlt", "x": x, "y": y}])
+        scale = 8
+        px = (int((x - t.offset_x) / 128 * scale), int((t.height - 1 - (y - t.offset_y) / 128) * scale))
+        with_marks = Image.open(io.BytesIO(terrain.terrain_render(project, catalog, scale=scale)))
+        plain = Image.open(io.BytesIO(terrain.terrain_render(project, catalog, scale=scale, doodads=False)))
+        assert with_marks.getpixel(px) == (0, 90, 0) and plain.getpixel(px) != (0, 90, 0)
+    finally:
+        project.close(discard=True)

@@ -300,6 +300,39 @@ def screenshot(hwnd: int | None = None, region: list[int] | None = None) -> byte
     return out.getvalue()
 
 
+def capture(hwnd: int) -> bytes | None:
+    """PNG of a window drawn by the window itself (PrintWindow), so it works behind other windows; None when it
+    cannot be captured (minimized, or the result is blank)."""
+    import win32ui
+    from PIL import Image
+
+    if not win32gui.IsWindow(hwnd) or win32gui.IsIconic(hwnd):
+        return None
+    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    width, height = right - left, bottom - top
+    if width <= 0 or height <= 0:
+        return None
+    window_dc = win32gui.GetWindowDC(hwnd)
+    source = win32ui.CreateDCFromHandle(window_dc)
+    memory = source.CreateCompatibleDC()
+    bitmap = win32ui.CreateBitmap()
+    try:
+        bitmap.CreateCompatibleBitmap(source, width, height)
+        memory.SelectObject(bitmap)
+        drawn = user32.PrintWindow(hwnd, memory.GetSafeHdc(), 2)  # PW_RENDERFULLCONTENT: DirectX and DWM content too
+        image_ = Image.frombuffer("RGB", (width, height), bitmap.GetBitmapBits(True), "raw", "BGRX", 0, 1)
+    finally:
+        win32gui.DeleteObject(bitmap.GetHandle())
+        memory.DeleteDC()
+        source.DeleteDC()
+        win32gui.ReleaseDC(hwnd, window_dc)
+    if not drawn or image_.getextrema() in (((0, 0),) * 3, ((255, 255),) * 3):
+        return None
+    out = io.BytesIO()
+    image_.save(out, "PNG")
+    return out.getvalue()
+
+
 def _key(vk: int, up: bool) -> None:
     win32api.keybd_event(vk, 0, win32con.KEYEVENTF_KEYUP if up else 0, 0)
 

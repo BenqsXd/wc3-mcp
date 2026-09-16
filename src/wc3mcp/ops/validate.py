@@ -7,10 +7,12 @@ Blizzard maps carry and still load with.
 """
 import dataclasses
 import re
+from collections import Counter
 
-from ..formats import imp, objmods, w3i, wct, wtg
+from ..formats import doo, imp, objmods, unitsdoo, w3i, wct, wtg
 from ..formats.binary import FormatError
 from ..formats.wts import TriggerStrings
+from ..gamedata.catalog import MODEL_FIELDS
 from ..gamedata.kinds import OBJECT_KINDS
 from .gui import GENERATED, Checker, script_name
 from .objdata import EXTENSIONS, var_type as mod_type
@@ -120,6 +122,7 @@ class _V:
         self.check_triggers()
         self.check_objects()
         self.check_imports()
+        self.check_placed()
         return {"errors": self.errors, "warnings": self.warnings}
 
     def generated(self, t) -> bool:
@@ -279,6 +282,65 @@ class _V:
         for e in il.entries:
             if not (self.has_file(e.path) or self.has_file("war3mapImported\\" + e.path)):
                 self.add(False, "import", "war3map.imp", f"imported file {e.path!r} (flag {e.flag}) is not in the map")
+
+
+    def _art(self, kind: str) -> dict[str, tuple[str, dict[str, str]]]:
+        """Object id -> (base id, model and variation fields the map sets) for the map's objects of a kind."""
+        ext = {"doodad": "w3d", "destructible": "w3b", "unit": "w3u"}[kind]
+        wanted = {f for f in MODEL_FIELDS[kind] if f}
+        out = {}
+        for prefix in ("war3map", "war3mapSkin"):
+            om = self.objects.get(f"{prefix}.{ext}")
+            for custom, table in ((False, om.original), (True, om.custom)) if om else ():
+                for e in table:
+                    oid = (e.new_id if custom else e.base_id).decode("latin-1")
+                    base, fields = out.setdefault(oid, (e.base_id.decode("latin-1"), {}))
+                    fields.update({m.id.decode("latin-1"): m.value for m in e.mods if m.id.decode("latin-1") in wanted})
+        return out
+
+    def check_placed(self):
+        doodads = self.parse("war3map.doo", doo.parse)
+        units = self.parse("war3mapUnits.doo", unitsdoo.parse)
+        if doodads is None and units is None:
+            return
+        art = {kind: self._art(kind) for kind in MODEL_FIELDS}
+        ids = {kind: set(self.catalog.ids(kind)) | set(art[kind]) for kind in MODEL_FIELDS}
+        placed = Counter()
+        for o in doodads.doodads if doodads else ():
+            kind = "destructible" if o.id.decode("latin-1") in ids["destructible"] else "doodad"
+            placed[kind, o.id, o.skin, o.variation] += 1
+        for u in units.units if units else ():
+            if u.id.decode("latin-1") in ids["unit"]:
+                placed["unit", u.id, u.skin, 0] += 1
+        broken: dict[tuple, list] = {}
+        for (kind, type_id, skin, variation), n in placed.items():
+            t, look = type_id.decode("latin-1"), skin.decode("latin-1")
+            look = look if look in ids[kind] else t
+            base, fields = art[kind].get(look, (look, {}))
+            file_field, count_field = MODEL_FIELDS[kind]
+            file = fields.get(file_field) or self.catalog.field(kind, base, file_field)
+            if not file:
+                continue
+            count = int(fields.get(count_field) or self.catalog.field(kind, base, count_field) or 1) if count_field else 1
+            for path in self.catalog.model_paths(file, count, variation if count > 1 else None):
+                if not (self.catalog.model_exists(path) or self.has_file(path) or self.has_file(path[:-4] + ".mdx")):
+                    entry = broken.setdefault((kind, t), [0, set()])
+                    entry[0] += n
+                    entry[1].add(path)
+        for (kind, t), (n, paths) in sorted(broken.items()):
+            self.add(False, "model", "war3map.doo" if kind != "unit" else "war3mapUnits.doo",
+                     f"{n} placed {kind}(s) {t}: {', '.join(sorted(paths))} is in neither the game data nor the map, "
+                     "so they render nothing (data_search shows model_ok per id)")
+        if units is None or self.mi is None:
+            return
+        players = {p.id: p for p in self.mi.players}
+        for u in units.units:
+            p = players.get(u.owner) if u.id == b"sloc" else None
+            if p is not None and (abs(p.start_x - u.x) > 1 or abs(p.start_y - u.y) > 1):
+                self.add(False, "start_location", "war3map.w3i",
+                         f"player {u.owner}: the start location marker is at ({u.x:g}, {u.y:g}) but war3map.w3i "
+                         f"starts the player at ({p.start_x:g}, {p.start_y:g}); move it with placed_edit, which "
+                         "updates both")
 
 
 def validate(files: dict, catalog, has_file=None) -> dict:

@@ -63,7 +63,8 @@ def build_map(target):
          "mana": 50},
         {"op": "add", "kind": "unit", "type": "nogr", "x": 512, "y": -512, "owner": 24, "acquisition": "camp",
          "life": 75, "drops": {"sets": [[{"item": "YYI1", "chance": 50}, {"item": "YiI2", "chance": 30}], []]}},
-        {"op": "add", "kind": "unit", "type": "nwgt", "x": -512, "y": -512, "owner": 27, "waygate": "Arena"}])["created"]
+        {"op": "add", "kind": "unit", "type": "nwgt", "x": -512, "y": -512, "owner": 27, "waygate": "Arena"}],
+        verbose=True)["created"]
     unit, item, barrel = (next(x for x in placed_list(project, catalog, limit=5000)["items"] if x["ref"] == r)
                           for r in created[:3])
     terrain_edit(project, catalog, [{"op": "raise", "x": 0, "y": 0, "radius": 600, "amount": 96},

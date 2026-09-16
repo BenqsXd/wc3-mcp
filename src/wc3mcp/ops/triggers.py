@@ -1,5 +1,6 @@
 """The Trigger Editor: war3map.wtg and war3map.wct as a tree, per-trigger JSON and text, and atomic edits."""
 import re
+from pathlib import Path
 
 from ..errors import ToolError
 from ..formats import wct, wtg
@@ -492,12 +493,25 @@ def _validate(project, catalog, scripts: dict) -> dict:
     return checked
 
 
+def read_text_file(name, path: str) -> str:
+    """A caller's local file (scripts and ops too long to send inline)."""
+    try:
+        return Path(name).read_text("utf-8-sig")
+    except (OSError, TypeError, ValueError) as e:
+        raise ToolError("bad_value", f"{path}: cannot read {name!r}: {e}", path=path) from e
+
+
 def triggers_edit(project, catalog, ops: list, validate: bool = False) -> dict:
     edit = _Edit(project, catalog)
     for i, op in enumerate(ops):
         path = f"ops[{i}]"
         try:
             action = op.get("op") if isinstance(op, dict) else None
+            if action in ("trigger", "header") and "script_file" in op:
+                if "script" in op:
+                    raise ToolError("bad_op", f"{path}: give script or script_file", hint=_HINT)
+                op = {**{k: v for k, v in op.items() if k != "script_file"}, "script": read_text_file(
+                    op["script_file"], f"{path}.script_file")}
             if action not in ALLOWED:
                 raise ToolError("bad_op", f"{path}: unknown op {action!r}", hint=_HINT)
             extra = set(op) - {"op"} - ALLOWED[action]
