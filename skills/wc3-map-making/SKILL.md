@@ -7,6 +7,8 @@ description: Use when the user wants to create, edit, inspect, validate or test 
 
 The `wc3` MCP server works on real map files (`.w3x`/`.w3m`, map folders, `.w3n` campaigns). Game data comes read-only from the local Warcraft III install.
 
+If a parameter or op named here is missing from the tool definitions you see (for example `ops_file`, `script_replace` or `probe_script`), the session still holds an older version of the tools: ask the user to reconnect the `wc3` server (`/mcp`) or start a new session instead of working around it.
+
 ## Workflow
 
 1. **Open or create.** `map_open` copies the map into a private working copy; `map_new` creates a new melee-ready map (JASS or Lua) and opens it. Edits touch only the working copy, which lives on disk, so the tools resume it after a server restart. If a tool still answers `not_open`, call `map_open`: it starts again from the map file, so only saved work is there.
@@ -36,39 +38,59 @@ Generated placements and terrain passes are mechanical. Keep them out of the con
 
 - A map spans `tiles × 128` world units centred on the origin (96×96: −6144..6144). The playable area is 12 tiles narrower and shorter and is **not** centred (a 96×96 map: `[-5376, -5632, 5376, 5120]`). `placed_list` returns both under `bounds`.
 - Every `terrain_edit` op is a flat object: `{"op": "paint", "tile": "Lgrs", "x": 0, "y": 0, "radius": 384}`. A nested form such as `{"paint": {...}}` fails with `bad_op`. Areas: `"x"/"y"/"radius"`, `"rect": [left, bottom, right, top]`, `"path": [[x, y], ...]` with `"width"` (roads), or **no area** for the whole map. Do not send 50 circles for what one rect or path does.
-- A map holds at most 16 ground tiles. A new map already holds its tileset's 8 tiles and 2 cliff tiles, which leaves 8 free. `terrain_get` and every `terrain_edit` result report the palette (`tiles`, `free`) and what the edit added (`palette_added`).
-- `map_new` fills the map with the tileset's first tile, which is often dirt, not grass (`Ldrt` for Lordaeron Summer, `Adrt` for Ashenvale). Pass `fill_tile` and read `fill_tile` in the result: a road in the ground tile shows nothing.
+- A map holds at most 16 ground tiles. A new map already holds all of its tileset's tiles plus 2 cliff tiles: Ashenvale (`A`) 8 tiles (8 free), Lordaeron Summer (`L`) 6 tiles, `Ldrt, Ldro, Ldrg, Lrok, Lgrs, Lgrd` (10 free). `terrain_get` and every `terrain_edit` result report the palette (`tiles`, `free`) and what the edit added (`palette_added`).
+- `map_new` takes sizes from 32 to 480 in steps of 32. It fills the map with the tileset's first tile, which is often dirt, not grass (`Ldrt` for Lordaeron Summer, `Adrt` for Ashenvale). Pass `fill_tile` and read `fill_tile` in the result: a road in the ground tile shows nothing.
+- `data_search kind=tile` results carry `tileset` and `tileset_name`; `query="Ashenvale"` finds that tileset's tiles by name.
 - Terrain edits leave pathing (`war3map.wpm`), shadows (`war3map.shd`) and minimap icons (`war3map.mmp`) stale; only a World Editor save recomputes them. While that save is owed, `map_validate` (and so `map_save`) warns with check `derived_files`. When the warning is gone, the cycle is done.
 - `terrain_render` shows tiles, height, water, regions, start locations, units, items, doodads (magenta), trees (dark green) and other destructibles (orange). Look at it before launching the editor or the game.
 
 ## Placed objects and start locations
 
 - `map_new` places the start locations inside the playable area. Move one with `placed_edit` `{"op": "move", "ref": "start_location:N", ...}`: it also moves the player's start in `war3map.w3i` (the position the map script uses) and reports `synced`. `info_edit players[N].start` alone does not move the marker; `map_validate` warns when the two disagree.
-- Useful `add` fields: `owner`, `angle`, `variation`, `acquisition: "camp"` (creep camp behaviour), `drops: {"sets": [[{"item": "phea", "chance": 100}]]}`.
+- Useful `add` fields: `owner`, `angle`, `variation`, `scale`, `acquisition: "camp"` (creep camp behaviour), `drops: {"sets": [[{"item": "phea", "chance": 100}]]}`.
+- The World Editor clamps a doodad's or destructible's scale to its type's minimum and maximum (`dmis`/`dmas`, `bmis`/`bmas`) when it saves: `ZPsh` placed at 1.55 reads back as 1.2. `placed_edit` warns when a scale is out of range. For bigger objects, create a custom type with a higher maximum (`objdata_edit`) and place that.
+- Placed-object refs stay stable across a World Editor save: the same ref still names the same object.
 - Player 24 is neutral hostile (`Player(24)` in JASS) and 27 is neutral passive.
 - Objects in `war3mapUnits.doo` exist before initialization triggers run: `main()` creates them before `InitCustomTriggers` / `RunInitializationTriggers`.
 
 ## Missing models
 
-Some doodad and destructible ids in the data files have no model in the installed game. They place without error, render nothing and make the editor print `Could not load file: ...`. Known examples: `LPgp` (Grass Patch), `LSga` (Summer Grass), `YOsp` (Spider Web), `LPwh` (Wheat), `NWfp` (Floating Plank), `LOca` (Cauldron with heads). Shipped ladder maps carry some of them too.
+Some doodad and destructible ids in the data files have no model in the installed game. They place without error and render nothing in the game; the World Editor prints `Could not load file: ...` and draws a green-and-black checkerboard cube. Known examples: `LPgp` (Grass Patch), `LSga` (Summer Grass), `YOsp` (Spider Web), `LPwh` (Wheat), `NWfp` (Floating Plank), `LOca` (Cauldron with heads). Shipped ladder maps carry some of them too.
 
-- `data_search` marks these results `model_ok: false`; `data_get` lists `model.files` and `model.missing`. Check `model_ok` before choosing decoration ids.
-- `placed_edit` warns when it places one, and `scatter` refuses them.
-- `map_validate` warns (check `model`) for every placed doodad, destructible or unit whose model is in neither the game data nor the map's imports.
+The World Editor draws classic (SD) models, and some HD models have no classic copy: `ZPsh` (Shrub) variation 3 and `LCss` (Statue Sword) exist only in HD, so the editor cannot load them although the HD game can. The tools check both graphics modes.
+
+- `data_search` marks these results `model_ok: false`, and `variations_ok` lists the variations that do load (`ZPsh`: `[0, 1, 2]`). `data_get` lists `model.files` and `model.missing`. Check `model_ok` before choosing decoration ids.
+- `placed_edit` warns when it places one (per variation), and `scatter` uses only the variations that load.
+- `map_validate` warns (check `model`) for every placed doodad, destructible or unit whose model loads from neither the game data nor the map's imports.
+- Walk-through plant doodads that load on Lordaeron Summer: `ZPsh` Shrub (variations 0–2), `APct` Cattail, `LPcr` Corn, `ZPfw` Flowers, `ZPf0` Tulips. `XOcl` Magical Lantern, `LTlt` Summer Tree Wall and `YTct` Cityscape Summer Tree Wall also load.
 
 ## Triggers
 
 - A `"script"` trigger runs only through the editor's `InitTrig_<script name>` function, which assigns `gg_trg_<name> = CreateTrigger()`. Send the actions alone and the tools add that wrapper (the result says what was added), or write the whole thing yourself. The script name is the trigger name with every character outside `A-Z a-z 0-9 _` turned into `_` (`gg_trg_<script name>`), so identifier-safe names keep the script readable and unambiguous.
 - `run_on_init` makes a script trigger run at map start. A GUI trigger runs at map start through the event `{"fn": "MapInitializationEvent"}`.
+- A `trigger` op naming an existing trigger replaces it (`created` stays empty). To change a few lines of a long script, use `{"op": "script_replace", "name": "SWTest", "old": "2900.0, -500.0", "new": "2900.0, -250.0"}` (or `"header": true` for the map header) instead of resending the whole script; `old` must occur exactly once.
 - `validate=true` returns pjass / Lua errors straight away, each with `script_line`, its line inside the script you sent. Without it, `triggers_edit` warns that the map script is not regenerated yet; `map_save` or `script_build` regenerates it.
+- `map_save` compiles a regenerated or edited script and refuses to save when it does not compile; `validation.script` shows the result.
+- `{"op": "delete", "what": "variable", "name": ...}` removes a global; it refuses while triggers use it.
 - `variable` ops create GUI globals, emitted as `udg_<Name>`; `array_size` makes an array. Types known to work: `integer`, `real`, `boolean`, `unit`, `leaderboard`, `timer`, `timerdialog`.
 - Deleting the default `Melee Initialization` trigger removes all melee behaviour (starting units, victory and defeat), which a non-melee map needs.
+- The Reforged natives `BlzSetUnitMaxHP`, `GetEventDamageSource` and the event `EVENT_PLAYER_UNIT_DAMAGED` (with `TriggerRegisterAnyUnitEventBJ`) pass pjass and work in the game.
 
 ## Map info and object data
 
 - `info_edit` `set` of a whole list (`forces`, `players`) replaces it, and every element must be complete, including `unknown_flag_bits`. Read the shape from `info_get` first.
 - `objdata_edit` `create` takes an explicit `id` (`"h000"`) or allocates one like the editor. `set` also works on stock ids (`hgtw`), which makes modified standard objects.
 - Fields take raw codes, for example `ubui` (structures built), `ureq` (requirements), `ugol` / `ulum` (gold / lumber cost), `ubld` (build time), `umvs` (movement speed), or `Name`. Setting `ureq` to `""` removes a building's tech requirements.
+- Per-level ability fields take level keys: `{"aran": {"1": 620}}`, `{"acdn": {"1": 20}}`. Other fields take plain values (`"aher": 0`, `"alev": 1`). A unit's ability list `uabi` is a comma-separated string (`"A003,A004"`).
+- True Sight abilities (`Adtg`, `Atru`, `ANtr`, `Agyv`, `Adts`, `Adt1`) detect within `aran` (Cast Range), not `aare`.
+- `Apiv` (Permanent Invisibility) fades in over `adur`/`ahdu`, 2 seconds by default. With both set to 0, a unit given the ability turns invisible at once.
+
+## Game behaviour (verified in the game)
+
+- A unit given a permanent-invisibility ability with `UnitAddAbility` is invisible to enemies: `IsUnitVisible(u, enemy)` is false and `IsUnitInvisible(u, enemy)` true. With an enemy true-sight unit in range, both flip. `UnitRemoveAbility` makes it visible again, and adding the ability again works.
+- A single-player run can create units for an empty player slot (`Player(1)`), and visibility queries against that player work as for a playing one.
+- `SetUnitAcquireRange(u, 0)` does not stop a unit from attacking an enemy already inside its attack range.
+- `EVENT_PLAYER_UNIT_ATTACKED` fired once while a unit hit the same target for several swings. `EVENT_PLAYER_UNIT_DAMAGED` fires on every hit, and `GetEventDamageSource()` returns the attacker.
 
 ## World Editor
 
@@ -86,8 +108,19 @@ Some doodad and destructible ids in the data files have no model in the installe
 
 - `game_test` launches the map and ends as soon as every file listed in `results` exists under `Documents\Warcraft III\CustomMapData`. The map script writes such a file with `PreloadGenClear()` / `PreloadGenStart()` / `Preload("text")` / `PreloadGenEnd("mymap\\results.txt")`. A run whose files never appear lasts the full `timeout` and lists them under `missing`.
 - `game_test probe=true` needs no reporting trigger of your own. It runs a throwaway copy that reports, `probe_seconds` into the game, the units, heroes, gold and lumber of every playing slot, plus the `BJDebugMsg` text (`probe.messages`). Use it to check that a map loads and runs.
+- For a specific check, pass `probe_script` (or `probe_script_file`): statements in the map's language, JASS locals first, that run in the throwaway copy at `probe_seconds`. `ProbeReport(text)` writes text of any length, returned in `probe.reports`. The real map never gets test triggers, so there is nothing to remove before shipping.
+  ```
+  local unit u = CreateUnit(Player(0), 'hfoo', 0, 0, 270)
+  if IsUnitVisible(u, Player(1)) then
+      call ProbeReport("visible=1")
+  else
+      call ProbeReport("visible=0")
+  endif
+  ```
+- The game keeps about 259 characters of one `Preload` string and silently drops the rest. `game_test` lists result lines that reach that length under `truncated`. Split long reports into several `Preload` calls, or use `ProbeReport`.
+- A run that writes its result file ends as soon as the file exists: 36–124 seconds in practice, most of it launch and map load.
 - `screenshot=true` saves a PNG of the game window. When the window will not come to the front, the tools draw it from the window itself; `screenshot_of` says what was captured, or why nothing was. `focus` says how often the window was raised.
-- `log` holds the useful `War3Log.txt` lines, `missing_files` the files the game could not load, and `benign_log` counts shipped-data lines such as `model creation failed - C:/Users/<builder>/Perforce/.../GuardTowerBirth.mdl`. Do not chase benign lines as map defects.
+- `log` holds the useful `War3Log.txt` lines, `missing_files` the files the game could not load, and `benign_log` counts shipped-data lines such as `model creation failed - C:/Users/<builder>/Perforce/.../GuardTowerBirth.mdl` or `Solid texture substituted - Units\_skeletons\Gore_Diffuse.tif`. Do not chase benign lines as map defects.
 - `game_status` returns recent `War3Log.txt` lines even with no game running, including runs started from the World Editor's own test command.
 
 ## Rules

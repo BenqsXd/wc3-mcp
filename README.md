@@ -68,6 +68,16 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 0.4
+
+- Model checks cover classic graphics, which the World Editor uses: HD-only files such as `ZPsh` variation 3 no longer pass as present, and `data_search` lists the `variations_ok` of a partly usable type.
+- `placed_edit` warns when a doodad or destructible scale is outside its type's minimum and maximum, which the World Editor clamps on save.
+- `triggers_edit` `script_replace` changes one exact piece of a script trigger or the map header without resending the script.
+- `map_save` compiles a regenerated or edited map script and refuses to save when it does not compile (`validation.script`).
+- `game_test probe_script` runs caller test code in the throwaway probe copy, with `ProbeReport(text)` for reports of any length; result lines at the Preload length limit are listed under `truncated`.
+- Stock unit `Solid texture substituted` log lines count as benign.
+- `objdata_edit` refuses op keys it does not know (a misspelt `set` no longer drops the values silently).
+
 ## What's new in 0.3
 
 - Bulk work stays out of the conversation: `ops_file` (and `script_file` for triggers), compact `columns`/`rows` adds, a `scatter` op with weights, exclusion zones and spacing, and `created` as ref ranges.
