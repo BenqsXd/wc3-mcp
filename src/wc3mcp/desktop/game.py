@@ -15,6 +15,10 @@ from . import win
 EXE_NAME = "Warcraft III.exe"
 PRELOAD = re.compile(r'call Preload\( "(.*)" \)')
 NOISE = re.compile(r"^\S+ \S+\s+(?:Opening (?:map|mod) - |prism: Info)")
+# lines the shipped Reforged data produces on every run: not defects of the map being tested
+BENIGN = re.compile(r"model creation failed|Could not load file|Referencing unknown database field|"
+                    r"Failed to load Environment Map|Unable to load MDX")
+BENIGN_NOTE = "these come from the shipped game data and appear on any map"
 
 
 def parse_preload(text: str) -> list[str]:
@@ -23,6 +27,12 @@ def parse_preload(text: str) -> list[str]:
 
 def interesting(lines: list[str]) -> list[str]:
     return [line for line in lines if line.strip() and not NOISE.match(line)]
+
+
+def split_log(lines: list[str]) -> tuple[list[str], list[str]]:
+    """(lines worth reading, known-benign lines from the shipped game data)"""
+    keep = interesting(lines)
+    return [line for line in keep if not BENIGN.search(line)], [line for line in keep if BENIGN.search(line)]
 
 
 def _result_path(name: str) -> Path:
@@ -53,6 +63,26 @@ class Game:
         folder = config.documents() / "Errors"
         return {p.name for p in folder.iterdir() if p.is_dir()} if folder.is_dir() else set()
 
+    def windows(self, pid: int) -> list[int]:
+        """Windows of the game: the process started here and any other Warcraft III process it handed over to."""
+        pids = [pid] + [p for p in win.processes(EXE_NAME) if p != pid]
+        return [h for p in pids for h in win.windows(p)]
+
+    def window(self, pid: int) -> int | None:
+        found = self.windows(pid)
+        return next((h for h in found if "warcraft" in win32gui.GetWindowText(h).lower()), next(iter(found), None))
+
+    def _screenshot(self, pid: int) -> tuple[bytes | None, str]:
+        """(PNG of the game window, what was captured). Never grabs whatever else is on screen."""
+        h = self.window(pid)
+        if not h:
+            return None, "no_game_window"
+        win.activate(h)
+        time.sleep(0.5)
+        if win32gui.GetForegroundWindow() != h:
+            return None, "game_window_not_in_front"
+        return win.screenshot(h), win32gui.GetWindowText(h) or "the game window"
+
     def test(self, map_path, timeout: float = 240, results: list[str] | None = None, close: bool = True,
              screenshot: bool = False) -> dict:
         """Run the map. With `results`, returns as soon as every listed Preload file has been written; without
@@ -73,15 +103,15 @@ class Game:
                                     "-nowfpause"], cwd=exe.parent)
         self.launched[process.pid] = process
         found: dict[str, list[str]] = {}
-        focused_at, running = 0.0, False
+        focused_at, running, raised = 0.0, False, 0
         while time.time() - started < timeout and process.poll() is None:
             # the game only loads the map while its window is in front: keep it there until the map runs
             running = running or any("Activating WebUI" in line for line in self._log_lines(started - 5))
             if not running and time.time() - focused_at > 5:
-                window = next(iter(win.windows(process.pid)), None)
+                window = self.window(process.pid)
                 if window:
                     win.activate(window)
-                    focused_at = time.time()
+                    focused_at, raised = time.time(), raised + 1
             for name, path in wanted.items():
                 if name not in found and path.exists():
                     text = path.read_text("utf-8", "replace")
@@ -90,22 +120,23 @@ class Game:
             if wanted and len(found) == len(wanted):
                 break
             time.sleep(1)
+        log, benign = split_log(self._log_lines(started - 5))
         result = {"seconds": round(time.time() - started, 1), "pid": process.pid, "results": found,
                   "missing": [n for n in wanted if n not in found], "exited_early": process.poll() is not None,
-                  "log": interesting(self._log_lines(started - 5))[-200:],
+                  "log": log[-200:], "benign_log": {"count": len(benign), "examples": benign[:3], "note": BENIGN_NOTE},
                   "crash": next(iter(sorted(self._crash_folders() - crashes)), None)}
         if result["missing"]:
             result["hint"] = ("no result file was written: a Battle.net login screen or a dialog stops the game before the "
                               "map loads (log in once with 'Keep me logged in'; screenshot=true shows the window), or the "
                               "map script failed (script_validate)")
-        if screenshot and process.poll() is None:
-            window = next(iter(win.windows(process.pid)), None)
-            if window:
-                result["screenshot"] = win.screenshot(window)
+        if screenshot:
+            shot, of = self._screenshot(process.pid)
+            result["screenshot"], result["screenshot_of"] = shot, of
         result["closed"] = self._close(process) if close else process.poll() is not None
         if focused_at and previous and win32gui.IsWindow(previous):
             win.activate(previous)
-        result["focus"] = "the game window was brought to the front while loading" if focused_at else None
+        result["focus"] = (f"the game window was brought to the front {raised} time(s) while loading" if raised
+                           else "no game window appeared to bring to the front")
         return result
 
     def _close(self, process: subprocess.Popen) -> bool:
@@ -122,10 +153,11 @@ class Game:
 
     def status(self) -> dict:
         alive = {pid: p for pid, p in self.launched.items() if p.poll() is None}
+        log, benign = split_log(self._log_lines())
         return {"running": bool(alive),
                 "processes": [{"pid": pid, "launched_by_server": pid in alive} for pid in win.processes(EXE_NAME)],
                 "windows": [win.info(h)["title"] for pid in alive for h in win.windows(pid)],
-                "log": interesting(self._log_lines())[-50:]}
+                "log": log[-50:], "benign_log": {"count": len(benign), "examples": benign[:3], "note": BENIGN_NOTE}}
 
     def close(self) -> dict:
         closed = [pid for pid, p in list(self.launched.items()) if self._close(p)]

@@ -3,6 +3,7 @@ import base64
 import functools
 import json
 import logging
+import shutil
 import time
 from pathlib import Path
 from typing import Literal
@@ -25,6 +26,7 @@ from .ops import info as info_ops
 from .ops import newmap as newmap_ops
 from .ops import objdata as objdata_ops
 from .ops import placed as placed_ops
+from .ops import probe as probe_ops
 from .ops import script as script_ops
 from .ops import terrain as terrain_ops
 from .ops import triggers as triggers_ops
@@ -686,18 +688,39 @@ def editor_log(lines: int = 200) -> dict:
 # ---- game ------------------------------------------------------------------------------------------------------
 @_tool
 def game_test(path: str, timeout: float = 240, results: list[str] | None = None, close: bool = True,
-              screenshot: bool = False) -> dict:
+              screenshot: bool = False, probe: bool = False, probe_seconds: float = 10) -> dict:
     """Run a map in Warcraft III (windowed; the window needs to be in front while loading). The map script reports
     results with PreloadGenClear/PreloadGenStart/Preload("text")/PreloadGenEnd("folder\\\\file.txt"); list those
     files in results (relative to Documents\\Warcraft III\\CustomMapData) and the run ends as soon as all exist.
-    Returns the Preload strings per file, the useful War3Log.txt lines and any new crash report."""
-    result = desktop_game.GAME.test(path, timeout=timeout, results=results, close=close, screenshot=screenshot)
-    if "screenshot" in result:
+    probe=true instead runs a throwaway copy of the map (the open working copy when the map is open) with one added
+    trigger that reports, probe_seconds into the game, the units, gold and lumber of every playing slot: use it to
+    check that a map loads and runs without touching its own triggers. screenshot=true saves a PNG of the game window
+    (screenshot_of says what was captured, or why nothing was). Returns the Preload strings per file, the useful
+    War3Log.txt lines (known-benign shipped-data lines are counted separately in benign_log) and any new crash."""
+    target, extra = path, {}
+    if probe:
+        catalog = _catalog("enUS", None, True)
+        opened = _projects.get(_key(path))
+        folder = config.home() / "probe"
+        shutil.rmtree(folder, ignore_errors=True)
+        target = str(probe_ops.build(path, folder / Path(path).name, catalog, opened, probe_seconds))
+        results = list(results or []) + [probe_ops.REPORT]
+        extra["probe_map"] = target
+    result = desktop_game.GAME.test(target, timeout=timeout, results=results, close=close, screenshot=screenshot)
+    if result.get("screenshot"):
         shot = config.home() / "screenshots" / f"game-{result['pid']}.png"
         shot.parent.mkdir(parents=True, exist_ok=True)
         shot.write_bytes(result.pop("screenshot"))
         result["screenshot"] = str(shot)
-    return result
+    elif "screenshot" in result:
+        result["screenshot"] = None
+    if probe:
+        lines = result["results"].pop(probe_ops.REPORT, None)
+        result["probe"] = probe_ops.parse(lines) if lines is not None else None
+        if lines is None:
+            result["hint"] = ("the probed copy never reported: the game did not reach the map (login screen or a "
+                              "dialog), or it ended before probe_seconds")
+    return {**result, **extra}
 
 
 @_tool
