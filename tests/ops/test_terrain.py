@@ -134,3 +134,39 @@ def test_get_edit_and_render_a_map(tmp_path):
     image = Image.open(io.BytesIO(png))
     assert image.format == "PNG" and image.size == ((t.width - 1) * 2, (t.height - 1) * 2)
     assert len(image.getcolors(1 << 20)) > 20
+
+
+def texture(t, x, y) -> str:
+    c = w3e.corner(t, (x + 512) // 128, (y + 512) // 128)
+    return t.tiles[c["texture"]].decode("latin-1")
+
+
+def test_rect_path_and_whole_map_areas():
+    t = flat()
+    t.tiles.append(b"Lgrs")
+    brush(t, {"op": "paint", "tile": "Lgrs"})                       # no area: the whole map
+    assert {x.decode("latin-1") for x in t.tiles} == {"Ldrt", "Lgrs"}
+    assert texture(t, -512, -512) == "Lgrs" and texture(t, 512, 512) == "Lgrs"
+    brush(t, {"op": "paint", "tile": "Ldrt", "rect": [-512, -512, 0, 0]})
+    assert texture(t, -128, -128) == "Ldrt" and texture(t, 128, 128) == "Lgrs"
+    brush(t, {"op": "plateau", "rect": [-512, -512, 512, 512], "height": 0},
+          {"op": "raise", "path": [[-512, 384], [512, 384]], "width": 200, "amount": 64, "falloff": "flat"})
+    assert height(t, 0, 384) == 64 and height(t, 0, 0) == 0        # the stroke lifted its own line only
+    assert error(brush, t, {"op": "paint", "tile": "Lgrs", "path": [[0, 0]]}).code == "bad_value"
+
+
+def test_edit_reports_the_tile_palette(tmp_path):
+    from wc3mcp.mpq.writer import write_archive
+
+    src = tmp_path / "t.w3x"
+    src.write_bytes(write_archive({"war3map.w3e": w3e.serialize(flat(version=12))}))
+    project = MapProject.open(src)
+    try:
+        catalog = Catalog(_storage()) if HAVE_INSTALL else None
+        before = terrain.terrain_get(project)["palette"]
+        assert before == {"tiles": ["Ldrt"], "cliff_tiles": ["CLdi"], "free": 15, "limit": 16}
+        result = terrain.terrain_edit(project, catalog, [{"op": "paint", "tile": "Lgrs", "rect": [-512, -512, 0, 0]}])
+        assert result["palette_added"] == {"tiles": ["Lgrs"], "cliff_tiles": []}
+        assert result["palette"]["tiles"] == ["Ldrt", "Lgrs"] and result["palette"]["free"] == 14
+    finally:
+        project.close(discard=True)

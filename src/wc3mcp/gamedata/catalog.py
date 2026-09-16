@@ -216,8 +216,32 @@ class Catalog:
             return self.westring(row[col]) if row and col and row.get(col) else obj_id
         return obj_id
 
-    def search(self, kind: str, query: str = "", limit: int = 50, offset: int = 0) -> list[dict]:
+    def tilesets(self) -> dict[str, str]:
+        """Tileset letter -> display name, from UI/WorldEditData.txt [TileSets] (tile ids start with the letter,
+        cliff ids carry it second)."""
+        if getattr(self, "_tilesets", None) is None:
+            out, inside = {}, False
+            for line in (self._read("UI/WorldEditData.txt") or b"").decode("utf-8", "replace").splitlines():
+                line = line.strip()
+                if line.startswith("["):
+                    inside = line.lower() == "[tilesets]"
+                elif inside and "=" in line and not line.startswith("//"):
+                    letter, _, value = line.partition("=")
+                    if len(letter) == 1:
+                        out[letter] = self.westring(value.split(",")[0])
+            self._tilesets = out
+        return self._tilesets
+
+    def tileset_of(self, kind: str, obj_id: str) -> str | None:
+        """The tileset letter a tile or cliff id belongs to."""
+        if kind == "tile" and len(obj_id) == 4:
+            return obj_id[0]
+        return obj_id[1] if kind == "cliff" and len(obj_id) == 4 else None
+
+    def search(self, kind: str, query: str = "", limit: int = 50, offset: int = 0, tileset: str | None = None) -> list[dict]:
         self._check(kind)
+        if kind in ("tile", "cliff"):
+            return self._search_terrain(kind, query, limit, offset, tileset)
         if kind in TRIGGER_KINDS:
             q = query.casefold()
             hits = [r for r in self._trigger_rows(kind) if q in r["id"].casefold() or q in r["name"].casefold()]
@@ -233,6 +257,26 @@ class Catalog:
             suffix = self._lookup(kind, obj_id, OBJECT_KINDS[kind].suffix_keys) if kind in OBJECT_KINDS else ""
             if q in obj_id.casefold() or q in name.casefold() or q in suffix.casefold():
                 out.append({"id": obj_id, "name": name, "suffix": suffix})
+        return out[offset:offset + limit]
+
+    def _search_terrain(self, kind: str, query: str, limit: int, offset: int, tileset: str | None) -> list[dict]:
+        """Tiles and cliffs carry their tileset, and can be filtered and searched by its letter or display name."""
+        names = self.tilesets()
+        wanted = None
+        if tileset:
+            wanted = tileset if tileset in names else next(
+                (letter for letter, name in names.items() if name.casefold() == tileset.casefold()), None)
+            if wanted is None:
+                raise ToolError("not_found", f"no tileset {tileset!r}",
+                                hint="a tileset letter or name: " + ", ".join(f"{k} {v}" for k, v in names.items()))
+        q, out = query.casefold(), []
+        for obj_id in self.ids(kind):
+            letter = self.tileset_of(kind, obj_id)
+            if wanted and letter != wanted:
+                continue
+            name, of = self.name(kind, obj_id), names.get(letter, "")
+            if q in obj_id.casefold() or q in name.casefold() or q in of.casefold():
+                out.append({"id": obj_id, "name": name, "suffix": "", "tileset": letter, "tileset_name": of})
         return out[offset:offset + limit]
 
     def get(self, kind: str, obj_id: str, fields: list[str] | None = None) -> dict:

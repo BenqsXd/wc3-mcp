@@ -352,3 +352,26 @@ def test_tools_resume_a_working_copy_after_a_restart(tmp_path):
     payload(call("map_close", {"path": path, "discard": True}))
     err = call("map_status", {"path": path})
     assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "not_open"
+
+
+@needs_install
+def test_map_new_reports_its_fill_tile(tmp_path):
+    plain = str(tmp_path / "plain.w3x")
+    assert payload(call("map_new", {"path": plain, "width": 32, "height": 32}))["fill_tile"] == "Ldrt"
+    grass = str(tmp_path / "grass.w3x")
+    result = payload(call("map_new", {"path": grass, "width": 32, "height": 32, "fill_tile": "Lgrs"}))
+    assert result["fill_tile"] == "Lgrs"
+    assert payload(call("terrain_get", {"path": grass}))["layers"]["texture"][0][0] == "Lgrs"
+    err = call("map_new", {"path": str(tmp_path / "bad.w3x"), "fill_tile": "Vgrs"})
+    assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "bad_value"
+    for path in (plain, grass):
+        payload(call("map_close", {"path": path, "discard": True}))
+
+
+@needs_install
+def test_data_search_scopes_tiles_to_a_tileset():
+    result = payload(call("data_search", {"kind": "tile", "query": "", "tileset": "Lordaeron Summer", "limit": 100}))
+    assert result["results"] and all(r["tileset"] == "L" for r in result["results"])
+    assert {r["id"] for r in result["results"]} >= {"Lgrs", "Ldrt"}
+    err = call("data_search", {"kind": "unit", "tileset": "L"})
+    assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "bad_value"

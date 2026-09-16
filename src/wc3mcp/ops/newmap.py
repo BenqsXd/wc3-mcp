@@ -9,6 +9,7 @@ from pathlib import Path
 from .. import config, pathguard
 from ..errors import ToolError
 from ..formats import doo, imp, mmp, unitsdoo, w3c, w3e, w3i, w3r, w3s, wct, wpm, wtg
+from ..formats.binary import FormatError
 from ..formats.wts import TriggerStrings
 from ..mpq.writer import write_archive
 from ..project.workspace import MapProject
@@ -44,11 +45,17 @@ def _bad(field: str, message: str) -> ToolError:
 
 
 def _files(catalog, name: str, width: int, height: int, tileset: str, author: str, players: int,
-           lua: bool = False) -> tuple[dict, w3i.MapInfo]:
+           lua: bool = False, fill_tile: str | None = None) -> tuple[dict, w3i.MapInfo]:
     tiles = [t.encode("latin-1") for t in catalog.ids("tile") if t[0] == tileset]
     cliffs = [c.encode("latin-1") for c in catalog.ids("cliff") if c[1] == tileset][:2]
     if not tiles:
         raise _bad("tileset", f"no ground tiles for tileset {tileset!r} (data_search kind=tile)")
+    if fill_tile is not None:
+        if fill_tile.encode("latin-1") not in tiles:
+            raise _bad("fill_tile", f"{fill_tile!r} is not a ground tile of tileset {tileset!r} "
+                                    f"(data_search kind=tile tileset={tileset})")
+        tiles.remove(fill_tile.encode("latin-1"))
+        tiles.insert(0, fill_tile.encode("latin-1"))   # the terrain is filled with the first tile
     corners_x, corners_y = width + 1, height + 1
     ox, oy = -width * 64.0, -height * 64.0
     n = corners_x * corners_y
@@ -102,7 +109,8 @@ def _files(catalog, name: str, width: int, height: int, tileset: str, author: st
 
 
 def new_map(path, catalog, width: int = 64, height: int = 64, tileset: str = "L", name: str = "Just another Warcraft III map",
-            author: str = "Unknown", players: int = 2, script_language: str = "jass", format: str = "mpq") -> MapProject:
+            author: str = "Unknown", players: int = 2, script_language: str = "jass", format: str = "mpq",
+            fill_tile: str | None = None) -> MapProject:
     target = pathguard.ensure_writable(path)
     if target.exists():
         raise ToolError("exists", f"{target} already exists", hint="choose a new path, or map_open the existing map")
@@ -115,7 +123,9 @@ def new_map(path, catalog, width: int = 64, height: int = 64, tileset: str = "L"
         raise _bad("players", "expected 1 to 24")
     if script_language not in ("jass", "lua") or format not in ("mpq", "folder"):
         raise _bad("format" if script_language in ("jass", "lua") else "script_language", "expected jass or lua / mpq or folder")
-    files, _ = _files(catalog, name, width, height, tileset, author, players, script_language == "lua")
+    if fill_tile is not None and (not isinstance(fill_tile, str) or len(fill_tile) != 4):
+        raise _bad("fill_tile", "expected a 4-character ground tile id such as Lgrs (data_search kind=tile)")
+    files, _ = _files(catalog, name, width, height, tileset, author, players, script_language == "lua", fill_tile)
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
         if format == "folder":
@@ -147,3 +157,13 @@ def new_map(path, catalog, width: int = 64, height: int = 64, tileset: str = "L"
         else:
             target.unlink(missing_ok=True)
         raise
+
+
+def fill_tile_of(project) -> str | None:
+    """The tile the whole terrain is painted with, or None when it holds more than one."""
+    try:
+        t = w3e.parse(project.read("war3map.w3e"))
+    except (ToolError, FormatError, OSError):
+        return None
+    used = set(t.textures)
+    return t.tiles[used.pop()].decode("latin-1") if len(used) == 1 else None

@@ -126,15 +126,17 @@ def map_open(path: str) -> dict:
 @_tool
 def map_new(path: str, width: int = 64, height: int = 64, tileset: str = "L", name: str = "Just another Warcraft III map",
             author: str = "Unknown", players: int = 2, script_language: Literal["jass", "lua"] = "jass",
-            format: Literal["mpq", "folder"] = "mpq") -> dict:
+            format: Literal["mpq", "folder"] = "mpq", fill_tile: str | None = None) -> dict:
     """Create a new map at path (it must not exist) and open it: width/height in tiles (32-480, steps of 32, the
-    playable area is 12 tiles narrower and shorter), tileset letter (data_search kind=tile ids start with it),
-    players 1-24 with start locations, one force, a flat terrain of the tileset's first tile, the default Melee
-    Initialization trigger and a generated war3map.j, or war3map.lua for script_language=lua."""
+    playable area is 12 tiles narrower and shorter), tileset letter (data_search kind=tile, tileset=<letter>),
+    players 1-24 with start locations, one force, flat terrain, the default Melee Initialization trigger and a
+    generated war3map.j, or war3map.lua for script_language=lua. The terrain is filled with fill_tile, or with the
+    tileset's first tile, which is not always the obvious one (Lordaeron Summer starts at Ldrt, dirt, so a road
+    painted with Ldrt would be invisible). The result names it in fill_tile."""
     project = newmap_ops.new_map(path, _catalog("enUS", "Custom_V1", True), width, height, tileset, name, author, players,
-                                 script_language, format)
+                                 script_language, format, fill_tile)
     _projects[_key(path)] = project
-    return project.status()
+    return {**project.status(), "fill_tile": newmap_ops.fill_tile_of(project)}
 
 
 @_tool
@@ -302,13 +304,19 @@ def map_snapshot(path: str, action: Literal["create", "restore", "list", "diff"]
 
 @_tool
 def data_search(kind: Kind, query: str = "", limit: int = 50, offset: int = 0, locale: str = "enUS",
-                balance: str | None = "Custom_V1", hd: bool = True) -> dict:
+                balance: str | None = "Custom_V1", hd: bool = True, tileset: str | None = None) -> dict:
     """Search base game data by id, name or editor suffix (object, terrain and sound kinds) or by path substring or
     glob (model, icon, file); trigger_function / trigger_type / trigger_preset search GUI trigger functions, variable
-    types and preset values. balance selects the gameplay data set: Custom_V1 (current), Custom_V0, Melee_V0, or
-    null for the base files."""
-    results = _catalog(locale, balance, hd).search(kind, query, limit=min(limit, 500), offset=offset)
-    return {"kind": kind, "query": query, "offset": offset, "count": len(results), "results": results}
+    types and preset values. kind=tile and kind=cliff carry the tileset each id belongs to and take tileset (its
+    letter, e.g. "L", or its name, e.g. "Lordaeron Summer") to list only that tileset's terrain. balance selects the
+    gameplay data set: Custom_V1 (current), Custom_V0, Melee_V0, or null for the base files."""
+    catalog = _catalog(locale, balance, hd)
+    if tileset is not None and kind not in ("tile", "cliff"):
+        raise ToolError("bad_value", "tileset filters kind=tile and kind=cliff only", path="tileset")
+    extra = {"tileset": tileset} if kind in ("tile", "cliff") else {}
+    results = catalog.search(kind, query, limit=min(limit, 500), offset=offset, **extra)
+    return {"kind": kind, "query": query, "offset": offset, "count": len(results), "results": results,
+            **({"tilesets": catalog.tilesets()} if kind in ("tile", "cliff") and not results else {})}
 
 
 @_tool
@@ -469,11 +477,15 @@ def terrain_get(path: str, area: list[float] | None = None,
 
 @_tool
 def terrain_edit(path: str, ops: list[dict]) -> dict:
-    """All-or-nothing terrain brushes on circles {"x", "y", "radius"} (world units): raise / lower {"amount",
-    "falloff": smooth|linear|flat}, plateau {"height"} (default: the centre corner's), smooth {"strength" 0..1},
-    noise {"amount", "seed", "falloff"}, paint {"tile"} (data_search kind=tile; a map holds at most 16 tiles),
-    cliff {"level" 0..15, "cliff" tile id}, water {"level": surface z or null to remove}, ramp / blight / boundary
-    {"value": true|false}. Pathing, shadows and the minimap are recomputed by the World Editor on its next save."""
+    """All-or-nothing terrain brushes. Every op is {"op": <brush>, <area>, <settings>}, for example {"op": "paint",
+    "tile": "Lgrs", "x": 0, "y": 0, "radius": 384}. Areas (world units): "x"/"y"/"radius" a circle, "rect": [left,
+    bottom, right, top], "path": [[x, y], ...] with "width" a stroke along a line (roads), or no area at all for the
+    whole map. Brushes and their settings: raise / lower {"amount", "falloff": smooth|linear|flat}, plateau
+    {"height"} (default: the centre corner's), smooth {"strength" 0..1}, noise {"amount", "seed", "falloff"}, paint
+    {"tile"} (data_search kind=tile, tileset=<letter>), cliff {"level" 0..15, "cliff": cliff tile id}, water
+    {"level": surface z, or null to remove}, ramp / blight / boundary {"value": true|false}. The result reports the
+    map's tile palette and what the ops added to it (a map holds at most 16 ground tiles). Pathing, shadows and the
+    minimap are recomputed by the World Editor on its next save."""
     return terrain_ops.terrain_edit(_project(path), _catalog("enUS", "Custom_V1", True), ops)
 
 

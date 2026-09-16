@@ -67,3 +67,17 @@ def test_field_netsafe_and_applicability(cat):
     assert cat.applies("ability", "AHbz", abilities["Hbz1"])
     assert not cat.applies("ability", "AHbz", abilities["hem1"])
     assert cat.applies("unit", "hfoo", units["uhpm"])
+
+
+def test_tiles_carry_their_tileset(cat):
+    names = cat.tilesets()
+    assert names["L"] == "Lordaeron Summer" and names["V"] == "Village"
+    lordaeron = cat.search("tile", "", limit=500, tileset="Lordaeron Summer")
+    assert lordaeron and all(r["id"][0] == "L" and r["tileset_name"] == "Lordaeron Summer" for r in lordaeron)
+    assert {r["id"] for r in lordaeron} >= {"Lgrs", "Ldrt"}
+    assert [r["id"] for r in cat.search("tile", "grass", tileset="L")] == [
+        r["id"] for r in lordaeron if "grass" in r["name"].casefold()]
+    assert cat.search("cliff", "", limit=50, tileset="L")[0]["id"][1] == "L"
+    with pytest.raises(ToolError) as e:
+        cat.search("tile", "", tileset="Nowhere")
+    assert e.value.code == "not_found"

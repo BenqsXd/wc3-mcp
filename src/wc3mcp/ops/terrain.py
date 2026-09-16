@@ -22,14 +22,29 @@ WATER_OFFSET = -89.6  # the game draws water this far below its level
 VARIATIONS = (0, 4, 8, 12, 16, 17)  # ground variations the editor spreads when painting
 DERIVED_WARNING = ("war3map.wpm (pathing), war3map.shd (shadows) and war3map.mmp (minimap) are recomputed by the World "
                    "Editor only, and placed doodads keep their z: editor_map open + save refreshes them")
-_HINT = ('ops: {"op": "raise", "x": 0, "y": 0, "radius": 512, "amount": 128}, {"op": "plateau", "x": 0, "y": 0, '
-         '"radius": 256, "height": 0}, {"op": "paint", "tile": "Lgrs", "x": 0, "y": 0, "radius": 384}, {"op": "cliff", '
-         '"x": 0, "y": 0, "radius": 256, "level": 3}, {"op": "water", "x": 0, "y": 0, "radius": 512, "level": -64}')
+_HINT = ('each op is {"op": <brush>, <area>, <settings>}. Areas: "x"/"y"/"radius" (circle), "rect": [left, bottom, '
+         'right, top], "path": [[x, y], ...] with "width" (a stroke, e.g. a road), or none at all (the whole map). '
+         'ops: {"op": "raise", "x": 0, "y": 0, "radius": 512, "amount": 128}, {"op": "plateau", "rect": [-512, -512, '
+         '512, 512], "height": 0}, {"op": "paint", "tile": "Lgrs"}, {"op": "paint", "tile": "Ldrt", "path": [[0, 0], '
+         '[512, 0], [512, 512]], "width": 192}, {"op": "cliff", "x": 0, "y": 0, "radius": 256, "level": 3}, '
+         '{"op": "water", "rect": [0, 0, 1024, 1024], "level": -64}')
+AREA_KEYS = {"x", "y", "radius", "rect", "path", "width"}
 BRUSH_KEYS = {
     "raise": {"amount", "falloff"}, "lower": {"amount", "falloff"}, "plateau": {"height"}, "smooth": {"strength"},
     "noise": {"amount", "seed", "falloff"}, "paint": {"tile"}, "cliff": {"level", "cliff"}, "ramp": {"value"},
     "water": {"level"}, "blight": {"value"}, "boundary": {"value"},
 }
+
+
+def tile_limit(t: w3e.Terrain) -> int:
+    """Ground tiles a map can hold: the World Editor's 16, or fewer when the file version has fewer texture bits."""
+    return min(1 << w3e._TEXTURE_BITS[t.version], 16)
+
+
+def _palette(t: w3e.Terrain) -> dict:
+    """The map's tile slots: what is in them and how many are left (painting an unlisted tile takes one)."""
+    return {"tiles": [x.decode("latin-1") for x in t.tiles], "cliff_tiles": [x.decode("latin-1") for x in t.cliff_tiles],
+            "free": tile_limit(t) - len(t.tiles), "limit": tile_limit(t)}
 
 
 def _load(project) -> tuple[w3e.Terrain, bytes]:
@@ -110,7 +125,8 @@ def terrain_get(project, area: list | None = None, layers: list | None = None, s
         for name in layers:
             grids[name].append(line[name])
     return {"version": t.version, "tileset": t.tileset, "tiles": [x.decode("latin-1") for x in t.tiles],
-            "cliff_tiles": [x.decode("latin-1") for x in t.cliff_tiles], "corners": [t.width, t.height],
+            "cliff_tiles": [x.decode("latin-1") for x in t.cliff_tiles], "palette": _palette(t),
+            "corners": [t.width, t.height],
             "bounds": _bounds(t),
             "window": {"left": _xy(t, c0, r0)[0], "bottom": _xy(t, c0, r0)[1], "step": step, "columns": len(columns),
                        "rows": len(rows), "note": "rows run south to north; row j, column i is at (left + i * step * "
@@ -136,37 +152,76 @@ def _falloff(kind: str, d: float, r: float) -> float:
     return 0.5 * (1 + math.cos(math.pi * min(d / r, 1.0)))
 
 
+def _distance_to_segment(px: float, py: float, ax: float, ay: float, bx: float, by: float) -> float:
+    dx, dy = bx - ax, by - ay
+    if dx == 0 and dy == 0:
+        return math.dist((px, py), (ax, ay))
+    along = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+    return math.dist((px, py), (ax + along * dx, ay + along * dy))
+
+
 class _Brush:
     """Brush operations on a parsed terrain; raise ToolError("bad_value") on bad input."""
 
     def __init__(self, t: w3e.Terrain, catalog=None):
-        self.t, self.catalog = t, catalog
+        self.t, self.catalog, self.added = t, catalog, {"tiles": [], "cliff_tiles": []}
+
+    def _window(self, left: float, bottom: float, right: float, top: float):
+        t = self.t
+        return ((cx, cy)
+                for cy in range(max(0, math.ceil((bottom - t.offset_y) / 128)),
+                                min(t.height - 1, math.floor((top - t.offset_y) / 128)) + 1)
+                for cx in range(max(0, math.ceil((left - t.offset_x) / 128)),
+                                min(t.width - 1, math.floor((right - t.offset_x) / 128)) + 1))
 
     def corners(self, op: dict, path: str):
-        x, y = _num(op.get("x"), f"{path}.x"), _num(op.get("y"), f"{path}.y")
-        r = _num(op.get("radius"), f"{path}.radius")
-        if not 0 < r <= 65536:
-            raise _bad(f"{path}.radius", "expected a radius greater than 0")
+        """[(column, row, distance from the brush centre)] and the falloff scale, for a circle, a rectangle, a path
+        stroke or (no area given) the whole map."""
         t = self.t
-        out = []
-        for cy in range(max(0, math.ceil((y - r - t.offset_y) / 128)), min(t.height - 1, math.floor((y + r - t.offset_y) / 128)) + 1):
-            for cx in range(max(0, math.ceil((x - r - t.offset_x) / 128)), min(t.width - 1, math.floor((x + r - t.offset_x) / 128)) + 1):
-                d = math.dist((x, y), _xy(t, cx, cy))
-                if d <= r:
+        if "rect" in op:
+            left, bottom, right, top = _area(op["rect"])
+            out, scale, what = [(cx, cy, 0.0) for cx, cy in self._window(left, bottom, right, top)], 1.0, "rectangle"
+        elif "path" in op:
+            points = op["path"]
+            if not isinstance(points, list) or len(points) < 2 or any(
+                    not isinstance(p, list) or len(p) != 2 for p in points):
+                raise _bad(f"{path}.path", "expected [[x, y], [x, y], ...] with at least two points")
+            line = [(_num(p[0], f"{path}.path"), _num(p[1], f"{path}.path")) for p in points]
+            half = _num(op.get("width", 128), f"{path}.width") / 2
+            if not 0 < half <= 32768:
+                raise _bad(f"{path}.width", "expected a width greater than 0")
+            xs, ys = [p[0] for p in line], [p[1] for p in line]
+            out = []
+            for cx, cy in self._window(min(xs) - half, min(ys) - half, max(xs) + half, max(ys) + half):
+                wx, wy = _xy(t, cx, cy)
+                d = min(_distance_to_segment(wx, wy, *a, *b) for a, b in zip(line, line[1:]))
+                if d <= half:
                     out.append((cx, cy, d))
+            scale, what = half, "path"
+        elif AREA_KEYS & set(op):
+            x, y = _num(op.get("x"), f"{path}.x"), _num(op.get("y"), f"{path}.y")
+            r = _num(op.get("radius"), f"{path}.radius")
+            if not 0 < r <= 65536:
+                raise _bad(f"{path}.radius", "expected a radius greater than 0")
+            out = [(cx, cy, math.dist((x, y), _xy(t, cx, cy)))
+                   for cx, cy in self._window(x - r, y - r, x + r, y + r)]
+            out = [c for c in out if c[2] <= r]
+            scale, what = r, f"circle at ({x}, {y}) radius {r}"
+        else:
+            out, scale, what = [(cx, cy, 0.0) for cx, cy in self._window(*_bounds(t))], 1.0, "whole map"
         if not out:
-            raise _bad(path, f"the brush at ({x}, {y}) radius {r} covers no terrain corner; the map spans {_bounds(t)}")
-        return out, x, y, r
+            raise _bad(path, f"the {what} covers no terrain corner; the map spans {_bounds(t)}")
+        return out, scale
 
     def _flag(self, op: dict, path: str) -> bool:
         return _bool(op.get("value", True), f"{path}.value")
 
     def apply(self, op: dict, path: str) -> None:
         kind = op.get("op")
-        extra = set(op) - {"op", "x", "y", "radius"} - BRUSH_KEYS[kind]
+        extra = set(op) - {"op"} - AREA_KEYS - BRUSH_KEYS[kind]
         if extra:
             raise ToolError("bad_op", f"{path}: unknown keys {sorted(extra)} for {kind}", hint=_HINT)
-        corners, x, y, r = self.corners(op, path)
+        corners, r = self.corners(op, path)
         t = self.t
         if kind in ("raise", "lower", "noise"):
             amount = _num(op.get("amount", 64 if kind != "noise" else 32), f"{path}.amount")
@@ -235,11 +290,11 @@ class _Brush:
     def _tile_index(self, value, path: str) -> int:
         tile = self._catalog_id("tile", value, path)
         if tile not in self.t.tiles:
-            limit = 1 << w3e._TEXTURE_BITS[self.t.version]
-            if len(self.t.tiles) >= min(limit, 16):
+            if len(self.t.tiles) >= tile_limit(self.t):
                 raise _bad(path, f"the map already uses {len(self.t.tiles)} ground tiles, the most the World Editor "
                                  "allows; paint with one of terrain_get's tiles")
             self.t.tiles.append(tile)
+            self.added["tiles"].append(tile.decode("latin-1"))
             self.t.custom_tileset = 1  # without it the World Editor resets the list to the tileset's own tiles
         return self.t.tiles.index(tile)
 
@@ -249,6 +304,7 @@ class _Brush:
             if len(self.t.cliff_tiles) >= 2:
                 raise _bad(path, "the map already uses 2 cliff tiles, the most the World Editor allows")
             self.t.cliff_tiles.append(cliff)
+            self.added["cliff_tiles"].append(cliff.decode("latin-1"))
             self.t.custom_tileset = 1
         return self.t.cliff_tiles.index(cliff)
 
@@ -272,7 +328,8 @@ def terrain_edit(project, catalog, ops: list) -> dict:
     changed = data != before
     if changed:
         project.write("war3map.w3e", data)
-    return {"changed": changed, "warnings": [DERIVED_WARNING] if changed else []}
+    return {"changed": changed, "palette": _palette(t), "palette_added": brush.added,
+            "warnings": [DERIVED_WARNING] if changed else []}
 
 
 # ---- render --------------------------------------------------------------------------------------------------
