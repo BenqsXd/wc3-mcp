@@ -28,7 +28,7 @@ from .ops import placed as placed_ops
 from .ops import script as script_ops
 from .ops import terrain as terrain_ops
 from .ops import triggers as triggers_ops
-from .project.workspace import MapProject
+from .project.workspace import MapProject, project_id
 
 log = logging.getLogger("wc3mcp")
 mcp = FastMCP("wc3", instructions=(
@@ -75,7 +75,13 @@ def _key(path: str) -> str:
 def _project(path: str) -> MapProject:
     p = _projects.get(_key(path))
     if p is None:
-        raise ToolError("not_open", f"map is not open: {path}", hint="call map_open first")
+        # the working copy outlives the server process: resume it instead of losing the session on a restart
+        resolved = Path(path).resolve() if Path(path).exists() else None
+        if resolved and (config.home() / "work" / project_id(resolved) / "manifest.json").is_file():
+            p = _projects[_key(path)] = MapProject.open(resolved)
+            log.info("resumed the working copy of %s", resolved)
+        else:
+            raise ToolError("not_open", f"map is not open: {path}", hint="call map_open first")
     return p
 
 
@@ -107,7 +113,8 @@ def _encode(data: bytes, encoding: str, offset: int, length: int) -> dict:
 @_tool
 def map_open(path: str) -> dict:
     """Open a Warcraft III map (.w3x/.w3m archive or map folder) or campaign (.w3n) into a private working copy.
-    Re-opening resumes unsaved edits. Returns the map status. Campaigns work with campaign_get / campaign_edit,
+    Re-opening resumes unsaved edits, and so does any tool call after the server restarts (the working copy lives on
+    disk). Returns the map status. Campaigns work with campaign_get / campaign_edit,
     objdata_* and imports_edit (their war3campaign.* files); map_save, map_status and map_validate take them too."""
     p = MapProject.open(path)
     _projects[_key(path)] = p
@@ -230,7 +237,15 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
         raise ToolError("validation_failed", f"{len(validation['errors'])} map validation error(s); first: "
                         f"{first['file']}: {first['message']}", hint="fix them, or save with validate=false",
                         errors=validation["errors"][:20])
-    result = project.save(dest=dest, format=format, force=force)
+    try:
+        result = project.save(dest=dest, format=format, force=force)
+    except ToolError as e:
+        seen = desktop_editor.EDITOR.status()
+        if e.code == "file_in_use" and seen["running"] and seen["map"] and _key(seen["map"]) == _key(str(project.source)):
+            raise ToolError("editor_holds_map", f"the World Editor has {project.source.name} open and holds the file",
+                            hint="editor_map action=close (the edits stay in the working copy), then map_save again",
+                            path=str(project.source)) from e
+        raise
     result["warnings"] = warnings
     if script is not None:
         result["script"] = script
@@ -602,8 +617,9 @@ def editor_status() -> dict:
 @_tool
 def editor_map(action: Literal["open", "save", "close", "reload", "compile", "quit", "save_campaign"],
                map_path: str | None = None, discard: bool = False) -> dict:
-    """Map actions in the World Editor. open (map_path; relaunches the editor on that map, or on a .w3n campaign in
-    the Campaign Editor), save / compile (the editor regenerates and checks the script; script errors come back per
+    """Map actions in the World Editor. open (map_path; shows that map, or a .w3n campaign in the Campaign Editor,
+    and reports previous_instance: reused when the running editor already showed it, relaunched when it was quit and
+    started again, none when no editor ran), save / compile (the editor regenerates and checks the script; script errors come back per
     trigger and the editor disables failing triggers), save_campaign (the Campaign Editor's campaign), close, reload
     (reopen from disk after map_save), quit. Anything that would drop unsaved editor changes
     refuses with unsaved_changes unless discard=true: ask the user first."""

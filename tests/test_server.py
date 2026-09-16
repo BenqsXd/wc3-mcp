@@ -321,3 +321,34 @@ def test_map_save_takes_turns_with_the_editor(tmp_path, monkeypatch):
     monkeypatch.setattr(editor.EDITOR, "status", lambda: {**idle, "dirty": False})
     saved = payload(call("map_save", {"path": path}))
     assert saved["saved"] and any("editor" in w for w in saved["warnings"])
+
+
+def test_map_save_names_the_editor_when_it_holds_the_file(tmp_path, monkeypatch):
+    from wc3mcp.project import workspace
+
+    src = tmp_path / "held.w3x"
+    src.write_bytes(write_archive({"war3map.j": b"old"}))
+    path = str(src)
+    payload(call("map_open", {"path": path}))
+    payload(call("map_file_write", {"path": path, "name": "war3map.j", "content": "new"}))
+    monkeypatch.setattr(workspace.os, "replace", lambda *a: (_ for _ in ()).throw(PermissionError(5, "Access is denied")))
+    monkeypatch.setattr(server.desktop_editor.EDITOR, "status", lambda: {
+        "running": True, "map": path, "dirty": False, "campaign": None, "campaign_dirty": False})
+    err = call("map_save", {"path": path})
+    assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "editor_holds_map"
+    monkeypatch.undo()
+    payload(call("map_close", {"path": path, "discard": True}))
+
+
+def test_tools_resume_a_working_copy_after_a_restart(tmp_path):
+    src = tmp_path / "resumed.w3x"
+    src.write_bytes(write_archive({"war3map.j": b"old"}))
+    path = str(src)
+    payload(call("map_open", {"path": path}))
+    payload(call("map_file_write", {"path": path, "name": "war3map.j", "content": "edited"}))
+    server._projects.clear()   # as if the server process had restarted
+    assert payload(call("map_file_read", {"path": path, "name": "war3map.j"}))["content"] == "edited"
+    assert payload(call("map_status", {"path": path}))["dirty"] == ["war3map.j"]
+    payload(call("map_close", {"path": path, "discard": True}))
+    err = call("map_status", {"path": path})
+    assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "not_open"

@@ -146,3 +146,25 @@ def test_editor_ui_access(maps):
         assert set(editor.log(lines=20)) >= {"log", "crashes"}
     finally:
         editor.quit(discard=True)
+
+
+@pytest.mark.parametrize("shows, expected", [(True, "reused"), (False, "relaunched")])
+def test_open_says_what_happened_to_a_running_editor(tmp_path, monkeypatch, shows, expected):
+    target = tmp_path / "m.w3x"
+    target.write_bytes(b"map")
+    editor = ed.Editor()
+    monkeypatch.setattr(editor, "status", lambda: {"running": True, "map": str(target) if shows else r"C:\Other.w3x",
+                                                   "dirty": False, "campaign": None, "campaign_dirty": False})
+    monkeypatch.setattr(editor, "quit", lambda **kw: {"running": False})
+    monkeypatch.setattr(editor, "launch", lambda *a, **kw: {"running": True, "map": str(target)})
+    assert editor.open(target)["previous_instance"] == expected
+
+
+def test_open_without_a_running_editor_reports_none(tmp_path, monkeypatch):
+    target = tmp_path / "m.w3x"
+    target.write_bytes(b"map")
+    editor = ed.Editor()
+    monkeypatch.setattr(editor, "status", lambda: {"running": False, "map": None, "dirty": False, "campaign": None,
+                                                   "campaign_dirty": False})
+    monkeypatch.setattr(editor, "launch", lambda *a, **kw: {"running": True, "map": str(target)})
+    assert editor.open(target)["previous_instance"] == "none"

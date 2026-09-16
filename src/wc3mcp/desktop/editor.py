@@ -144,18 +144,22 @@ class Editor:
         return s
 
     def open(self, map_path, discard: bool = False, timeout: float = 120) -> dict:
+        """Show `map_path` in the editor. `previous_instance` says what happened to the editor that was running:
+        reused (it already showed this map), relaunched (it was quit and started again) or none."""
         target = Path(map_path).resolve()
         if not target.exists():
             raise ToolError("not_found", f"no map at {target}")
         s = self.status()
+        previous = "none"
         if s["running"]:
             if _shows(s, target) and not _unsaved(s):
-                return s
+                return {**s, "previous_instance": "reused"}
             if _unsaved(s) and not discard:
                 raise ToolError("unsaved_changes", f"the editor has unsaved changes in {_unsaved(s)}",
                                 hint="save them (editor_map save / save_campaign) or ask the user; discard=true drops them")
             self.quit(discard=discard)
-        return self.launch(target, timeout)
+            previous = "relaunched"
+        return {**self.launch(target, timeout), "previous_instance": previous}
 
     def reload(self, discard: bool = False) -> dict:
         s = self._loaded()

@@ -121,3 +121,15 @@ def test_ladder_map_edit_keeps_other_files(tmp_path):
     after = Archive.open(src)
     assert after.read("war3mapImported\\note.txt") == b"hello"
     assert {n: after.read(n) for n in originals} == originals
+
+
+def test_save_reports_a_locked_file(tmp_path, monkeypatch):
+    src = make_map(tmp_path / "locked.w3x", {"war3map.j": b"old"})
+    p = MapProject.open(src)
+    p.write("war3map.j", b"new")
+    from wc3mcp.project import workspace
+
+    monkeypatch.setattr(workspace.os, "replace", lambda *a: (_ for _ in ()).throw(PermissionError(5, "Access is denied")))
+    with pytest.raises(ToolError) as e:
+        p.save()
+    assert e.value.code == "file_in_use" and "editor_map action=close" in e.value.hint

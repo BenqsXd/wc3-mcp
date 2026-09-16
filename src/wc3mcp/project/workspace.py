@@ -204,10 +204,15 @@ class MapProject:
         pathguard.ensure_writable(dest)
         files = {e["name"]: (self.work / "files" / e["path"]).read_bytes() for e in self.m["files"].values()}
         backup = self._backup(dest)
-        if fmt == "mpq":
-            self._write_mpq(dest, files)
-        else:
-            self._write_folder(dest, files)
+        try:
+            if fmt == "mpq":
+                self._write_mpq(dest, files)
+            else:
+                self._write_folder(dest, files)
+        except PermissionError as e:   # another program holds the file (the World Editor keeps its map open)
+            raise ToolError("file_in_use", f"{dest} is held by another program: {e}",
+                            hint="close it there (the World Editor: editor_map action=close), then map_save again",
+                            path=str(dest)) from e
         if in_place:
             self.m["fingerprint"] = fingerprint(dest)
             self.m["dirty"], self.m["deleted"] = [], []
