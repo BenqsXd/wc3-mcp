@@ -100,3 +100,16 @@ def test_doodads_by_tileset_and_model(cat):
     with pytest.raises(ToolError) as e:
         cat.search("unit", "", tileset="A")
     assert e.value.code == "bad_value"
+
+
+def test_models_must_load_in_classic_graphics(cat):
+    # the World Editor draws classic (SD) models: some HD files have no classic copy
+    shrub3 = r"Doodads\Ruins\Plants\Ruins_Shrub\Ruins_Shrub3.mdl"
+    assert cat.model_exists(shrub3, hd=True) and not cat.model_exists(shrub3)
+    assert cat.get("doodad", "ZPsh", ["dfil"])["model"]["missing"] == [shrub3]
+    row = next(r for r in cat.search("doodad", "", limit=5000) if r["id"] == "ZPsh")
+    assert row["model_ok"] is False and row["variations_ok"] == [0, 1, 2]
+    assert cat.missing_models("doodad", "ZPsh", 1)[1] == []
+    assert cat.get("doodad", "LCss", ["dfil"])["model"]["missing"] == [
+        r"Doodads\LordaeronCapital\Props\Statues\Lordaeron_Statue_Sword.mdl"]
+    assert "variations_ok" not in next(r for r in cat.search("doodad", "Grass Patch") if r["id"] == "LPgp")

@@ -180,6 +180,8 @@ ID_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 SKIN_NETSAFE = frozenset({"1", "11"})
 _HINT = ('ops: {"op": "create", "base": "hfoo", "set": {"Name": "Guard"}}, {"op": "set", "id": "h000", "set": '
          '{"uhpm": 500}}, {"op": "reset", "id": "h000", "fields": ["uhpm"]}, {"op": "delete", "id": "h000"}')
+OP_KEYS = {"create": {"op", "base", "id", "set"}, "set": {"op", "id", "set"}, "reset": {"op", "id", "fields"},
+           "delete": {"op", "id"}}
 
 
 def _next_id(kind: str, base: str, taken: set[str]) -> str:
@@ -328,6 +330,9 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
             if not isinstance(op, dict):
                 raise ToolError("bad_op", f"{path}: each op must be an object", hint=_HINT)
             action = op.get("op")
+            extra = set(op) - OP_KEYS.get(action, set(op))
+            if extra:   # a misspelt key would otherwise drop the caller's values without a word
+                raise ToolError("bad_op", f"{path}: {action} takes no {sorted(extra)}", hint=_HINT)
             if action == "create":
                 base = op.get("base")
                 if not isinstance(base, str) or base not in base_ids:

@@ -19,7 +19,8 @@ def test_script_reports_through_preload():
 def test_parse_report():
     assert probe.parse(["probe=ok", "seconds=10.00", "player0.units=12", "player0.heroes=1", "message0=hi=there",
                         "message1=second"]) == {"probe": "ok", "seconds": "10.00", "player0.units": 12,
-                                                "player0.heroes": 1, "messages": ["hi=there", "second"]}
+                                                "player0.heroes": 1, "messages": ["hi=there", "second"], "reports": []}
+    assert probe.parse(["report=abc", "report+=def", "report=x"])["reports"] == ["abcdef", "x"]
 
 
 def test_debug_messages_reach_the_report():
@@ -52,3 +53,37 @@ def test_build_makes_a_copy_that_reports(tmp_path):
         assert any(f["name"].lower() == "war3mapmap.blp" for f in project.list_files())
     finally:
         project.close(discard=True)
+
+
+def test_probe_script_runs_the_callers_code():
+    jass = probe.script("jass", 10, "local integer n = 3\ncall ProbeReport(\"n=\" + I2S(n))")
+    assert jass.index("function ProbeReport takes string s") < jass.index("function Trig_wc3mcpProbe_User")
+    assert "    local integer n = 3\n" in jass and jass.index("function Trig_wc3mcpProbe_User") < jass.index(
+        "function Trig_wc3mcpProbe_Actions")
+    assert jass.count("call Trig_wc3mcpProbe_User()") == 1 and "call Trig_wc3mcpProbe_User()" not in probe.script("jass", 10)
+    lua = probe.script("lua", 5, "local t = {1, 2}\nProbeReport(#t)")
+    assert "function ProbeReport(s)" in lua and "    local t = {1, 2}\n" in lua and "    Trig_wc3mcpProbe_User()\n" in lua
+
+
+@pytest.mark.skipif(not HAVE_INSTALL, reason="needs the Warcraft III install")
+def test_probe_script_compiles_into_the_copy(tmp_path):
+    from wc3mcp.errors import ToolError
+    from wc3mcp.gamedata.catalog import Catalog
+
+    maps = [p for p in ladder_maps() if open_sample("ladder:" + p.name).read("war3map.j") is not None]
+    if not maps:
+        pytest.skip("no JASS ladder map")
+    source = tmp_path / maps[0].name
+    shutil.copyfile(maps[0], source)
+    catalog = Catalog(_storage(), balance="Custom_V1")
+    user = 'local integer n = 3\ncall ProbeReport("n=" + I2S(n))\ncall BJDebugMsg("hi")'
+    copy = probe.build(source, tmp_path / "probe" / maps[0].name, catalog, user=user)
+    project = MapProject.open(copy)
+    try:
+        text = project.read("war3map.j").decode("utf-8", "replace")
+        assert "call ProbeReport(\"n=\" + I2S(n))" in text and 'call wc3mcpProbe_Msg("hi")' in text
+    finally:
+        project.close(discard=True)
+    with pytest.raises(ToolError) as e:
+        probe.build(source, tmp_path / "probe2" / maps[0].name, catalog, user="call NoSuchNative()")
+    assert e.value.code == "probe_script_failed" and "probe_script" in e.value.hint

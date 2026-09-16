@@ -79,8 +79,9 @@ def test_add_set_move_delete_round_trip(melee, catalog):
         {"op": "add", "kind": "unit", "type": "uDNR", "x": 64, "y": 64, "owner": 24, "random": {"level": 4}}],
         verbose=True)
     assert result["changed"] and set(result["files"]) == {"war3mapUnits.doo", "war3map.doo"}
-    assert len(result["created"]) == result["created_count"] == 6 and len(result["warnings"]) == 3
-    assert "belongs to player 5, which war3map.w3i does not list" in result["warnings"][0]
+    assert len(result["created"]) == result["created_count"] == 6 and len(result["warnings"]) == 4
+    assert result["warnings"][0].startswith("doodad LRrk: scale 1/1/2 is outside its range")
+    assert "belongs to player 5, which war3map.w3i does not list" in result["warnings"][1]
     items = {x["ref"]: x for x in placed_list(melee, catalog, limit=5000)["items"]}
     hero, item, tree, rock, start, creep = (items[r] for r in result["created"])
     terrain = w3e.parse(melee.read("war3map.w3e"))
@@ -230,3 +231,14 @@ def test_moving_a_start_location_moves_the_player_start(melee, catalog):
 def test_adding_a_doodad_without_a_model_warns(melee, catalog):
     result = placed_edit(melee, catalog, [{"op": "add", "kind": "doodad", "type": "LPgp", "x": 0, "y": 0}])
     assert any("LPgp" in w and "renders nothing" in w for w in result["warnings"])
+
+
+def test_scales_outside_the_type_range_warn(melee, catalog):
+    fine = placed_edit(melee, catalog, [{"op": "add", "kind": "doodad", "type": "ZPsh", "x": 0, "y": 0, "scale": 1.1,
+                                         "variation": 1}])
+    assert not any("scale" in w or "ZPsh" in w for w in fine["warnings"])
+    big = placed_edit(melee, catalog, [{"op": "add", "kind": "doodad", "type": "ZPsh", "x": 0, "y": 0, "scale": 1.55,
+                                        "variation": 3} for _ in range(2)])
+    scale = [w for w in big["warnings"] if "scale" in w]
+    assert len(scale) == 1 and "outside its range 0.8..1.2 (dmis..dmas)" in scale[0] and "clamps" in scale[0]
+    assert any("variation 3" in w and "Ruins_Shrub3.mdl" in w for w in big["warnings"])

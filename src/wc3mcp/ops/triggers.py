@@ -118,11 +118,13 @@ ALLOWED = {
                 "conditions", "actions", "script"},
     "delete": {"what", "name"},
     "header": {"script", "comment"},
+    "script_replace": {"name", "header", "old", "new"},
 }
 SCRIPT_WARNING = "the map script is not regenerated yet: map_save (or script_build) rebuilds war3map.j or war3map.lua"
 _HINT = ('ops: {"op": "category", "name": "Spawns"}, {"op": "variable", "name": "Count", "type": "integer"}, '
          '{"op": "trigger", "name": "Spawn", "events": [...], "actions": [...]} or {..., "script": "..."}, '
-         '{"op": "delete", "what": "trigger", "name": "Spawn"}, {"op": "header", "script": "..."}')
+         '{"op": "delete", "what": "trigger", "name": "Spawn"}, {"op": "header", "script": "..."}, '
+         '{"op": "script_replace", "name": "Spawn" (or "header": true), "old": "2900.0, -500.0", "new": "2900.0, -250.0"}')
 
 
 def _all_params(ecas, enabled_only: bool = False):
@@ -460,6 +462,38 @@ class _Edit:
             self.ct.header = _editor_lines(op["script"]) if op["script"] else None
         if "comment" in op:
             self.ct.comment = op["comment"]
+
+    def op_script_replace(self, op: dict, path: str) -> None:
+        """Replace one exact, unique piece of a script trigger's text or of the map header."""
+        old, new = op.get("old"), op.get("new")
+        if not isinstance(old, str) or not old or not isinstance(new, str):
+            raise ToolError("bad_op", f"{path}: old (non-empty text) and new (text) are required", hint=_HINT)
+        t = None
+        if op.get("header"):
+            if "name" in op:
+                raise ToolError("bad_op", f"{path}: give name or header, not both", hint=_HINT)
+            where, current = "the map header", self.ct.header or ""
+        else:
+            t = self._trigger(op.get("name"))
+            if t is None:
+                raise ToolError("not_found", f"{path}: no trigger named {op.get('name')!r}",
+                                hint='triggers_tree lists triggers; "header": true edits the map header')
+            if not t.custom_text:
+                raise ToolError("bad_op", f"{path}: {t.name!r} is a GUI trigger; script_replace edits script text",
+                                hint="send its events, conditions and actions with a trigger op")
+            where, current = f"trigger {t.name!r}", self.text.get(t.id) or ""
+        current, old, new = (x.replace("\r\n", "\n") for x in (current, old, new))
+        count = current.count(old)
+        if count != 1:
+            raise ToolError("bad_value", f"{path}: old occurs {count} times in {where}; it must occur exactly once",
+                            path=f"{path}.old", hint="include more of the surrounding text (trigger_get shows the script)"
+                            if count else "trigger_get shows the script as stored")
+        text = current.replace(old, new, 1)
+        if t is None:
+            self.ct.header = _editor_lines(text) if text else None
+        else:
+            self.text[t.id] = _editor_lines(text)
+            self.scripts[t.name] = (text, 0)
 
     def finish(self) -> dict:
         self.ct.texts = [self.text.get(t.id) for t in _triggers(self.tf)]

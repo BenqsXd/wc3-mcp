@@ -198,3 +198,22 @@ def test_validate_checks_the_script_right_away(melee, catalog):
     assert not bad["validation"]["ok"]
     error = bad["validation"]["errors"][0]
     assert "NoSuchNativeHere" in error["message"] and error["trigger"] == "Broken" and error["script_line"] == 1
+
+
+def test_script_replace_edits_part_of_a_script(melee, catalog):
+    triggers_edit(melee, catalog, [
+        {"op": "trigger", "name": "Test", "script": 'call BJDebugMsg("2900.0, -500.0")\ncall BJDebugMsg("b")\n'},
+        {"op": "header", "script": "// x = 1\n"}])
+    result = triggers_edit(melee, catalog, [
+        {"op": "script_replace", "name": "Test", "old": "2900.0, -500.0", "new": "2900.0, -250.0"},
+        {"op": "script_replace", "header": True, "old": "x = 1", "new": "x = 2"}], validate=True)
+    assert result["validation"]["ok"]
+    assert 'call BJDebugMsg("2900.0, -250.0")' in trigger_get(melee, catalog, "Test")["script"]
+    assert trigger_get(melee, catalog)["script"].replace("\r\n", "\n") == "// x = 2\n"
+    for op, code in (({"name": "Test", "old": "BJDebugMsg", "new": "x"}, "bad_value"),   # twice
+                     ({"name": "Test", "old": "nowhere", "new": "x"}, "bad_value"),
+                     ({"name": "Nobody", "old": "a", "new": "b"}, "not_found"),
+                     ({"name": "Test", "old": "", "new": "b"}, "bad_op")):
+        with pytest.raises(ToolError) as e:
+            triggers_edit(melee, catalog, [{"op": "script_replace", **op}])
+        assert e.value.code == code

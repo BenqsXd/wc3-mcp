@@ -139,6 +139,7 @@ def test_setting_trigstr_backed_text_updates_the_string_table(plain_project, cat
     ({"op": "set", "id": "hfoo", "set": {"uhpm": {"1": 5}}}, "bad_value"),
     ({"op": "set", "id": "zzzz", "set": {"uhpm": 5}}, "not_found"),
     ({"op": "explode", "id": "hfoo"}, "bad_op"),
+    ({"op": "create", "base": "hfoo", "fields": {"uhpm": 5}}, "bad_op"),   # "set" misspelt
 ])
 def test_edit_errors(plain_project, catalog, op, code):
     with pytest.raises(ToolError) as e:

@@ -122,3 +122,13 @@ def test_capture_draws_a_window_behind_others():
     else:
         pytest.skip("no capturable window on this desktop")
     assert win.capture(0) is None
+
+
+def test_stock_unit_textures_are_benign_and_long_results_are_flagged():
+    lines = [r"9/16 21:00:00.000  Solid texture substituted - Units\_skeletons\Gore_Diffuse.tif",
+             "9/16 21:00:00.000  Solid texture substituted - Units/Creeps/TimberWolf/Wolf_Corpse_Diffuse.tif",
+             r"9/16 21:00:00.000  Solid texture substituted - war3mapImported\Mine.tif"]
+    keep, benign, _ = game.split_log(lines)
+    assert benign == lines[:2] and keep == lines[2:]
+    found = {"a.txt": ["short", "x" * 259], "b.txt": ["y" * 100]}
+    assert game.truncated_lines(found) == {"a.txt": [1]}
