@@ -68,6 +68,15 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 0.3
+
+- Bulk work stays out of the conversation: `ops_file` (and `script_file` for triggers), compact `columns`/`rows` adds, a `scatter` op with weights, exclusion zones and spacing, and `created` as ref ranges.
+- Missing models are caught before the editor shows them: `data_search` reports `model_ok`, `data_get` lists missing model files, `placed_edit` warns and `map_validate` flags every placed object without a model.
+- `map_save merge_external=true` (and `map_open merge_external=true`) keeps working-copy edits and takes what a World Editor save recomputed, instead of a lossy choice.
+- Moving a start location with `placed_edit` updates the player start in `war3map.w3i`; `map_validate` warns when they disagree.
+- `terrain_render` draws doodads and destructibles; `data_search tileset=` also scopes doodads and destructibles.
+- `editor_log` returns the editor's viewport messages and missing files (and says the editor writes its log only on quit); `game_test` reports `missing_files`, captures the game window behind other windows, and the probe adds hero counts and `BJDebugMsg` output.
+
 ## What's new in 0.2
 
 - Terrain brushes take a rectangle, a path stroke (roads) or no area at all (the whole map), not only circles; results report the 16-slot tile palette.
