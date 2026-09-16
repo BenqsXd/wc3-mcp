@@ -213,7 +213,9 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
     force=true. rebuild_script: auto regenerates war3map.j / war3map.lua when triggers, regions, cameras, sounds,
     placed objects or map info changed (maps with trigger data), always regenerates whenever possible, never leaves
     the script alone. The minimap war3mapMap.blp is added when missing and redrawn after terrain edits unless the map
-    imports its own. validate runs map_validate first and refuses to save on errors."""
+    imports its own. validate runs map_validate first and refuses to save on errors. The World Editor keeps the map
+    file open, so when it shows the same map the safe round trip is: edits here -> editor_map close -> map_save ->
+    editor_map open -> editor_map save (which recomputes pathing, shadows and the minimap)."""
     project = _project(path)
     catalog = _catalog("enUS", script_ops.balance(project), True)
     warnings = []

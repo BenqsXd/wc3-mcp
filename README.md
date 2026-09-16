@@ -68,6 +68,14 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 0.2
+
+- Terrain brushes take a rectangle, a path stroke (roads) or no area at all (the whole map), not only circles; results report the 16-slot tile palette.
+- `map_new` takes and reports `fill_tile`, and `data_search kind=tile` can be scoped to a tileset.
+- Script triggers get the editor's `InitTrig_` wrapper automatically, and `triggers_edit validate=true` checks the script in the same call.
+- `game_test probe=true` reports what a running map looks like without a reporting trigger of your own; screenshots capture the game window only.
+- Clearer failures: `map_save` names the World Editor when it holds the map, working copies survive a server restart, and `map_validate` warns while pathing, shadows and the minimap are older than the terrain.
+
 ## Development
 
 ```powershell
