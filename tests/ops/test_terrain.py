@@ -170,3 +170,22 @@ def test_edit_reports_the_tile_palette(tmp_path):
         assert result["palette"]["tiles"] == ["Ldrt", "Lgrs"] and result["palette"]["free"] == 14
     finally:
         project.close(discard=True)
+
+
+@needs_maps
+def test_map_validate_warns_while_the_derived_files_are_stale(tmp_path):
+    from wc3mcp.ops.script import map_validate
+
+    src = tmp_path / ladder_maps()[0].name
+    src.write_bytes(ladder_maps()[0].read_bytes())
+    project = MapProject.open(src)
+    catalog = Catalog(_storage(), balance="Custom_V1")
+    try:
+        assert not [w for w in map_validate(project, catalog)["warnings"] if w["check"] == "derived_files"]
+        terrain.terrain_edit(project, catalog, [{"op": "raise", "x": 0, "y": 0, "radius": 256, "amount": 64}])
+        stale = [w for w in map_validate(project, catalog)["warnings"] if w["check"] == "derived_files"]
+        assert len(stale) == 1 and "editor_map open" in stale[0]["message"]
+        project.note("terrain_edited", False)   # what editor_map save does
+        assert not [w for w in map_validate(project, catalog)["warnings"] if w["check"] == "derived_files"]
+    finally:
+        project.close(discard=True)

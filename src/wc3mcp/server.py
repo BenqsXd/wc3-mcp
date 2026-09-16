@@ -405,7 +405,7 @@ def trigger_get(path: str, name: str | None = None) -> dict:
 
 
 @_tool
-def triggers_edit(path: str, ops: list[dict]) -> dict:
+def triggers_edit(path: str, ops: list[dict], validate: bool = False) -> dict:
     """All-or-nothing Trigger Editor changes. ops:
     {"op": "category", "name", "parent"?, "new_name"?};
     {"op": "variable", "name", "type", "array_size"?, "initial"?, "category"?, "new_name"?};
@@ -416,8 +416,12 @@ def triggers_edit(path: str, ops: list[dict]) -> dict:
     An argument is a literal, {"preset": name}, {"var": name, "index"?} or {"call": name, "args": [...]}; block
     functions take "if"/"then"/"else" (IfThenElseMultiple), "conditions" (And/OrMultiple) or "actions" (loops).
     GUI code is checked against TriggerData; data_search kind=trigger_function finds functions. run_on_init is for
-    script triggers; a GUI trigger runs at map start through the event {"fn": "MapInitializationEvent"}."""
-    return triggers_ops.triggers_edit(_project(path), _catalog("enUS", "Custom_V1", True), ops)
+    script triggers; a GUI trigger runs at map start through the event {"fn": "MapInitializationEvent"}.
+    A "script" trigger gets the editor's InitTrig_<script name> wrapper added when it does not define one, so the
+    actions alone are enough (the result says what was added). validate=true regenerates the map script and checks it
+    right away (pjass, or the Lua syntax check) instead of waiting for map_save; each error also carries script_line,
+    its line inside the script that was sent."""
+    return triggers_ops.triggers_edit(_project(path), _catalog("enUS", "Custom_V1", True), ops, validate)
 
 
 @_tool
@@ -520,7 +524,8 @@ def script_validate(path: str) -> dict:
 def map_validate(path: str) -> dict:
     """Cross-file checks of an open map: script language vs script files, GUI trigger code against TriggerData and
     variables, trigger names, references to generated objects, TRIGSTR strings, object data base ids and fields,
-    imports. Errors break the map; warnings are defects that shipped maps also carry."""
+    imports. Errors break the map; warnings are defects that shipped maps also carry, plus a reminder while terrain
+    edits are newer than the pathing, shadow and minimap files only the World Editor recomputes."""
     return script_ops.map_validate(_project(path), _catalog("enUS", "Custom_V1", True))
 
 
@@ -643,7 +648,11 @@ def editor_map(action: Literal["open", "save", "close", "reload", "compile", "qu
             raise ToolError("bad_value", "open needs map_path")
         return editor.open(map_path, discard=discard)
     if action in ("save", "compile"):
-        return editor.save()
+        saved = editor.save()
+        shown = _projects.get(_key(saved.get("map") or ""))
+        if saved.get("saved") and shown is not None:   # the editor recomputed pathing, shadows and the minimap
+            shown.note("terrain_edited", False)
+        return saved
     if action == "save_campaign":
         return editor.save_campaign()
     if action == "close":

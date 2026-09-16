@@ -328,6 +328,7 @@ def terrain_edit(project, catalog, ops: list) -> dict:
     changed = data != before
     if changed:
         project.write("war3map.w3e", data)
+        project.note("terrain_edited")   # map_validate warns until the World Editor recomputes the derived files
     return {"changed": changed, "palette": _palette(t), "palette_added": brush.added,
             "warnings": [DERIVED_WARNING] if changed else []}
 

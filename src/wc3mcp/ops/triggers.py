@@ -139,6 +139,39 @@ def _all_params(ecas, enabled_only: bool = False):
         yield from _all_params(e.children, enabled_only)
 
 
+def _is_lua(project) -> bool:
+    from .script import language   # ops.script imports this module, so keep the import local
+
+    try:
+        return language(project) == "lua"
+    except ToolError:
+        return False
+
+
+def wrap_script(name: str, text: str, lua: bool) -> tuple[str, str | None, int]:
+    """A custom text trigger runs only through the editor's InitTrig_<script name> function. Add it when the script
+    does not define it, so a caller can supply the actions alone. Returns (script, what was added, how many lines it
+    gained above the script that was sent)."""
+    ident = script_name(name)
+    if re.search(rf"^\s*function\s+InitTrig_{re.escape(ident)}\b", text, re.M):
+        return text, None, 0
+    functions = re.findall(r"^\s*function\s+([A-Za-z_]\w*)", text, re.M)
+    actions, above = f"Trig_{ident}_Actions", 0
+    if not functions:
+        body = "".join(f"    {line}\n" if line.strip() else "\n" for line in text.splitlines())
+        text = (f"function {actions}()\n{body}end\n" if lua else
+                f"function {actions} takes nothing returns nothing\n{body}endfunction\n")
+        note, above = f"wrapped the script in {actions} and added InitTrig_{ident}", 1
+    else:
+        actions = actions if actions in functions else functions[0]
+        note = f"added InitTrig_{ident}, which registers {actions}"
+    init = (f"\nfunction InitTrig_{ident}()\n    gg_trg_{ident} = CreateTrigger()\n"
+            f"    TriggerAddAction(gg_trg_{ident}, {actions})\nend\n") if lua else (
+        f"\nfunction InitTrig_{ident} takes nothing returns nothing\n    set gg_trg_{ident} = CreateTrigger(  )\n"
+        f"    call TriggerAddAction( gg_trg_{ident}, function {actions} )\nendfunction\n")
+    return text.rstrip("\n") + "\n" + init, note, above
+
+
 def _editor_lines(text) -> str:
     """Custom script text with the Trigger Editor's CRLF line ends (the editor copies it into war3map.j verbatim)."""
     if not isinstance(text, str):
@@ -162,6 +195,8 @@ class _Edit:
         self.text = {t.id: s for t, s in zip(_triggers(self.tf), self.ct.texts)}
         self.created: list[str] = []
         self.warnings: list[str] = []
+        self.scripts: dict[str, str] = {}   # scripts submitted in this batch, for validate=true
+        self.lua = _is_lua(project)
 
     # lookups
     def _category(self, name, path: str) -> Category:
@@ -349,7 +384,15 @@ class _Edit:
         if "script" in op:
             if not isinstance(op["script"], str):
                 raise ToolError("bad_value", f"{path}: script must be text", path=f"{path}.script")
-            t.custom_text, t.ecas, self.text[t.id] = 1, [], _editor_lines(op["script"])
+            text, added, above = wrap_script(name, op["script"], self.lua)
+            if added:
+                self.warnings.append(f"{name}: {added}")
+            other = [m for m in re.findall(r"^\s*function\s+InitTrig_(\w+)", text, re.M) if m != script_name(name)]
+            if other:
+                self.warnings.append(f"{name}: the script also defines InitTrig_{other[0]}, which the editor never "
+                                     f"calls (it calls InitTrig_{script_name(name)})")
+            t.custom_text, t.ecas, self.text[t.id] = 1, [], _editor_lines(text)
+            self.scripts[name] = (text, above)
         elif sections:
             variables = {v.name: v for v in self.tf.variables}
             current = {key: ([] if t.custom_text else [e for e in t.ecas if e.kind == kind]) for key, kind in SECTIONS}
@@ -430,7 +473,26 @@ class _Edit:
         return {"changed": changed, "created": self.created, "warnings": self.warnings}
 
 
-def triggers_edit(project, catalog, ops: list) -> dict:
+def _validate(project, catalog, scripts: dict) -> dict:
+    """Build the map script and check it; each error also carries its line inside the script the caller sent
+    (scripts: trigger name -> (stored script, lines the InitTrig wrapper added above it))."""
+    from . import script as script_ops   # ops.script imports this module
+
+    script_ops.script_build(project, catalog)
+    checked = script_ops.script_validate(project, catalog)
+    built = project.read(checked["file"]).decode("utf-8", "surrogateescape").replace("\r\n", "\n")
+    for error in checked["errors"]:
+        text, above = scripts.get(error.get("trigger") or "", (None, 0))
+        if error.get("line") and text:
+            at = built.find(text.replace("\r\n", "\n"))
+            if at >= 0:
+                line = error["line"] - built[:at].count("\n") - above   # 1 = the first line the caller sent
+                if 0 < line <= text.count("\n") + 1 - above:
+                    error["script_line"] = line
+    return checked
+
+
+def triggers_edit(project, catalog, ops: list, validate: bool = False) -> dict:
     edit = _Edit(project, catalog)
     for i, op in enumerate(ops):
         path = f"ops[{i}]"
@@ -445,4 +507,8 @@ def triggers_edit(project, catalog, ops: list) -> dict:
         except ToolError as e:
             e.details.setdefault("op_index", i)
             raise
-    return edit.finish()
+    result = edit.finish()
+    if validate:
+        result["validation"] = _validate(project, catalog, edit.scripts)
+        result["warnings"] = [w for w in result["warnings"] if w != SCRIPT_WARNING]   # it was just regenerated
+    return result

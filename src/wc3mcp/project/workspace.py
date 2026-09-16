@@ -155,6 +155,14 @@ class MapProject:
     def _flush(self) -> None:
         (self.work / "manifest.json").write_text(json.dumps(self.m, indent=1), "utf-8")
 
+    def note(self, key: str, value=True) -> None:
+        """Remember something about this working copy (kept across saves, gone when the map is extracted again)."""
+        self.m.setdefault("notes", {})[key] = value
+        self._flush()
+
+    def notes(self) -> dict:
+        return self.m.get("notes", {})
+
     def source_changed(self) -> bool:
         return fingerprint(self.source).get("sha256") != self.m["fingerprint"].get("sha256")
 

@@ -237,4 +237,10 @@ def map_validate(project, catalog) -> dict:
     names = _names(project)
     files = {real: project.read(real) for low, real in names.items()
              if ("\\" not in low and low.startswith("war3map")) or low.startswith("scripts\\")}
-    return checks.validate(files, catalog, has_file=lambda n: n.replace("/", "\\").lower() in names)
+    result = checks.validate(files, catalog, has_file=lambda n: n.replace("/", "\\").lower() in names)
+    if project.notes().get("terrain_edited"):   # only the World Editor recomputes these from the terrain
+        result["warnings"].append({"check": "derived_files", "file": "war3map.wpm",
+                                   "message": "the terrain changed since the last World Editor save, so pathing "
+                                              "(war3map.wpm), shadows (war3map.shd) and the minimap icons "
+                                              "(war3map.mmp) no longer match it: editor_map open, then save"})
+    return result

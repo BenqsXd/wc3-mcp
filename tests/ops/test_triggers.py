@@ -162,3 +162,39 @@ def test_edit_errors_are_atomic(melee, catalog, op, code):
         triggers_edit(melee, catalog, [{"op": "category", "name": "First"}, op])
     assert e.value.code == code and e.value.details["op_index"] == 1
     assert melee.status()["dirty"] == []
+
+
+def test_script_triggers_get_the_editors_wrapper(melee, catalog):
+    result = triggers_edit(melee, catalog, [
+        {"op": "trigger", "name": "Bare Actions", "script": 'call BJDebugMsg("hello")\n'}])
+    assert any("wrapped the script in Trig_Bare_Actions_Actions" in w for w in result["warnings"])
+    script = trigger_get(melee, catalog, "Bare Actions")["script"]
+    assert "function Trig_Bare_Actions_Actions takes nothing returns nothing" in script
+    assert 'call BJDebugMsg("hello")' in script and "set gg_trg_Bare_Actions = CreateTrigger(  )" in script
+    assert "call TriggerAddAction( gg_trg_Bare_Actions, function Trig_Bare_Actions_Actions )" in script
+
+    # a script that brings its own functions only needs the wrapper
+    triggers_edit(melee, catalog, [{"op": "trigger", "name": "Own Function", "script": (
+        "function Report takes nothing returns nothing\n    call BJDebugMsg(\"x\")\nendfunction\n")}])
+    own = trigger_get(melee, catalog, "Own Function")["script"]
+    assert "function InitTrig_Own_Function takes nothing returns nothing" in own
+    assert "call TriggerAddAction( gg_trg_Own_Function, function Report )" in own
+
+    # a complete script is kept as it is
+    full = ("function InitTrig_Complete takes nothing returns nothing\n    set gg_trg_Complete = CreateTrigger(  )\n"
+            "endfunction\n")
+    assert triggers_edit(melee, catalog, [{"op": "trigger", "name": "Complete", "script": full}])["warnings"] == [
+        SCRIPT_WARNING]
+    assert trigger_get(melee, catalog, "Complete")["script"].replace("\r\n", "\n") == full
+
+
+def test_validate_checks_the_script_right_away(melee, catalog):
+    good = triggers_edit(melee, catalog, [
+        {"op": "trigger", "name": "Fine", "script": 'call BJDebugMsg("ok")\n'}], validate=True)
+    assert good["validation"]["ok"] and SCRIPT_WARNING not in good["warnings"]
+    bad = triggers_edit(melee, catalog, [
+        {"op": "trigger", "name": "Broken", "script": "call NoSuchNativeHere()\ncall BJDebugMsg(\"x\")\n"}],
+        validate=True)
+    assert not bad["validation"]["ok"]
+    error = bad["validation"]["errors"][0]
+    assert "NoSuchNativeHere" in error["message"] and error["trigger"] == "Broken" and error["script_line"] == 1
