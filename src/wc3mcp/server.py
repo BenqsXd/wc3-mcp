@@ -247,7 +247,8 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
         result = project.save(dest=dest, format=format, force=force)
     except ToolError as e:
         seen = desktop_editor.EDITOR.status()
-        if e.code == "file_in_use" and seen["running"] and seen["map"] and _key(seen["map"]) == _key(str(project.source)):
+        if (e.code == "file_in_use" and dest is None and seen["running"] and seen["map"]
+                and _key(seen["map"]) == _key(str(project.source))):
             raise ToolError("editor_holds_map", f"the World Editor has {project.source.name} open and holds the file",
                             hint="editor_map action=close (the edits stay in the working copy), then map_save again",
                             path=str(project.source)) from e
