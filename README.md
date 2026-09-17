@@ -68,6 +68,14 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 0.6
+
+- `game_test` after `login_required`: once the user has logged in, the same call continues in the game left open instead of launching again. Each probe run gets its own copy, so an open game never blocks the next run.
+- Terrain buildability: `data_search kind=tile` gives `buildable`, `walkable` and `flyable`; `terrain_edit` warns when it paints an unbuildable or unwalkable tile over an area; `terrain_get` pathing and `terrain_render pathing=true` show pathing derived from the current terrain before an editor save.
+- `objdata_edit create` copies a custom object when `base` is one of the map's custom ids.
+- `objdata_get` checks the model the map sets (`umdl`, `dfil`, `bfil`) instead of the base model.
+- `data_get kind=tile` honours `fields`; file globs match without the storage layer prefix (`PathTextures/8x8*`).
+
 ## What's new in 0.5
 
 - `game_test probe_script` can call the map's own trigger functions: the probe trigger now comes after all map triggers.
