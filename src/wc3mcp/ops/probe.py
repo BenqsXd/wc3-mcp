@@ -173,7 +173,10 @@ def build(source, dest, catalog, project=None, seconds: float = 10.0, user: str 
     copy = MapProject.open(dest)
     try:
         language = script_ops.language(copy)
-        triggers_edit(copy, catalog, [{"op": "trigger", "name": NAME, "script": script(language, seconds, user)}])
+        # in its own last category: trigger code is emitted in tree order, so probe_script can call any map function
+        triggers_edit(copy, catalog, [{"op": "category", "name": NAME},
+                                      {"op": "trigger", "name": NAME, "category": NAME,
+                                       "script": script(language, seconds, user)}])
         script_ops.script_build(copy, catalog)
         if language != "lua":
             name = next(n for n in ("war3map.j", "scripts\\war3map.j")

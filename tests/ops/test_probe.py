@@ -87,3 +87,30 @@ def test_probe_script_compiles_into_the_copy(tmp_path):
     with pytest.raises(ToolError) as e:
         probe.build(source, tmp_path / "probe2" / maps[0].name, catalog, user="call NoSuchNative()")
     assert e.value.code == "probe_script_failed" and "probe_script" in e.value.hint
+
+
+def test_probe_script_can_call_the_maps_own_functions(tmp_path):
+    from wc3mcp.gamedata.catalog import Catalog
+    from wc3mcp.ops.triggers import triggers_edit
+
+    maps = [p for p in ladder_maps() if open_sample("ladder:" + p.name).read("war3map.j") is not None]
+    if not maps:
+        pytest.skip("no JASS ladder map")
+    source = tmp_path / maps[0].name
+    shutil.copyfile(maps[0], source)
+    catalog = Catalog(_storage(), balance="Custom_V1")
+    project = MapProject.open(source)
+    try:   # a helper in a category after the map's first one: the probe must come after it
+        triggers_edit(project, catalog, [{"op": "category", "name": "Systems"}, {
+            "op": "trigger", "name": "Helpers", "category": "Systems",
+            "script": "function MapHelper takes nothing returns integer\n    return 7\nendfunction\n"}])
+        copy = probe.build(source, tmp_path / "probe" / maps[0].name, catalog, project=project,
+                           user='call ProbeReport(I2S(MapHelper()))')
+    finally:
+        project.close(discard=True)
+    text = MapProject.open(copy)
+    try:
+        script = text.read("war3map.j").decode("utf-8", "replace")
+        assert script.index("function MapHelper") < script.index("function Trig_wc3mcpProbe_User")
+    finally:
+        text.close(discard=True)

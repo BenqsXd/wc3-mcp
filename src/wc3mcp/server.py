@@ -348,8 +348,10 @@ def map_snapshot(path: str, action: Literal["create", "restore", "list", "diff"]
 def data_search(kind: Kind, query: str = "", limit: int = 50, offset: int = 0, locale: str = "enUS",
                 balance: str | None = "Custom_V1", hd: bool = True, tileset: str | None = None) -> dict:
     """Search base game data by id, name or editor suffix (object, terrain and sound kinds) or by path substring or
-    glob (model, icon, file); trigger_function / trigger_type / trigger_preset search GUI trigger functions, variable
-    types and preset values. tileset (a letter, e.g. "L", or a name, e.g. "Lordaeron Summer") lists only what that
+    glob (model, icon, file). model, icon and file results give one entry per file: ref is the path as object data
+    and scripts write it (backslashes, icons as .blp, models as .mdl), layers the storage layers holding it (base,
+    _HD, _DE, ...) and id a storage path for data_file and the asset tools. trigger_function / trigger_type /
+    trigger_preset search GUI trigger functions, variable types and preset values. tileset (a letter, e.g. "L", or a name, e.g. "Lordaeron Summer") lists only what that
     tileset offers for kind=tile, cliff, doodad and destructible; tile and cliff results name their tileset. Doodad
     and destructible results carry model_ok: false when the installed game cannot load the id's model in HD or in
     classic graphics, which the World Editor uses (it would place but render nothing, or show a checkerboard cube in
@@ -420,8 +422,9 @@ def objdata_list(path: str, kind: ObjectKind, custom_only: bool = False, balance
 def objdata_get(path: str, kind: ObjectKind, id: str, fields: list[str] | None = None,
                 balance: str | None = "Custom_V1") -> dict:
     """One object as the Object Editor shows it: base game values merged with this map's modifications. Each field
-    has raw code, name, type, value (or per-level values) and whether the map modifies it. fields filters by raw code,
-    field name or display-name substring."""
+    has raw code, name, type, value (or per-level values) and whether the map modifies it. levels and the per-level
+    lists follow the map's own level count (alev, glvl); values the map stores for levels beyond it are listed under
+    unused_levels. fields filters by raw code, field name or display-name substring."""
     return objdata_ops.objdata_get(_project(path), _catalog("enUS", balance, True), kind, id, fields)
 
 
@@ -776,16 +779,25 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
               probe_script: str | None = None, probe_script_file: str | None = None) -> dict:
     """Run a map in Warcraft III (windowed; the window needs to be in front while loading). The map script reports
     results with PreloadGenClear/PreloadGenStart/Preload("text")/PreloadGenEnd("folder\\\\file.txt"); list those
-    files in results (relative to Documents\\Warcraft III\\CustomMapData) and the run ends as soon as all exist. The
-    game keeps about 259 characters of one Preload string: longer lines come back cut off and are listed in truncated.
+    files in results (relative to Documents\\Warcraft III\\CustomMapData) and the run ends as soon as all exist.
+    Strings come back unescaped (single backslashes). The game keeps about 259 characters of one Preload string:
+    longer lines come back cut off and are listed in truncated. A loading screen that waits for a key (maps with
+    loading_screen title, subtitle or text) gets a space key press (loading_screen_keys). A Battle.net login screen
+    ends the run after about 30 s with login_required: the game stays open for the user to log in (game_close it
+    before running again). An open dialog
+    (DialogDisplay) pauses a single-player game until someone clicks it, so timers and probe_seconds wait for it:
+    report before the dialog opens (e.g. probe_seconds 0.3). To capture the hero learn menu, the map's test
+    code runs SelectUnit(h, true), waits 0.5 s (TriggerSleepAction), calls ForceUIKey("O") and reports afterwards;
+    a user click in the game window changes what screenshot=true captures.
     probe=true instead runs a throwaway copy of the map (the open working copy when the map is open) with one added
     trigger that reports, probe_seconds into the game, the units, heroes, gold and lumber of every playing slot and the
     BJDebugMsg text: use it to check that a map loads and runs without touching its own triggers. probe_script (or
     probe_script_file, a local file; either implies probe=true) adds test code in the map's language (JASS or Lua
-    statements, JASS locals first) that runs at that moment; ProbeReport(text) writes any length of text, returned
-    in probe.reports. screenshot=true saves a PNG of the game window (screenshot_of says what was captured, or why
-    nothing was). Returns the Preload strings per file, the useful War3Log.txt lines (known-benign shipped-data lines
-    are counted separately in benign_log) and any new crash."""
+    statements, JASS locals first) that runs at that moment and may call the map's own functions and read its udg_
+    globals; ProbeReport(text) writes any length of text, returned in probe.reports. screenshot=true saves a PNG of
+    the game window (screenshot_of says what was captured, or why nothing was). Returns the Preload strings per file,
+    the useful War3Log.txt lines (known-benign shipped-data lines are counted separately in benign_log) and any new
+    crash."""
     target, extra = path, {}
     if probe_script is not None and probe_script_file is not None:
         raise ToolError("bad_value", "give probe_script or probe_script_file, not both")
@@ -811,9 +823,9 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
     if probe:
         lines = result["results"].pop(probe_ops.REPORT, None)
         result["probe"] = probe_ops.parse(lines) if lines is not None else None
-        if lines is None:
-            result["hint"] = ("the probed copy never reported: the game did not reach the map (login screen or a "
-                              "dialog), or it ended before probe_seconds")
+        if lines is None and not result.get("login_required"):
+            result["hint"] = ("the probed copy never reported: the game did not reach the map, it ended before "
+                              f"probe_seconds, or {desktop_game.PAUSE_NOTE}")
     return {**result, **extra}
 
 

@@ -132,3 +132,80 @@ def test_stock_unit_textures_are_benign_and_long_results_are_flagged():
     assert benign == lines[:2] and keep == lines[2:]
     found = {"a.txt": ["short", "x" * 259], "b.txt": ["y" * 100]}
     assert game.truncated_lines(found) == {"a.txt": [1]}
+
+
+def test_preload_strings_lose_the_games_escaping():
+    text = r'call Preload( "icon=ReplaceableTextures\\CommandButtons\\BTNX.blp say \"hi\"" )'
+    assert game.parse_preload(text) == [r'icon=ReplaceableTextures\CommandButtons\BTNX.blp say "hi"']
+
+
+def _screen(kind, size=(1440, 774)):
+    from PIL import Image, ImageDraw
+    w, h = size
+    image = Image.new("RGB", size, (60, 40, 25) if kind == "login" else (200, 170, 120))
+    draw = ImageDraw.Draw(image)
+    left, wide = w / 2 - h * 2 / 3, h * 4 / 3
+    if kind == "login":
+        draw.rectangle((left + 0.1 * wide, 0.12 * h, left + 0.9 * wide, 0.85 * h), fill=(0, 45, 110))
+    elif kind in ("press_key", "loading"):
+        end = 0.86 if kind == "press_key" else 0.5
+        draw.rectangle((left + 0.14 * wide, 0.80 * h, left + end * wide, 0.86 * h), fill=(30, 120, 230))
+        for x in range(10):   # the prompt's letters over the bar
+            draw.rectangle((left + (0.3 + x * 0.04) * wide, 0.82 * h, left + (0.31 + x * 0.04) * wide, 0.84 * h),
+                           fill=(250, 210, 40))
+    return image
+
+
+def test_screen_state_reads_login_and_waiting_loading_screens():
+    assert game.screen_state(_screen("login")) == "login"
+    assert game.screen_state(_screen("press_key")) == "press_key"
+    assert game.screen_state(_screen("press_key", (1920, 1080))) == "press_key"
+    assert game.screen_state(_screen("loading")) is None
+    assert game.screen_state(_screen("game")) is None
+
+
+def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False):
+    clock = {"now": 1000.0}
+    fake_time = type("T", (), {"time": staticmethod(lambda: clock["now"]),
+                               "sleep": staticmethod(lambda s: clock.__setitem__("now", clock["now"] + s))})
+    process = type("P", (), {"pid": 42, "poll": lambda self: None})()
+    exe = tmp_path / "Warcraft III.exe"
+    exe.write_bytes(b"")
+    (tmp_path / "map.w3x").write_bytes(b"")
+    monkeypatch.setenv("WC3MCP_DOCUMENTS", str(tmp_path / "docs"))
+    monkeypatch.setattr(game, "time", fake_time)
+    monkeypatch.setattr(game.subprocess, "Popen", lambda *a, **k: process)
+    monkeypatch.setattr(game.Game, "exe", staticmethod(lambda: exe))
+    monkeypatch.setattr(game.Game, "window", lambda self, pid: 7)
+    monkeypatch.setattr(game.win32gui, "GetForegroundWindow", lambda: 7)
+    monkeypatch.setattr(game.win32gui, "IsWindow", lambda h: True)
+    monkeypatch.setattr(game.win, "activate", lambda h: None)
+    monkeypatch.setattr(game.win, "client_image", lambda h: None)
+    closed, keys, shown = [], [], iter(states)
+    monkeypatch.setattr(game.Game, "_close", lambda self, p: closed.append(p) or True)
+    monkeypatch.setattr(game, "screen_state", lambda image: next(shown, None))
+
+    def press(h, actions):
+        keys.append(actions)
+        if write_result_after_key:
+            out = tmp_path / "docs" / "CustomMapData" / "t" / "r.txt"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text('function PreloadFiles takes nothing returns nothing\n\tcall Preload( "ok" )\nendfunction\n')
+
+    monkeypatch.setattr(game.win, "send_input", press)
+    result = game.Game().test(tmp_path / "map.w3x", timeout=300, results=[r"t\r.txt"])
+    return result, keys, closed
+
+
+def test_a_waiting_loading_screen_gets_a_key(monkeypatch, tmp_path):
+    result, keys, closed = _fake_run(monkeypatch, tmp_path, [None, "press_key"], write_result_after_key=True)
+    assert keys == [[{"keys": "space"}]] and result["loading_screen_keys"] == 1
+    assert result["results"] == {r"t\r.txt": ["ok"]} and closed and "login_required" not in result
+
+
+def test_a_login_screen_ends_the_run_early_and_leaves_the_game_open(monkeypatch, tmp_path):
+    result, keys, closed = _fake_run(monkeypatch, tmp_path, ["login"] * 100)
+    assert result["login_required"] is True and "log in" in result["hint"]
+    assert result["seconds"] < 60 and not closed and not keys
+    result, _, _ = _fake_run(monkeypatch, tmp_path, ["login", "login", None] + [None] * 100)   # a remembered login
+    assert "login_required" not in result

@@ -154,3 +154,15 @@ def test_ambiguous_field_and_atomic_batch(plain_project, catalog):
             {"op": "set", "id": "AHbz", "set": {"Data": {"1": 1}}}])
     assert e.value.code == "ambiguous_field" and e.value.details["op_index"] == 1
     assert plain_project.status()["dirty"] == []
+
+
+def test_levels_follow_the_maps_level_count(plain_project, catalog):
+    objdata_edit(plain_project, catalog, "ability", [
+        {"op": "create", "base": "Aamk", "id": "A013", "set": {"alev": 1, "Ihid": {"1": 1, "3": 1}}}])
+    doc = objdata_get(plain_project, catalog, "ability", "A013", fields=["Ihid"])
+    assert doc["levels"] == 1 and doc["fields"]["Ihid"]["values"] == [1]
+    assert doc["fields"]["Ihid"]["modified"] == [1] and doc["fields"]["Ihid"]["unused_levels"] == {"3": 1}
+    assert objdata_get(plain_project, catalog, "ability", "AHbz", fields=["Hbz1"])["levels"] == 3
+    objdata_edit(plain_project, catalog, "ability", [{"op": "set", "id": "A013", "set": {"alev": 5}}])
+    assert len(objdata_get(plain_project, catalog, "ability", "A013", fields=["Ihid"])["fields"]["Ihid"]["values"]) == 5
+    assert objdata_get(plain_project, catalog, "ability", "A013")["unknown_modifications"] == []

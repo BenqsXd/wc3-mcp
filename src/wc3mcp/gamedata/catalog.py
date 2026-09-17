@@ -15,6 +15,27 @@ TILESET_FIELDS = {"doodad": "dtil", "destructible": "btil"}
 KINDS = tuple(OBJECT_KINDS) + tuple(ROW_KINDS) + tuple(PATH_KINDS) + TRIGGER_KINDS
 
 
+# the extension object data and scripts name a file by: the game finds the .dds or .mdx next to it
+REF_EXTENSION = {"icon": ".blp", "model": ".mdl"}
+
+
+def _group_layers(paths: list[str], kind: str) -> list[dict]:
+    """One result per file as object data references it (ref: backslashes, .blp icons, .mdl models), with the
+    storage layers that hold it; id stays a storage path (the base layer's when it has one)."""
+    groups: dict[str, dict] = {}
+    for path in paths:
+        *mods, rel = path.split(".w3mod:")
+        layer = ":".join(mods[1:]) or "base"
+        ref = rel.replace("/", "\\")
+        if kind in REF_EXTENSION:
+            ref = ref.rsplit(".", 1)[0] + REF_EXTENSION[kind]
+        group = groups.setdefault(ref.lower(), {"id": path, "ref": ref, "layers": []})
+        group["layers"].append(layer)
+        if layer == "base":
+            group["id"] = path
+    return list(groups.values())
+
+
 def _int(value, default: int) -> int:
     try:
         return int(value)
@@ -319,7 +340,7 @@ class Catalog:
             exts, needle = PATH_KINDS[kind]
             hits = [p for p in self.storage.list(query)
                     if (not exts or p.lower().endswith(exts)) and needle in p.lower()]
-            return [{"id": p} for p in hits[offset:offset + limit]]
+            return _group_layers(hits, kind)[offset:offset + limit]
         wanted = self._tileset_letter(tileset) if tileset else None
         q, out = query.casefold(), []
         for obj_id in self.ids(kind):

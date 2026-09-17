@@ -51,6 +51,15 @@ def test_search(cat):
     assert models and all(m["id"].lower().endswith((".mdx", ".mdl")) for m in models)
 
 
+def test_icon_and_model_results_carry_their_object_data_reference(cat):
+    icons = {r["ref"]: r for r in cat.search("icon", "*BTNSkillz*")}
+    btn = icons[r"ReplaceableTextures\CommandButtons\BTNSkillz.blp"]
+    assert btn["id"] == "War3.w3mod:ReplaceableTextures/CommandButtons/BTNSkillz.dds"
+    assert sorted(btn["layers"]) == ["_DE", "_HD", "base"] and len(icons) == 2
+    footman = {r["ref"]: r for r in cat.search("model", "*Footman*")}[r"Units\Human\Footman\Footman.mdl"]
+    assert "base" in footman["layers"] and "_HD:_Teen" in footman["layers"]
+
+
 def test_unknown_kind_and_id(cat):
     with pytest.raises(ToolError) as e:
         cat.get("spaceship", "x")
