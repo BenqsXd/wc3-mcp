@@ -132,6 +132,9 @@ def objdata_list(project, catalog, kind: str, custom_only: bool = False) -> dict
     return {"kind": kind, "count": len(objects), "objects": objects}
 
 
+LEVEL_FIELDS = {"ability": "alev", "upgrade": "glvl"}
+
+
 def objdata_get(project, catalog, kind: str, obj_id: str, fields: list[str] | None = None) -> dict:
     main, skin, _ = _load(project, kind)
     strings = load_strings(project)
@@ -140,13 +143,19 @@ def objdata_get(project, catalog, kind: str, obj_id: str, fields: list[str] | No
     base = entries[0][2].base_id.decode("latin-1") if entries else obj_id
     doc = catalog.get(kind, base, fields)
     mods = _merged(entries)
-    top = max([doc["levels"]] + [level for _, level in mods])
+    # the map's own level count (alev, glvl) decides how many levels exist in the game
+    count = mods.get((LEVEL_FIELDS.get(kind), 0))
+    top = max(1, int(count.value)) if count is not None else max([doc["levels"]] + [level for _, level in mods])
     used = set()
     for rawcode, entry in doc["fields"].items():
         if "values" in entry:
             values = [_typed(entry["type"], v) for v in entry["values"]]
             values += [None] * (top - len(values))
             modified = []
+            values = values[:top]
+            for level in sorted({level for rid, level in mods if rid == rawcode and level > top}):
+                entry.setdefault("unused_levels", {})[str(level)] = _mod_out(mods[(rawcode, level)], strings)[0]
+                used.add((rawcode, level))
             for level in range(1, top + 1):
                 mod = mods.get((rawcode, level)) or (mods.get((rawcode, 0)) if level == 1 else None)
                 if mod is None:

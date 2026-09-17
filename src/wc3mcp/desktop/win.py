@@ -300,6 +300,13 @@ def screenshot(hwnd: int | None = None, region: list[int] | None = None) -> byte
     return out.getvalue()
 
 
+def client_image(hwnd: int):
+    """PIL image of a window's client area as shown on screen (only meaningful while the window is in front)."""
+    left, top = win32gui.ClientToScreen(hwnd, (0, 0))
+    _, _, width, height = win32gui.GetClientRect(hwnd)
+    return ImageGrab.grab(bbox=(left, top, left + width, top + height), all_screens=True)
+
+
 def capture(hwnd: int) -> bytes | None:
     """PNG of a window drawn by the window itself (PrintWindow), so it works behind other windows; None when it
     cannot be captured (minimized, or the result is blank)."""

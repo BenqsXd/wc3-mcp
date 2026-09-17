@@ -22,10 +22,50 @@ BENIGN_NOTE = "these come from the shipped game data and appear on any map"
 MISSING = re.compile(r"Could not load file: (.+)$")
 # the game keeps about 259 characters of one Preload string and silently drops the rest
 PRELOAD_LIMIT = 255
+# the login panel shows while a remembered login signs in (and an authenticator request waits); longer means the
+# user has to log in
+LOGIN_WAIT = 30
+PAUSE_NOTE = ("an open dialog (DialogDisplay) pauses a single-player game until it is clicked, so timers and "
+              "probe_seconds wait for it (screenshot=true shows it)")
 
 
 def parse_preload(text: str) -> list[str]:
-    return PRELOAD.findall(text)
+    """The Preload strings, without the escaping the game adds when it writes them (\\\\ and \\")."""
+    return [re.sub(r'\\([\\"])', r"\1", s) for s in PRELOAD.findall(text)]
+
+
+def _share(image, u0: float, v0: float, u1: float, v1: float, test) -> float:
+    """Share of the pixels in a box passing `test`. v runs over the height; u over the centred 4:3 area the game lays
+    out its menus and loading screen in."""
+    w, h = image.size
+    wide, x0 = h * 4 / 3, w / 2 - h * 2 / 3
+    box = (max(0, int(x0 + u0 * wide)), int(v0 * h), min(w, int(x0 + u1 * wide)), int(v1 * h))
+    if box[2] - box[0] < 2 or box[3] - box[1] < 2:
+        return 0.0
+    data = image.crop(box).convert("RGB").resize((48, 16)).tobytes()
+    pixels = [data[i:i + 3] for i in range(0, len(data), 3)]
+    return sum(map(test, pixels)) / len(pixels)
+
+
+def _blue(p) -> bool:
+    return p[2] > 60 and p[2] > p[0] + 40 and p[2] > p[1] + 15
+
+
+def _bright_blue(p) -> bool:
+    return p[2] > 150 and p[2] > p[0] + 60
+
+
+def screen_state(image) -> str | None:
+    """"login" when the game window shows the Battle.net login panel, "press_key" when a loading screen has finished
+    and waits for a key (its bar is full and says PRESS ANY KEY TO CONTINUE), else None."""
+    # ponytail: fixed boxes measured on a 1440x774 window; retune if other window sizes misread
+    if _share(image, 0.15, 0.15, 0.85, 0.80, _blue) > 0.7 and _share(image, -0.05, 0.2, 0.05, 0.8, _blue) < 0.2:
+        return "login"
+    ends = (_share(image, 0.17, 0.815, 0.23, 0.84, _bright_blue), _share(image, 0.78, 0.815, 0.84, 0.84, _bright_blue))
+    if min(ends) > 0.8 and _share(image, 0.45, 0.815, 0.55, 0.84, _bright_blue) > 0.25 \
+            and _share(image, 0.15, 0.70, 0.85, 0.75, _bright_blue) < 0.1:
+        return "press_key"
+    return None
 
 
 def truncated_lines(found: dict[str, list[str]]) -> dict[str, list[int]]:
@@ -117,6 +157,7 @@ class Game:
         self.launched[process.pid] = process
         found: dict[str, list[str]] = {}
         focused_at, running, raised = 0.0, False, 0
+        checked_at, login_since, keys = 0.0, None, 0
         while time.time() - started < timeout and process.poll() is None:
             # the game only loads the map while its window is in front: keep it there until the map runs
             running = running or any("Activating WebUI" in line for line in self._log_lines(started - 5))
@@ -125,6 +166,20 @@ class Game:
                 if window:
                     win.activate(window)
                     focused_at, raised = time.time(), raised + 1
+            # what the window shows: a login panel ends the run early, a finished loading screen gets its key
+            window = self.window(process.pid) if time.time() - checked_at > 5 else None
+            if window and win32gui.GetForegroundWindow() == window:
+                checked_at = time.time()
+                try:
+                    state = screen_state(win.client_image(window))
+                except (win32gui.error, OSError):
+                    state = None
+                if state == "press_key":
+                    win.send_input(window, [{"keys": "space"}])
+                    keys += 1
+                login_since = (login_since or checked_at) if state == "login" else None
+                if login_since and checked_at - login_since >= LOGIN_WAIT:
+                    break
             for name, path in wanted.items():
                 if name not in found and path.exists():
                     text = path.read_text("utf-8", "replace")
@@ -139,20 +194,29 @@ class Game:
                   "log": log[-200:], "benign_log": {"count": len(benign), "examples": benign[:3], "note": BENIGN_NOTE},
                   "missing_files": missing_files[:50],
                   "crash": next(iter(sorted(self._crash_folders() - crashes)), None)}
+        login = bool(login_since and checked_at - login_since >= LOGIN_WAIT)
+        if keys:
+            result["loading_screen_keys"] = keys
+            result["loading_screen_note"] = ("the loading screen waited for a key (the map sets loading_screen title, "
+                                             "subtitle or text), so the run pressed space to continue")
         truncated = truncated_lines(found)
         if truncated:
             result["truncated"] = truncated
             result["truncated_note"] = ("these result lines (indexes per file) reach the Preload limit of about 259 "
                                         "characters, so the game probably cut them off: split long reports into "
                                         "several Preload calls")
-        if result["missing"]:
-            result["hint"] = ("no result file was written: a Battle.net login screen or a dialog stops the game before the "
-                              "map loads (log in once with 'Keep me logged in'; screenshot=true shows the window), or the "
-                              "map script failed (script_validate)")
+        if login:
+            result["login_required"] = True
+            result["hint"] = ("the game shows the Battle.net login screen: ask the user to log in there (with 'Keep me "
+                              "logged in'). The game was left open for that; afterwards game_close it and run the "
+                              "test again")
+        elif result["missing"]:
+            result["hint"] = ("no result file was written: the map script failed (script_validate), the game stayed on "
+                              f"a login screen, the map did not get that far before timeout, or {PAUSE_NOTE}")
         if screenshot:
             shot, of = self._screenshot(process.pid)
             result["screenshot"], result["screenshot_of"] = shot, of
-        result["closed"] = self._close(process) if close else process.poll() is not None
+        result["closed"] = self._close(process) if close and not login else process.poll() is not None
         if focused_at and previous and win32gui.IsWindow(previous):
             win.activate(previous)
         result["focus"] = (f"the game window was brought to the front {raised} time(s) while loading" if raised
