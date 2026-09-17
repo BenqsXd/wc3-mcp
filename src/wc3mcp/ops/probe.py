@@ -13,19 +13,48 @@ from .triggers import triggers_edit
 NAME = "wc3mcpProbe"
 REPORT = "wc3mcp\\probe.txt"
 MAX_MESSAGES = 50
-# JASS maps: the probe copy routes BJDebugMsg through this function, which keeps the text for the report
+# JASS maps: the probe copy routes BJDebugMsg and the text display functions through these, which keep the text for
+# the report
 JASS_GLOBALS = """    string array wc3mcpProbe_messages
     integer wc3mcpProbe_count = 0
+    hashtable wc3mcpProbe_table = null
 """
 JASS_MESSAGES = """
-function wc3mcpProbe_Msg takes string s returns nothing
+function wc3mcpProbe_Keep takes string s returns nothing
     if wc3mcpProbe_count < {limit} then
         set wc3mcpProbe_messages[wc3mcpProbe_count] = SubString(s, 0, 200)
         set wc3mcpProbe_count = wc3mcpProbe_count + 1
     endif
+endfunction
+
+function wc3mcpProbe_Msg takes string s returns nothing
+    call wc3mcpProbe_Keep(s)
     call BJDebugMsg(s)
 endfunction
+
+function wc3mcpProbe_DisplayTextToPlayer takes player p, real x, real y, string s returns nothing
+    call wc3mcpProbe_Keep(s)
+    call DisplayTextToPlayer(p, x, y, s)
+endfunction
+
+function wc3mcpProbe_DisplayTimedTextToPlayer takes player p, real x, real y, real d, string s returns nothing
+    call wc3mcpProbe_Keep(s)
+    call DisplayTimedTextToPlayer(p, x, y, d, s)
+endfunction
+
+function wc3mcpProbe_DisplayTextToForce takes force f, string s returns nothing
+    call wc3mcpProbe_Keep(s)
+    call DisplayTextToForce(f, s)
+endfunction
+
+function wc3mcpProbe_DisplayTimedTextToForce takes force f, real d, string s returns nothing
+    call wc3mcpProbe_Keep(s)
+    call DisplayTimedTextToForce(f, d, s)
+endfunction
 """
+# map calls routed through the functions above (the Blizzard.j functions that call each other are left alone)
+ROUTED = {"BJDebugMsg": "wc3mcpProbe_Msg", **{name: "wc3mcpProbe_" + name for name in (
+    "DisplayTextToPlayer", "DisplayTimedTextToPlayer", "DisplayTextToForce", "DisplayTimedTextToForce")}}
 JASS = """function Trig_{name}_Hero takes nothing returns boolean
     return IsUnitType(GetFilterUnit(), UNIT_TYPE_HERO)
 endfunction
@@ -95,12 +124,15 @@ function Trig_{name}_Actions()
 end
 
 function InitTrig_{name}()
-    local shown = BJDebugMsg
-    BJDebugMsg = function(s)
-        if #wc3mcpProbe_messages < {limit} then
-            table.insert(wc3mcpProbe_messages, string.sub(s, 1, 200))
+    for _, name in ipairs({{"BJDebugMsg", "DisplayTextToPlayer", "DisplayTimedTextToPlayer"}}) do
+        local shown = _G[name]
+        _G[name] = function(...)
+            local args = table.pack(...)
+            if #wc3mcpProbe_messages < {limit} then
+                table.insert(wc3mcpProbe_messages, string.sub(tostring(args[args.n]), 1, 200))
+            end
+            return shown(...)
         end
-        shown(s)
     end
     gg_trg_{name} = CreateTrigger()
     TriggerRegisterTimerEvent(gg_trg_{name}, {seconds}, false)
@@ -110,8 +142,33 @@ end
 
 
 # probe_script: the caller's code runs as Trig_wc3mcpProbe_User while the report file is open; ProbeReport(text)
-# writes text in pieces short enough for Preload (report= then report+= lines, joined again by parse)
-JASS_USER = """function ProbeReport takes string s returns nothing
+# writes text in pieces short enough for Preload (report= then report+= lines, joined again by parse);
+# ProbeCountEvent(playerunitevent, name) counts that event from then on, ProbeEventCount(name) reads the count;
+# probe_functions (the caller's own functions) come right before Trig_wc3mcpProbe_User
+JASS_USER = """function wc3mcpProbe_Counted takes nothing returns nothing
+    local integer key = LoadInteger(wc3mcpProbe_table, 1, GetHandleId(GetTriggeringTrigger()))
+    call SaveInteger(wc3mcpProbe_table, 0, key, LoadInteger(wc3mcpProbe_table, 0, key) + 1)
+endfunction
+
+function ProbeCountEvent takes playerunitevent e, string name returns nothing
+    local trigger t = CreateTrigger()
+    if wc3mcpProbe_table == null then
+        set wc3mcpProbe_table = InitHashtable()
+    endif
+    call TriggerRegisterAnyUnitEventBJ(t, e)
+    call SaveInteger(wc3mcpProbe_table, 1, GetHandleId(t), StringHash(name))
+    call TriggerAddAction(t, function wc3mcpProbe_Counted)
+    set t = null
+endfunction
+
+function ProbeEventCount takes string name returns integer
+    if wc3mcpProbe_table == null then
+        return 0
+    endif
+    return LoadInteger(wc3mcpProbe_table, 0, StringHash(name))
+endfunction
+
+function ProbeReport takes string s returns nothing
     local integer i = 200
     call Preload("report=" + SubString(s, 0, 200))
     loop
@@ -121,11 +178,23 @@ JASS_USER = """function ProbeReport takes string s returns nothing
     endloop
 endfunction
 
-function Trig_{name}_User takes nothing returns nothing
+{functions}function Trig_{name}_User takes nothing returns nothing
 {body}endfunction
 
 """
-LUA_USER = """function ProbeReport(s)
+LUA_USER = """wc3mcpProbe_counts = {}
+
+function ProbeCountEvent(e, name)
+    local t = CreateTrigger()
+    TriggerRegisterAnyUnitEventBJ(t, e)
+    TriggerAddAction(t, function() wc3mcpProbe_counts[name] = (wc3mcpProbe_counts[name] or 0) + 1 end)
+end
+
+function ProbeEventCount(name)
+    return wc3mcpProbe_counts[name] or 0
+end
+
+function ProbeReport(s)
     s = tostring(s)
     Preload("report=" .. string.sub(s, 1, 200))
     for i = 201, #s, 200 do
@@ -133,22 +202,26 @@ LUA_USER = """function ProbeReport(s)
     end
 end
 
-function Trig_{name}_User()
+{functions}function Trig_{name}_User()
 {body}end
 
 """
 
 
-def script(language: str, seconds: float, user: str | None = None) -> str:
+def script(language: str, seconds: float, user: str | None = None, functions: str | None = None) -> str:
     lua = language == "lua"
     template = LUA if lua else JASS
+    if functions is not None and user is None:
+        user = ""
     call = ("" if user is None else f"    Trig_{NAME}_User()\n" if lua else f"    call Trig_{NAME}_User()\n")
     text = template.format(name=NAME, seconds=f"{float(seconds):.2f}", report=REPORT.replace("\\", "\\\\"),
                            limit=MAX_MESSAGES, call_user=call)
     if user is None:
         return text
     body = "".join(f"    {line}\n" if line.strip() else "\n" for line in user.splitlines())
-    return (LUA_USER if lua else JASS_USER).replace("{name}", NAME).replace("{body}", body) + text
+    own = functions.strip("\n") + "\n\n" if functions else ""
+    return ((LUA_USER if lua else JASS_USER).replace("{name}", NAME).replace("{functions}", own)
+            .replace("{body}", body) + text)
 
 
 def route_messages(script_text: str) -> str:
@@ -157,13 +230,15 @@ def route_messages(script_text: str) -> str:
     head, sep, body = script_text.partition("endglobals")
     if not sep:
         raise ToolError("probe_script_failed", "the map script has no globals block", hint="script_validate")
-    body = re.sub(r"\bBJDebugMsg\b", "wc3mcpProbe_Msg", body)
+    body = re.sub(r"\b(" + "|".join(ROUTED) + r")\b", lambda m: ROUTED[m.group(1)], body)
     return head + JASS_GLOBALS + sep + JASS_MESSAGES.format(limit=MAX_MESSAGES) + body
 
 
-def build(source, dest, catalog, project=None, seconds: float = 10.0, user: str | None = None) -> Path:
+def build(source, dest, catalog, project=None, seconds: float = 10.0, user: str | None = None,
+          functions: str | None = None) -> Path:
     """Write a copy of the map (the open working copy when `project` is given) with the probe trigger in it, running
-    the caller's `user` code (JASS or Lua statements, as the map's language) when given."""
+    the caller's `user` code (JASS or Lua statements, as the map's language) when given, after the caller's own
+    `functions`."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     if project is not None:
@@ -176,7 +251,7 @@ def build(source, dest, catalog, project=None, seconds: float = 10.0, user: str 
         # in its own last category: trigger code is emitted in tree order, so probe_script can call any map function
         triggers_edit(copy, catalog, [{"op": "category", "name": NAME},
                                       {"op": "trigger", "name": NAME, "category": NAME,
-                                       "script": script(language, seconds, user)}])
+                                       "script": script(language, seconds, user, functions)}])
         script_ops.script_build(copy, catalog)
         if language != "lua":
             name = next(n for n in ("war3map.j", "scripts\\war3map.j")
@@ -185,10 +260,11 @@ def build(source, dest, catalog, project=None, seconds: float = 10.0, user: str 
         checked = script_ops.script_validate(copy, catalog)
         if not checked["ok"]:
             first = checked["errors"][0]
-            mine = user is not None and first.get("trigger") == NAME
+            mine = (user is not None or functions is not None) and first.get("trigger") == NAME
             raise ToolError("probe_script_failed", f"the probed map's script does not compile: {first['message']}",
                             hint="fix probe_script (it runs as the body of Trig_wc3mcpProbe_User; declare locals "
-                            "first)" if mine else "fix the map script (script_validate)", errors=checked["errors"][:5])
+                            "first) or probe_functions (whole functions, placed before it)" if mine
+                            else "fix the map script (script_validate)", errors=checked["errors"][:5])
         if not any(f["name"].lower() == "war3mapmap.blp" for f in copy.list_files()):
             copy.write("war3mapMap.blp", terrain_ops.minimap(copy, catalog))   # the game quits on a map without one
         copy.save()

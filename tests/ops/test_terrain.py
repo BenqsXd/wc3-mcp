@@ -115,7 +115,10 @@ def test_get_edit_and_render_a_map(tmp_path):
     whole = terrain.terrain_get(project, step=8, layers=["cliff_level"])
     assert whole["window"]["columns"] == len(range(0, t.width, 8)) and list(whole["layers"]) == ["cliff_level"]
     assert error(terrain.terrain_get, project, None, ["colour"]).code == "bad_value"
-    assert error(terrain.terrain_get, project, [1, 1, 2, 2]).code == "bad_value"
+    narrow = terrain.terrain_get(project, [1, -3200, 40, 1280], layers=["height"])   # between two corner lines in x
+    assert narrow["window"]["columns"] == 1 and narrow["window"]["left"] == 0 and "x" in narrow["window"]["snapped"]
+    assert "snapped" not in doc["window"]
+    assert error(terrain.terrain_get, project, [99999, 99999, 100000, 100000]).code == "bad_value"
 
     result = terrain.terrain_edit(project, catalog, [{"op": "raise", "x": 0, "y": 0, "radius": 400, "amount": 100},
                                                      {"op": "paint", "x": 0, "y": 0, "radius": 200, "tile": "Lgrs"}])

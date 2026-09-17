@@ -70,3 +70,29 @@ def test_placed_variations_without_a_classic_model_are_warnings(catalog):
     models = [w["message"] for w in validate(files, catalog, has_file=lambda name: arc.find(name) is not None)["warnings"]
               if w["check"] == "model" and "ZPsh" in w["message"]]
     assert len(models) == 1 and models[0].startswith("1 placed doodad(s) ZPsh: ") and "Ruins_Shrub3.mdl" in models[0]
+
+
+def test_command_card_pitfalls_are_warnings(catalog):
+    from wc3mcp.formats import objmods
+
+    def entry(base, new, **values):
+        mods = [objmods.Mod(k.encode(), objmods.INT if isinstance(v, int) else objmods.STRING, v)
+                for k, v in values.items()]
+        return objmods.ObjectEntry(base.encode(), new.encode(), mods)
+
+    units = objmods.ObjectMods(3, False)
+    units.custom = [entry("htow", "h001", utra="h002"), entry("hfoo", "h002", ubpx=3, ubpy=1),
+                    entry("ewsp", "e000", uabi="Awha"), entry("otau", "o000", uhpm=900),
+                    entry("ewsp", "e001", uabi="Awha", ubui="")]
+    result = validate({"war3map.w3u": objmods.serialize(units)}, catalog)
+    found = {(w["check"], w["message"].split(":")[0]) for w in result["warnings"]}
+    assert ("command_card", "unit h001") in found and ("inherited_builds", "unit e000") in found
+    assert ("inherited_builds", "unit e001") not in found
+    locked = [w["message"] for w in result["warnings"] if w["check"] == "locked_ability"]
+    research = next(m.split()[1] for m in locked if "o000 (" in m)   # a Tauren ability's research (data-set dependent)
+    clash = next(w["message"] for w in result["warnings"] if w["check"] == "command_card")
+    assert clash.startswith("unit h001: h002, Rally share button position (3, 1)")
+    assert not [w for w in result["warnings"] if w["check"] == "command_card" and "unit h00" not in w["message"]]
+    scripted = validate({"war3map.w3u": objmods.serialize(units),
+                         "war3map.j": f"call SetPlayerTechResearched(Player(0), '{research}', 1)".encode()}, catalog)
+    assert not [w for w in scripted["warnings"] if w["check"] == "locked_ability" and research in w["message"]]

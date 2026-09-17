@@ -123,6 +123,7 @@ class _V:
         self.check_objects()
         self.check_imports()
         self.check_placed()
+        self.check_command_cards()
         return {"errors": self.errors, "warnings": self.warnings}
 
     def generated(self, t) -> bool:
@@ -284,19 +285,86 @@ class _V:
                 self.add(False, "import", "war3map.imp", f"imported file {e.path!r} (flag {e.flag}) is not in the map")
 
 
-    def _art(self, kind: str) -> dict[str, tuple[str, dict[str, str]]]:
-        """Object id -> (base id, model and variation fields the map sets) for the map's objects of a kind."""
-        ext = {"doodad": "w3d", "destructible": "w3b", "unit": "w3u"}[kind]
-        wanted = {f for f in MODEL_FIELDS[kind] if f}
+    def _mods(self, kind: str) -> dict[str, tuple[str, dict[str, object], bool]]:
+        """Object id -> (base id, the first-level values the map sets, custom) for the map's objects of a kind."""
         out = {}
         for prefix in ("war3map", "war3mapSkin"):
-            om = self.objects.get(f"{prefix}.{ext}")
+            om = self.objects.get(f"{prefix}.{EXTENSIONS[kind]}")
             for custom, table in ((False, om.original), (True, om.custom)) if om else ():
                 for e in table:
                     oid = (e.new_id if custom else e.base_id).decode("latin-1")
-                    base, fields = out.setdefault(oid, (e.base_id.decode("latin-1"), {}))
-                    fields.update({m.id.decode("latin-1"): m.value for m in e.mods if m.id.decode("latin-1") in wanted})
+                    base, fields, _ = out.setdefault(oid, (e.base_id.decode("latin-1"), {}, custom))
+                    fields.update({m.id.decode("latin-1"): m.value for m in e.mods if m.level in (0, 1)})
         return out
+
+    def _art(self, kind: str) -> dict[str, tuple[str, dict[str, str]]]:
+        """Object id -> (base id, model and variation fields the map sets) for the map's objects of a kind."""
+        wanted = {f for f in MODEL_FIELDS[kind] if f}
+        return {oid: (base, {k: v for k, v in fields.items() if k in wanted})
+                for oid, (base, fields, _) in self._mods(kind).items()}
+
+    def check_command_cards(self):
+        """Object data pitfalls no single edit shows: command-card buttons on one slot, a copied worker that keeps its
+        build list, an ability locked behind a research nobody can get."""
+        mods = {kind: self._mods(kind) for kind in ("unit", "ability", "upgrade")}
+        if not mods["unit"]:
+            return
+        name = "war3map.w3u"
+
+        def value(kind, oid, rid, stock=False):
+            base, fields, _ = mods[kind].get(oid, (oid, {}, False))
+            return fields[rid] if rid in fields and not stock else self.catalog.field(kind, base, rid)
+
+        def ids(kind, oid, rid, stock=False):
+            return [x for x in str(value(kind, oid, rid, stock) or "").split(",") if x.strip()]
+
+        def slots(oid, stock):
+            """(x, y) -> button labels on a building's command card."""
+            card: dict[tuple, list[str]] = {}
+            trains, researches = ids("unit", oid, "utra", stock), ids("unit", oid, "ures", stock)
+            abilities = ids("unit", oid, "uabi", stock)
+            buttons = [(u, "unit", "ubpx", "ubpy") for u in trains + ids("unit", oid, "uupt", stock)]
+            buttons += [(r, "upgrade", "gbpx", "gbpy") for r in researches]
+            buttons += [(a, "ability", "abpx", "abpy") for a in abilities]
+            for obj, kind, fx, fy in buttons:
+                x, y = value(kind, obj, fx), value(kind, obj, fy)
+                if x not in (None, "") and y not in (None, ""):
+                    card.setdefault((int(float(x)), int(float(y))), []).append(obj)
+            if trains and "ARal" not in abilities:
+                card.setdefault((3, 1), []).append("Rally")
+            if trains or researches:
+                card.setdefault((3, 2), []).append("Cancel")
+            return card
+
+        script = self.script or ""
+        melee = "MeleeStartingUnits" in script
+        units = self.parse("war3mapUnits.doo", unitsdoo.parse)
+        present = set(mods["unit"]) | {u.id.decode("latin-1") for u in (units.units if units else ())}
+        offered = {r for oid in present for r in ids("unit", oid, "ures")}
+        upgrades = set(self.catalog.ids("upgrade")) | set(mods["upgrade"])
+        locked: dict[str, list[str]] = {}
+        for oid, (base, fields, custom) in sorted(mods["unit"].items()):
+            card = slots(oid, False)
+            if any(len(labels) > 1 for labels in card.values()):
+                stock = slots(base, True)   # a clash the stock object has too is how the game ships it
+                for (x, y), labels in sorted(card.items()):
+                    if len(labels) > 1 and sorted(labels) != sorted(stock.get((x, y), [])):
+                        self.add(False, "command_card", name, f"unit {oid}: {', '.join(labels)} share button position "
+                                 f"({x}, {y}); only one of them can be clicked (set ubpx/ubpy, gbpx/gbpy or abpx/abpy)")
+            if custom and "uabi" in fields and "ubui" not in fields:
+                builds = ids("unit", base, "ubui", True)
+                if builds:
+                    self.add(False, "inherited_builds", name, f"unit {oid}: sets its abilities (uabi) but keeps the "
+                             f"build list of {base} (ubui {','.join(builds)}), so it can still build those; set ubui "
+                             'to "" if it must not build')
+            for ability in [] if melee else ids("unit", oid, "uabi") + ids("unit", oid, "uhab"):
+                for research in ids("ability", ability, "areq"):   # melee races can build the research buildings
+                    if research in upgrades and research not in offered and research not in script:
+                        locked.setdefault(research, []).append(f"{oid} ({ability})")
+        for research, users in sorted(locked.items()):
+            self.add(False, "locked_ability", name, f"research {research} is required by {', '.join(users)}, but no "
+                     "unit of the map researches it (ures) and the script never mentions it (SetPlayerTechResearched), "
+                     "so those abilities may stay locked")
 
     def check_placed(self):
         doodads = self.parse("war3map.doo", doo.parse)
