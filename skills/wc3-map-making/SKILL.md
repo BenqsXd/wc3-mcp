@@ -39,13 +39,15 @@ Generated placements and terrain passes are mechanical. Keep them out of the con
 - A map spans `tiles × 128` world units centred on the origin (96×96: −6144..6144). The playable area is 12 tiles narrower and shorter and is **not** centred (a 96×96 map: `[-5376, -5632, 5376, 5120]`). `placed_list` returns both under `bounds`.
 - Every `terrain_edit` op is a flat object: `{"op": "paint", "tile": "Lgrs", "x": 0, "y": 0, "radius": 384}`. A nested form such as `{"paint": {...}}` fails with `bad_op`. Areas: `"x"/"y"/"radius"`, `"rect": [left, bottom, right, top]`, `"path": [[x, y], ...]` with `"width"` (roads), or **no area** for the whole map. Do not send 50 circles for what one rect or path does.
 - Brushes known to work: `paint`, `noise` (`amount`, `seed`, `falloff`; over the whole map or a `rect` for gentle hills), `plateau` (a circle flattened to the height of its centre corner) and `cliff` (`{"op": "cliff", "rect": [...], "level": 3, "cliff": "CLgr"}` raises the rect one level). A new map's ground is cliff level 2 with height 0.
+- Enclosed basins: a `cliff` op with `level` 3 and no area raises the whole map; later `cliff` ops with `level` 2 and a `rect` lower those rects back. The corners next to a rect edge become cliff (unwalkable). A raised strip 3 corners wide keeps two basins apart.
+- `terrain_get area` narrower than the 128-unit corner spacing uses the nearest corner line and says so in `window.snapped`.
 - **Buildability.** Every tile is buildable or not, walkable or not: `data_search kind=tile` results carry `buildable`, `walkable` and `flyable`. Unbuildable tiles that look like a good plaza or build zone: `Ybtl` Brick, `Yblm` Black Marble, `Ywmb` White Marble, `Ysqd` Square Tiles, `Lrok` Rock. Buildable: `Ldrt`, `Ldro`, `Ldrg` and the grass tiles. A player's build order (`IssueBuildOrderById`) on an unbuildable tile silently does nothing, while `CreateUnit` still places a structure there, which hides the problem from computer-built bases. Check the flags before painting build zones; `terrain_edit` warns when a batch paints an unbuildable or unwalkable tile over more than a few corners.
 - `terrain_get layers=["pathing"]` and `terrain_render pathing=true` show pathing before an editor save: after `terrain_edit` they derive it from the current tiles, cliffs, water and blight (without doodad or building footprints; `pathing_source` says which source was used).
 - A map holds at most 16 ground tiles. A new map already holds all of its tileset's tiles plus 2 cliff tiles: Ashenvale (`A`) 8 tiles (8 free), Lordaeron Summer (`L`) 6 tiles, `Ldrt, Ldro, Ldrg, Lrok, Lgrs, Lgrd` (10 free). `terrain_get` and every `terrain_edit` result report the palette (`tiles`, `free`) and what the edit added (`palette_added`).
 - `map_new` takes sizes from 32 to 480 in steps of 32. It fills the map with the tileset's first tile, which is often dirt, not grass (`Ldrt` for Lordaeron Summer, `Adrt` for Ashenvale). Pass `fill_tile` and read `fill_tile` in the result: a road in the ground tile shows nothing.
 - `data_search kind=tile` results carry `tileset` and `tileset_name`; `query="Ashenvale"` finds that tileset's tiles by name.
 - Terrain edits leave pathing (`war3map.wpm`), shadows (`war3map.shd`) and minimap icons (`war3map.mmp`) stale; only a World Editor save recomputes them. While that save is owed, `map_validate` (and so `map_save`) warns with check `derived_files`. When the warning is gone, the cycle is done.
-- `terrain_render` shows tiles, height, water, regions, start locations, units, items, doodads (magenta), trees (dark green) and other destructibles (orange). Look at it before launching the editor or the game.
+- `terrain_render` shows tiles, height, water, regions, start locations, units, items, doodads (magenta), trees (dark green with a light rim, visible on dark grass) and other destructibles (orange). Look at it before launching the editor or the game.
 
 ## Placed objects and start locations
 
@@ -88,6 +90,8 @@ The World Editor draws classic (SD) models, and some HD models have no classic c
 - `objdata_get` checks the model the object really uses: when the map changes `umdl` (or `dfil`/`bfil` and the variation count), `model.files` and `model.missing` follow the map's value (`source: "map"`), and imported models count as present.
 - Unit fields for custom buildings: `upat` pathing texture, `usca` model scale, `umpm`/`umpi`/`umpr` mana maximum/initial/regeneration, `ufma` food produced, `ubpx`/`ubpy` button position, `uupt` upgrades to, `upgr` upgrades used, `ures` researches, `utra` units trained. `umvt` `"fly"` with `umvh` makes a flying unit.
 - Pathing textures come in many sizes under `PathTextures\` (`4x4SimpleSolid`, `8x8Simple`, `12x12Simple`, `16x16Simple`, ...; one cell is 32 world units). Stock sizes: Barracks and Beastiary `12x12Simple`, Castle `16x16Simple`, Guard and Cannon Tower `4x4SimpleSolid`.
+- **Copies keep what their base has.** A copy of `ewsp` (Wisp) with a new `uabi` still has the Wisp's build list (`ubui` `etol,emow,...`): set `ubui` to `""` on workers that must not build. A copy of `otau` keeps `Awar` (Pulverize), which needs the research `Rows`. `ARal` (Rally) sits at (3, 1) and Cancel at (3, 2) on buildings that train units. `map_validate` warns about these: `command_card` (two buttons on one position), `inherited_builds` and `locked_ability` (a required research nothing in the map offers).
+- Art fields accept empty strings: `ushb` (building shadow) and `uubs` (ground texture) set to `""` remove them.
 - A builder needs no build ability: a copy of `uaco` (Acolyte) with `uabi` `"Avul"` and a `ubui` list of custom buildings shows a Build command.
 - Fields take raw codes, for example `ubui` (structures built), `ureq` (requirements), `ugol` / `ulum` (gold / lumber cost), `ubld` (build time), `umvs` (movement speed), or `Name`. Setting `ureq` to `""` removes a building's tech requirements.
 - Per-level ability fields take level keys: `{"aran": {"1": 620}}`, `{"acdn": {"1": 20}}`. Other fields take plain values (`"aher": 0`, `"alev": 1`); Channel's animation names `aani` has no levels. A unit's `uabi`, `uhab`, `usei` and an item's `iabi` are comma-separated id strings (`"A003,A004"`).
@@ -138,7 +142,18 @@ Players and UI:
 - The unused player slots 10 and 11 work as computer army owners without any `war3map.w3i` entry. After `SetPlayerAllianceStateBJ` (`bj_ALLIANCE_ALLIED_VISION` with their team's players, `bj_ALLIANCE_UNALLIED` with the other team), `IsPlayerAlly` and `IsPlayerEnemy` answer accordingly, and units created with `CreateUnit` and ordered `IssuePointOrder(u, "attack", x, y)` march and fight.
 - In a single-player run `GetPlayerName` returns `"Local Player"` for the human and `"Player N"` for empty slots, not the names in `war3map.w3i`.
 - `SetUnitState(b, UNIT_STATE_MANA, 1.5)` on a building with `umpm` 20 and `umpr` 0 keeps 1.5 / 20, so a building's mana bar can show script-driven progress.
-- A multiboard created from a 0.1-second timer callback (`CreateMultiboard`, `MultiboardSetItemStyle(item, true, false)`, `MultiboardSetItemWidth`, `MultiboardDisplay`) shows in the top-right corner.
+- A multiboard created from a 0.1-second timer callback (`CreateMultiboard`, `MultiboardSetItemStyle(item, true, false)`, `MultiboardSetItemWidth`, `MultiboardDisplay`) shows in the top-right corner; `MultiboardSetTitleText` every 0.5 s updates its title.
+- `SetPlayerName` works on empty slots (`GetPlayerName` and the multiboard show the new name). `SelectUnitForPlayerSingle(u, Player(0))` from a 0.1-second timer after map start selects the unit.
+- Player 8 (an unused slot) works as the owner of attacking creeps once it is `bj_ALLIANCE_UNALLIED` in both directions with the other players: its units walk their lane with `IssuePointOrder(u, "attack", x, y)` and fight.
+- `CustomVictoryBJ(p, true, true)` in a single-player custom game shows a "Victory!" dialog with "Continue" and "Quit Campaign".
+
+Workers, training and building:
+- A worker copied from `ewsp` with `uabi` `"Awha"` harvests trees: in the `EVENT_PLAYER_UNIT_TRAIN_FINISH` handler, `TriggerSleepAction(0.0)` then `IssueTargetOrder(worker, "harvest", tree)` on an `LTlt`. Lumber arrives without any drop-off building (`Wha1` 8 gave 8 lumber in 20 s).
+- `IssueImmediateOrderById(hall, 'n011')` on a building that lists `n011` in `utra` trains it and charges its cost. In `EVENT_PLAYER_UNIT_TRAIN_FINISH`, `GetTrainedUnit()` is the unit; `ShowUnit(u, false)` plus `RemoveUnit(u)` leaves nothing behind. Units with `ufoo` 0 train without any food building.
+- `IssueBuildOrderById(builder, 'h000', x, y)` returns true, and `GetUnitCurrentOrder(builder)` equals `'h000'` while the builder is on its way.
+- Refund pattern: an `EVENT_PLAYER_UNIT_CONSTRUCT_START` handler adds the cost back and calls `RemoveUnit(GetConstructingStructure())`; no structure is left and the gold is unchanged.
+- A structure copied from `hhou` with a unit model, `ubld` 1 and an Acolyte-copy builder finishes within seconds; `EVENT_PLAYER_UNIT_CONSTRUCT_FINISH` fires for each.
+- Swapping a player's structure for a unit of another player (`RemoveUnit` + `CreateUnit(Player(10), ...)` + `SetUnitColor`) and back each round works at scale (about 50 slots over seven rounds).
 
 ## World Editor
 
@@ -157,7 +172,14 @@ Players and UI:
 
 - `game_test` launches the map and ends as soon as every file listed in `results` exists under `Documents\Warcraft III\CustomMapData`. The map script writes such a file with `PreloadGenClear()` / `PreloadGenStart()` / `Preload("text")` / `PreloadGenEnd("mymap\\results.txt")`. A run whose files never appear lasts the full `timeout` and lists them under `missing`.
 - `game_test probe=true` needs no reporting trigger of your own. It runs a throwaway copy that reports, `probe_seconds` into the game, the units, heroes, gold and lumber of every playing slot, plus the `BJDebugMsg` text (`probe.messages`). Use it to check that a map loads and runs.
-- For a specific check, pass `probe_script` (or `probe_script_file`): statements in the map's language, JASS locals first, that run in the throwaway copy at `probe_seconds`. They can call the map's own functions (the probe trigger comes after all map triggers), read its `udg_` globals and wait with `TriggerSleepAction` (about 160 s of waits in one probe worked; each `ProbeReport` comes back in order). `ProbeReport(text)` writes text of any length, returned in `probe.reports`. The real map never gets test triggers, so there is nothing to remove before shipping.
+- For a specific check, pass `probe_script` (or `probe_script_file`): statements in the map's language, JASS locals first, that run in the throwaway copy at `probe_seconds`. They can call the map's own functions (the probe trigger comes after all map triggers), read its `udg_` globals and wait with `TriggerSleepAction` (700 s of waits in one probe worked; each `ProbeReport` comes back in order). One run can hold a whole balance simulation, reporting when the round changes.
+- To observe events, `ProbeCountEvent(EVENT_PLAYER_UNIT_CONSTRUCT_START, "starts")` counts a player-unit event from then on and `ProbeEventCount("starts")` reads the count. `probe_functions` adds whole functions (callbacks for your own triggers) before the probe code. Text the map shows (`BJDebugMsg`, `DisplayTextToPlayer`, `DisplayTimedTextToPlayer`, `DisplayTextToForce`, `DisplayTimedTextToForce`) comes back in `probe.messages`.
+  ```
+  call ProbeCountEvent(EVENT_PLAYER_UNIT_CONSTRUCT_START, "starts")
+  call IssueBuildOrderById(builder, 'h000', 900, -300)
+  call TriggerSleepAction(8)
+  call ProbeReport("starts=" + I2S(ProbeEventCount("starts")) + " gold=" + I2S(GetPlayerState(Player(0), PLAYER_STATE_RESOURCE_GOLD)))
+  ``` `ProbeReport(text)` writes text of any length, returned in `probe.reports`. The real map never gets test triggers, so there is nothing to remove before shipping.
   ```
   local unit u = CreateUnit(Player(0), 'hfoo', 0, 0, 270)
   if IsUnitVisible(u, Player(1)) then
@@ -167,8 +189,8 @@ Players and UI:
   endif
   ```
 - The game keeps about 259 characters of one `Preload` string and silently drops the rest. `game_test` lists result lines that reach that length under `truncated`. Split long reports into several `Preload` calls, or use `ProbeReport`. Result strings come back unescaped (single backslashes).
-- A run that writes its result file ends as soon as the file exists: 34–124 seconds in practice, most of it launch and map load (a probe with 160 s of waits took 189 s).
-- **Every launch can hit the Battle.net login screen**, and the user may not be able to log in again and again. Put all checks of a session into as few runs as possible: one `probe_script` can run many checks with waits between them.
+- A run that writes its result file ends as soon as the file exists: 34–124 seconds in practice, most of it launch and map load (probes with 160, 415 and 700 s of waits took 189, 469 and 776 s).
+- **Every launch can hit the Battle.net login screen** (in one session the second of four launches did), and the user may not be able to log in again and again. Put all checks of a session into as few runs as possible: one `probe_script` can run many checks with waits between them.
 - A map with `loading_screen` `title`, `subtitle` or `text` waits on "PRESS ANY KEY TO CONTINUE" after loading. `game_test` presses space when it sees that screen and reports `loading_screen_keys`.
 - An open dialog pauses a single-player game, so a map that shows a dialog early (a hero draft) never reaches a later `probe_seconds` or test timer on its own. Run the test code before the dialog opens (`probe_seconds` 0.3 worked). A timed-out run's hint mentions this; `screenshot=true` shows the dialog.
 - To capture the hero learn menu: in the test code, `SelectUnit(h, true)`, `TriggerSleepAction(0.5)`, `ForceUIKey("O")`, then report; `screenshot=true` captures it. A user click in the game window meanwhile changes what is captured.
