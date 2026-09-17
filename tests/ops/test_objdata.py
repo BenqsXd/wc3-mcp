@@ -166,3 +166,25 @@ def test_levels_follow_the_maps_level_count(plain_project, catalog):
     objdata_edit(plain_project, catalog, "ability", [{"op": "set", "id": "A013", "set": {"alev": 5}}])
     assert len(objdata_get(plain_project, catalog, "ability", "A013", fields=["Ihid"])["fields"]["Ihid"]["values"]) == 5
     assert objdata_get(plain_project, catalog, "ability", "A013")["unknown_modifications"] == []
+
+
+def test_create_copies_a_custom_object(plain_project, catalog):
+    objdata_edit(plain_project, catalog, "unit", [
+        {"op": "create", "base": "hfoo", "id": "h000", "set": {"Name": "Arena Guard", "uhpm": 777, "umvs": 300}}])
+    result = objdata_edit(plain_project, catalog, "unit", [
+        {"op": "create", "base": "h000", "id": "h001", "set": {"umvs": 200}}])
+    assert result["created"] == ["h001"]
+    doc = objdata_get(plain_project, catalog, "unit", "h001", fields=["uhpm", "umvs", "unam"])
+    assert doc["base"] == "hfoo" and doc["name"] == "Arena Guard"
+    assert doc["fields"]["uhpm"]["value"] == 777 and doc["fields"]["umvs"]["value"] == 200
+    assert objdata_get(plain_project, catalog, "unit", "h000", fields=["umvs"])["fields"]["umvs"]["value"] == 300
+
+
+def test_model_check_follows_the_maps_model_field(plain_project, catalog):
+    objdata_edit(plain_project, catalog, "unit", [
+        {"op": "create", "base": "uaco", "id": "u000", "set": {"umdl": r"units\nightelf\Wisp\Wisp"}},
+        {"op": "create", "base": "uaco", "id": "u001", "set": {"umdl": r"war3mapImported\Nothing.mdl"}}])
+    model = objdata_get(plain_project, catalog, "unit", "u000", fields=["umdl"])["model"]
+    assert model == {"files": [r"units\nightelf\Wisp\Wisp.mdl"], "source": "map", "missing": []}
+    assert objdata_get(plain_project, catalog, "unit", "u001")["model"]["missing"] == [r"war3mapImported\Nothing.mdl"]
+    assert "source" not in objdata_get(plain_project, catalog, "unit", "uaco")["model"]

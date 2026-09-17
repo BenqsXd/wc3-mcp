@@ -58,6 +58,8 @@ def test_icon_and_model_results_carry_their_object_data_reference(cat):
     assert sorted(btn["layers"]) == ["_DE", "_HD", "base"] and len(icons) == 2
     footman = {r["ref"]: r for r in cat.search("model", "*Footman*")}[r"Units\Human\Footman\Footman.mdl"]
     assert "base" in footman["layers"] and "_HD:_Teen" in footman["layers"]
+    paths = {r["ref"] for r in cat.search("file", "PathTextures/8x8*")}   # a glob without the layer prefix
+    assert r"PathTextures\8x8Simple.tga" in paths and paths == {r["ref"] for r in cat.search("file", "*PathTextures/8x8*")}
 
 
 def test_unknown_kind_and_id(cat):

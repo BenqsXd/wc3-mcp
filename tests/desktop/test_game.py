@@ -164,17 +164,19 @@ def test_screen_state_reads_login_and_waiting_loading_screens():
     assert game.screen_state(_screen("game")) is None
 
 
-def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False):
+def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False, runner=None, map_bytes=b"",
+              launches=None):
     clock = {"now": 1000.0}
     fake_time = type("T", (), {"time": staticmethod(lambda: clock["now"]),
                                "sleep": staticmethod(lambda s: clock.__setitem__("now", clock["now"] + s))})
     process = type("P", (), {"pid": 42, "poll": lambda self: None})()
     exe = tmp_path / "Warcraft III.exe"
     exe.write_bytes(b"")
-    (tmp_path / "map.w3x").write_bytes(b"")
+    (tmp_path / "map.w3x").write_bytes(map_bytes)
     monkeypatch.setenv("WC3MCP_DOCUMENTS", str(tmp_path / "docs"))
     monkeypatch.setattr(game, "time", fake_time)
-    monkeypatch.setattr(game.subprocess, "Popen", lambda *a, **k: process)
+    monkeypatch.setattr(game.subprocess, "Popen", lambda *a, **k: launches.append(a) or process
+                        if launches is not None else process)
     monkeypatch.setattr(game.Game, "exe", staticmethod(lambda: exe))
     monkeypatch.setattr(game.Game, "window", lambda self, pid: 7)
     monkeypatch.setattr(game.win32gui, "GetForegroundWindow", lambda: 7)
@@ -193,7 +195,7 @@ def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False):
             out.write_text('function PreloadFiles takes nothing returns nothing\n\tcall Preload( "ok" )\nendfunction\n')
 
     monkeypatch.setattr(game.win, "send_input", press)
-    result = game.Game().test(tmp_path / "map.w3x", timeout=300, results=[r"t\r.txt"])
+    result = (runner or game.Game()).test(tmp_path / "map.w3x", timeout=300, results=[r"t\r.txt"])
     return result, keys, closed
 
 
@@ -209,3 +211,16 @@ def test_a_login_screen_ends_the_run_early_and_leaves_the_game_open(monkeypatch,
     assert result["seconds"] < 60 and not closed and not keys
     result, _, _ = _fake_run(monkeypatch, tmp_path, ["login", "login", None] + [None] * 100)   # a remembered login
     assert "login_required" not in result
+
+
+def test_the_same_test_after_a_login_continues_in_the_open_game(monkeypatch, tmp_path):
+    runner, launches = game.Game(), []
+    first, _, closed = _fake_run(monkeypatch, tmp_path, ["login"] * 20, runner=runner, launches=launches)
+    assert first["login_required"] and "same arguments" in first["hint"] and not closed
+    again, keys, closed = _fake_run(monkeypatch, tmp_path, ["press_key"], write_result_after_key=True, runner=runner,
+                                    launches=launches)
+    assert again["continued_game"] and again["results"] == {r"t\r.txt": ["ok"]} and len(launches) == 1
+    _fake_run(monkeypatch, tmp_path, ["login"] * 20, runner=runner, launches=launches)
+    other, _, closed = _fake_run(monkeypatch, tmp_path, ["press_key"], write_result_after_key=True, runner=runner,
+                                 map_bytes=b"another map", launches=launches)
+    assert "continued_game" not in other and len(launches) == 3 and len(closed) == 2   # the open game, then the run

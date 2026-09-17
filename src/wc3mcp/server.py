@@ -287,6 +287,8 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
             raise ToolError("editor_holds_map", f"the World Editor has {project.source.name} open and holds the file",
                             hint="editor_map action=close (the edits stay in the working copy), then map_save again",
                             path=str(project.source)) from e
+        if e.code == "file_in_use" and desktop_game.GAME.status()["running"]:
+            e.hint = "a game started by game_test may hold the map: game_close, then map_save again"
         raise
     result["warnings"] = warnings
     if merged is not None:
@@ -348,15 +350,17 @@ def map_snapshot(path: str, action: Literal["create", "restore", "list", "diff"]
 def data_search(kind: Kind, query: str = "", limit: int = 50, offset: int = 0, locale: str = "enUS",
                 balance: str | None = "Custom_V1", hd: bool = True, tileset: str | None = None) -> dict:
     """Search base game data by id, name or editor suffix (object, terrain and sound kinds) or by path substring or
-    glob (model, icon, file). model, icon and file results give one entry per file: ref is the path as object data
-    and scripts write it (backslashes, icons as .blp, models as .mdl), layers the storage layers holding it (base,
-    _HD, _DE, ...) and id a storage path for data_file and the asset tools. trigger_function / trigger_type /
-    trigger_preset search GUI trigger functions, variable types and preset values. tileset (a letter, e.g. "L", or a name, e.g. "Lordaeron Summer") lists only what that
-    tileset offers for kind=tile, cliff, doodad and destructible; tile and cliff results name their tileset. Doodad
-    and destructible results carry model_ok: false when the installed game cannot load the id's model in HD or in
-    classic graphics, which the World Editor uses (it would place but render nothing, or show a checkerboard cube in
-    the editor); variations_ok then lists the variations that do load. balance selects the gameplay data set: Custom_V1 (current), Custom_V0, Melee_V0, or null for
-    the base files."""
+    glob (model, icon, file; a glob without a layer prefix matches in any layer, e.g. "PathTextures/8x8*"). model,
+    icon and file results give one entry per file: ref is the path as object data and scripts write it
+    (backslashes, icons as .blp, models as .mdl), layers the storage layers holding it (base, _HD, _DE, ...) and id a
+    storage path for data_file and the asset tools. trigger_function / trigger_type / trigger_preset search GUI
+    trigger functions, variable types and preset values. Tile results carry buildable, walkable and flyable (an
+    unbuildable tile silently stops player build orders). tileset (a letter, e.g. "L", or a name, e.g. "Lordaeron
+    Summer") lists only what that tileset offers for kind=tile, cliff, doodad and destructible; tile and cliff results
+    name their tileset. Doodad and destructible results carry model_ok: false when the installed game cannot load the
+    id's model in HD or in classic graphics, which the World Editor uses (it would place but render nothing, or show
+    a checkerboard cube in the editor); variations_ok then lists the variations that do load. balance selects the
+    gameplay data set: Custom_V1 (current), Custom_V0, Melee_V0, or null for the base files."""
     catalog = _catalog(locale, balance, hd)
     results = catalog.search(kind, query, limit=min(limit, 500), offset=offset, tileset=tileset)
     return {"kind": kind, "query": query, "offset": offset, "count": len(results), "results": results,
@@ -431,11 +435,12 @@ def objdata_get(path: str, kind: ObjectKind, id: str, fields: list[str] | None =
 @_tool
 def objdata_edit(path: str, kind: ObjectKind, ops: list[dict] | None = None, balance: str | None = "Custom_V1",
                  ops_file: str | None = None) -> dict:
-    """Create and change objects with an all-or-nothing batch: {"op": "create", "base": "hfoo", "set": {"Name":
-    "Guard", "HP": 500}} (id optional, allocated like the editor), {"op": "set", "id": "h000", "set": {"Hbz1":
+    """Create and change objects with an all-or-nothing batch: {"op": "create", "base": "hfoo", "set": {"Name": "Guard",
+    "HP": 500}} (id optional, allocated like the editor; base may be one of the map's custom objects, which copies its
+    stock base and all its modifications, like the editor's copy and paste), {"op": "set", "id": "h000", "set": {"Hbz1":
     {"1": 7, "2": 9}}} (per-level fields take level keys; stock ids such as hgtw work too), {"op": "reset", "id":
-    "h000", "fields": ["uhpm"]}, {"op": "delete", "id": "h000"}. Fields accept raw codes, field names or display
-    names. ops_file: a local JSON file holding the ops array instead of ops."""
+    "h000", "fields": ["uhpm"]}, {"op": "delete", "id": "h000"}. Fields accept raw codes, field names or display names.
+    ops_file: a local JSON file holding the ops array instead of ops."""
     return objdata_ops.objdata_edit(_project(path), _catalog("enUS", balance, True), kind, _ops(ops, ops_file))
 
 
@@ -511,7 +516,7 @@ def placed_edit(path: str, ops: list[dict] | None = None, ops_file: str | None =
     editor defaults (facing 270, z on the terrain, units owned by player 0, items neutral passive; start locations need
     owner, no type). Many adds at once: {"op": "add", "kind": "destructible", <fields shared by all>, "columns":
     ["type", "x", "y", "variation", "angle"], "rows": [["LTlt", -1833, -3653, 2, 113], ...]}. {"op": "scatter", "kind",
-    "types": {"LTlt": 3, "LTlf": 1} (weights) or [ids], "count", area ("rect": [left, bottom, right, top], or "x"/"y"/
+    "types": {"LTlt": 3, "ATtr": 1} (weights) or [ids], "count", area ("rect": [left, bottom, right, top], or "x"/"y"/
     "radius"; default the playable area), "exclude": [{"x", "y", "radius"} | {"rect": [...]}], "min_distance"?,
     "seed"?, "where": "land" (default, no water or boundary) | "water" | "any", ...shared fields} places random
     objects; doodads and destructibles get a random installed variation and their fixed or a random facing.
@@ -536,8 +541,10 @@ def terrain_get(path: str, area: list[float] | None = None,
     whole map), every step-th corner, as grids of rows running south to north. height is the ground height without
     cliffs (ground z = height + (cliff_level - 2) * 128), texture the tile id, water the water surface z or null,
     flags letters r ramp, b blight, w water, x boundary, pathing letters w unwalkable, f unflyable, b unbuildable,
-    B blight from the editor's last save. Also the tile lists and map bounds. At most 65536 corners per call."""
-    return terrain_ops.terrain_get(_project(path), area, layers, step)
+    B blight. pathing comes from the editor's last save (war3map.wpm), or, after terrain_edit and before the next
+    editor save, is derived from the current tiles, cliffs, water and blight without object footprints
+    (pathing_source says which). Also the tile lists and map bounds. At most 65536 corners per call."""
+    return terrain_ops.terrain_get(_project(path), area, layers, step, _catalog("enUS", "Custom_V1", True))
 
 
 @_tool
@@ -545,24 +552,27 @@ def terrain_edit(path: str, ops: list[dict] | None = None, ops_file: str | None 
     """All-or-nothing terrain brushes. Every op is {"op": <brush>, <area>, <settings>}, for example {"op": "paint",
     "tile": "Lgrs", "x": 0, "y": 0, "radius": 384}. Areas (world units): "x"/"y"/"radius" a circle, "rect": [left,
     bottom, right, top], "path": [[x, y], ...] with "width" a stroke along a line (roads), or no area at all for the
-    whole map. Brushes and their settings: raise / lower {"amount", "falloff": smooth|linear|flat}, plateau
-    {"height"} (default: the centre corner's), smooth {"strength" 0..1}, noise {"amount", "seed", "falloff"}, paint
-    {"tile"} (data_search kind=tile, tileset=<letter>), cliff {"level" 0..15, "cliff": cliff tile id}, water
-    {"level": surface z, or null to remove}, ramp / blight / boundary {"value": true|false}. The result reports the
-    map's tile palette and what the ops added to it (a map holds at most 16 ground tiles). Pathing, shadows and the
-    minimap are recomputed by the World Editor on its next save. ops_file: a local JSON file holding the ops array
-    instead of ops."""
+    whole map. Brushes and their settings: raise / lower {"amount", "falloff": smooth|linear|flat}, plateau {"height"}
+    (default: the centre corner's), smooth {"strength" 0..1}, noise {"amount", "seed", "falloff"}, paint {"tile"}
+    (data_search kind=tile, tileset=<letter>), cliff {"level" 0..15, "cliff": cliff tile id}, water {"level": surface z,
+    or null to remove}, ramp / blight / boundary {"value": true|false}. The result reports the map's tile palette and
+    what the ops added to it (a map holds at most 16 ground tiles), and warns when a batch paints an unbuildable or
+    unwalkable tile over more than a few corners (data_search kind=tile shows buildable, walkable and flyable). Pathing,
+    shadows and the minimap are recomputed by the World Editor on its next save. ops_file: a local JSON file holding the
+    ops array instead of ops."""
     return terrain_ops.terrain_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file))
 
 
 @_tool
-def terrain_render(path: str, scale: int | None = None, objects: bool = True, doodads: bool = True) -> Image:
+def terrain_render(path: str, scale: int | None = None, objects: bool = True, doodads: bool = True,
+                   pathing: bool = False) -> Image:
     """Top-down PNG of the map's terrain, north up, scale pixels per tile (default: fits 1024 px): tile colours,
     height shading, darkened cliffs, water, blight and boundary; objects draws regions (cyan), start locations
     (white), units (red) and items (yellow), and with doodads also doodads (magenta), trees (dark green) and other
-    destructibles (orange) as small marks, enough to see coverage, gaps and clumps."""
+    destructibles (orange) as small marks, enough to see coverage, gaps and clumps. pathing=true tints ground on
+    unbuildable tiles red and on unwalkable tiles black, from the current tiles (no editor save needed)."""
     return Image(data=terrain_ops.terrain_render(_project(path), _catalog("enUS", "Custom_V1", True), scale, objects,
-                                                 objects and doodads), format="png")
+                                                 objects and doodads, pathing), format="png")
 
 
 @_tool
@@ -699,11 +709,12 @@ def editor_status() -> dict:
 @_tool
 def editor_map(action: Literal["open", "save", "close", "reload", "compile", "quit", "save_campaign"],
                map_path: str | None = None, discard: bool = False) -> dict:
-    """Map actions in the World Editor. open (map_path; shows that map, or a .w3n campaign in the Campaign Editor,
-    and reports previous_instance: reused when the running editor already showed it, relaunched when it was quit and
-    started again, none when no editor ran), save / compile (the editor regenerates and checks the script; script errors come back per
-    trigger and the editor disables failing triggers), save_campaign (the Campaign Editor's campaign), close, reload
-    (reopen from disk after map_save), quit. Anything that would drop unsaved editor changes
+    """Map actions in the World Editor. open (map_path; shows that map, or a .w3n campaign in the Campaign Editor, and
+    reports previous_instance: reused when the running editor already showed it, relaunched when it was quit and started
+    again, none when no editor ran; an editor showing another map or none is always relaunched, because starting it with
+    the map is the dependable way to open one), save / compile (the editor regenerates and checks the script; script
+    errors come back per trigger and the editor disables failing triggers), save_campaign (the Campaign Editor's
+    campaign), close, reload (reopen from disk after map_save), quit. Anything that would drop unsaved editor changes
     refuses with unsaved_changes unless discard=true: ask the user first."""
     editor = desktop_editor.EDITOR
     if action == "open":
@@ -778,26 +789,26 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
               screenshot: bool = False, probe: bool = False, probe_seconds: float = 10,
               probe_script: str | None = None, probe_script_file: str | None = None) -> dict:
     """Run a map in Warcraft III (windowed; the window needs to be in front while loading). The map script reports
-    results with PreloadGenClear/PreloadGenStart/Preload("text")/PreloadGenEnd("folder\\\\file.txt"); list those
-    files in results (relative to Documents\\Warcraft III\\CustomMapData) and the run ends as soon as all exist.
-    Strings come back unescaped (single backslashes). The game keeps about 259 characters of one Preload string:
-    longer lines come back cut off and are listed in truncated. A loading screen that waits for a key (maps with
-    loading_screen title, subtitle or text) gets a space key press (loading_screen_keys). A Battle.net login screen
-    ends the run after about 30 s with login_required: the game stays open for the user to log in (game_close it
-    before running again). An open dialog
-    (DialogDisplay) pauses a single-player game until someone clicks it, so timers and probe_seconds wait for it:
-    report before the dialog opens (e.g. probe_seconds 0.3). To capture the hero learn menu, the map's test
-    code runs SelectUnit(h, true), waits 0.5 s (TriggerSleepAction), calls ForceUIKey("O") and reports afterwards;
-    a user click in the game window changes what screenshot=true captures.
-    probe=true instead runs a throwaway copy of the map (the open working copy when the map is open) with one added
-    trigger that reports, probe_seconds into the game, the units, heroes, gold and lumber of every playing slot and the
-    BJDebugMsg text: use it to check that a map loads and runs without touching its own triggers. probe_script (or
-    probe_script_file, a local file; either implies probe=true) adds test code in the map's language (JASS or Lua
-    statements, JASS locals first) that runs at that moment and may call the map's own functions and read its udg_
-    globals; ProbeReport(text) writes any length of text, returned in probe.reports. screenshot=true saves a PNG of
-    the game window (screenshot_of says what was captured, or why nothing was). Returns the Preload strings per file,
-    the useful War3Log.txt lines (known-benign shipped-data lines are counted separately in benign_log) and any new
-    crash."""
+    results with PreloadGenClear/PreloadGenStart/Preload("text")/PreloadGenEnd("folder\\\\file.txt"); list those files
+    in results (relative to Documents\\Warcraft III\\CustomMapData) and the run ends as soon as all exist. Strings come
+    back unescaped (single backslashes). The game keeps about 259 characters of one Preload string: longer lines come
+    back cut off and are listed in truncated. A loading screen that waits for a key (maps with loading_screen title,
+    subtitle or text) gets a space key press (loading_screen_keys). A Battle.net login screen ends the run after about
+    30 s with login_required and leaves the game open: once the user has logged in there, call game_test again with the
+    same arguments and it continues in that game (continued_game) instead of launching a new one. Every other run is a
+    new launch that may ask for a login again, so put all checks of a session into as few runs as possible. An open
+    dialog (DialogDisplay) pauses a single-player game until someone clicks it, so timers and probe_seconds wait for it:
+    report before the dialog opens (e.g. probe_seconds 0.3). To capture the hero learn menu, the map's test code runs
+    SelectUnit(h, true), waits 0.5 s (TriggerSleepAction), calls ForceUIKey("O") and reports afterwards; a user click in
+    the game window changes what screenshot=true captures. probe=true instead runs a throwaway copy of the map (the open
+    working copy when the map is open) with one added trigger that reports, probe_seconds into the game, the units,
+    heroes, gold and lumber of every playing slot and the BJDebugMsg text: use it to check that a map loads and runs
+    without touching its own triggers. probe_script (or probe_script_file, a local file; either implies probe=true) adds
+    test code in the map's language (JASS or Lua statements, JASS locals first) that runs at that moment and may call
+    the map's own functions and read its udg_ globals; ProbeReport(text) writes any length of text, returned in
+    probe.reports. screenshot=true saves a PNG of the game window (screenshot_of says what was captured, or why nothing
+    was). Returns the Preload strings per file, the useful War3Log.txt lines (known-benign shipped-data lines are
+    counted separately in benign_log) and any new crash."""
     target, extra = path, {}
     if probe_script is not None and probe_script_file is not None:
         raise ToolError("bad_value", "give probe_script or probe_script_file, not both")
@@ -808,8 +819,10 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
         catalog = _catalog("enUS", None, True)
         opened = _projects.get(_key(path))
         folder = config.home() / "probe"
-        shutil.rmtree(folder, ignore_errors=True)
-        target = str(probe_ops.build(path, folder / Path(path).name, catalog, opened, probe_seconds, probe_script))
+        for old in folder.glob("*"):   # earlier runs; a game still open keeps its copy (the rmtree skips it)
+            shutil.rmtree(old, ignore_errors=True)
+        run = folder / str(time.time_ns()) / Path(path).name   # a new folder per run: never one a game still holds
+        target = str(probe_ops.build(path, run, catalog, opened, probe_seconds, probe_script))
         results = list(results or []) + [probe_ops.REPORT]
         extra["probe_map"] = target
     result = desktop_game.GAME.test(target, timeout=timeout, results=results, close=close, screenshot=screenshot)
