@@ -212,3 +212,31 @@ def test_render_marks_doodads_and_destructibles(tmp_path):
         assert with_marks.getpixel(px) == (0, 90, 0) and plain.getpixel(px) != (0, 90, 0)
     finally:
         project.close(discard=True)
+
+
+@pytest.mark.skipif(not HAVE_INSTALL, reason="needs the install")
+def test_unbuildable_tiles_warn_and_show_in_derived_pathing(tmp_path):
+    from wc3mcp.mpq.writer import write_archive
+
+    catalog = Catalog(_storage())
+    assert catalog.search("tile", "Ybtl")[0].items() >= {"buildable": False, "walkable": True, "flyable": True}.items()
+    assert catalog.get("tile", "Lrok", fields=["name", "buildable"])["fields"] == {"name": "Rock", "buildable": "0"}
+    src = tmp_path / "t.w3x"
+    src.write_bytes(write_archive({"war3map.w3e": w3e.serialize(flat(version=12))}))
+    project = MapProject.open(src)
+    try:
+        result = terrain.terrain_edit(project, catalog, [{"op": "paint", "tile": "Ybtl", "rect": [-512, -512, 0, 512]},
+                                                         {"op": "paint", "tile": "Lgrs", "x": 384, "y": 0, "radius": 1}])
+        assert [w for w in result["warnings"] if "Ybtl" in w] == [
+            "painted 45 corners with Ybtl (Brick): players cannot build on it (CreateUnit still places structures)"]
+        assert not [w for w in result["warnings"] if "Lgrs" in w]
+        terrain.terrain_edit(project, catalog, [{"op": "cliff", "x": 384, "y": 384, "radius": 1, "level": 3}])
+        doc = terrain.terrain_get(project, layers=["pathing"], catalog=catalog)
+        grid = doc["layers"]["pathing"]   # rows south to north, corners 128 apart from -512
+        assert "wpm" not in doc["pathing_source"].split()[0] and grid[0][0] == "b" and grid[4][6] == ""
+        assert grid[7][7] == "wb" and grid[6][6] == "wb" and grid[5][5] == ""
+        image = Image.open(io.BytesIO(terrain.terrain_render(project, catalog, scale=4, objects=False, pathing=True)))
+        red, green, _ = image.getpixel((2, 30))
+        assert red > green + 60
+    finally:
+        project.close(discard=True)

@@ -1,4 +1,5 @@
 """Object data (the Object Editor): map modifications merged over base game data, plus atomic edits."""
+import dataclasses
 import struct
 
 from ..errors import ToolError
@@ -6,6 +7,7 @@ from ..formats import objmods
 from ..formats.binary import FormatError
 from ..formats.objmods import INT, LEVEL_EXTENSIONS, REAL, STRING, UNREAL, Mod, ObjectEntry, ObjectMods
 from ..formats.wts import TRIGSTR, TriggerStrings
+from ..gamedata.catalog import MODEL_FIELDS
 from .strings import file_prefix, load_strings, strings_file
 
 EXTENSIONS = {"unit": "w3u", "item": "w3t", "destructible": "w3b", "doodad": "w3d", "ability": "w3a",
@@ -180,6 +182,16 @@ def objdata_get(project, catalog, kind: str, obj_id: str, fields: list[str] | No
                                         for (rid, level), mod in mods.items() if (rid, level) not in used]
     doc.update({"id": obj_id, "base": base, "custom": custom, "levels": top,
                 "name": _name(catalog, kind, base, mods, strings)})
+    file_field, count_field = MODEL_FIELDS.get(kind, (None, None))
+    file_mod, count_mod = mods.get((file_field, 0)), mods.get((count_field, 0))
+    if "model" in doc and (file_mod or count_mod):   # the map's own model: check that one, imports included
+        file = file_mod.value if file_mod else catalog.field(kind, base, file_field)
+        count = int(count_mod.value) if count_mod else (catalog.model(kind, base) or ("", 1))[1]
+        imported = {f["name"].lower() for f in project.list_files()}
+        paths = catalog.model_paths(file, count) if file else []
+        doc["model"] = {"files": paths, "source": "map", "missing": [
+            p for p in paths if not (catalog.model_exists(p) and catalog.model_exists(p, hd=True))
+            and not {p.lower(), p[:-4].lower() + ".mdx"} & imported]}
     return doc
 
 
@@ -344,9 +356,12 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
                 raise ToolError("bad_op", f"{path}: {action} takes no {sorted(extra)}", hint=_HINT)
             if action == "create":
                 base = op.get("base")
-                if not isinstance(base, str) or base not in base_ids:
+                copied = [] if base in base_ids else [(om, e) for om, custom, e in _entries(files, base) if custom]
+                if not isinstance(base, str) or (base not in base_ids and not copied):
                     raise ToolError("not_found", f"{path}: base {kind} {base!r} does not exist",
-                                    hint="data_search finds base object ids")
+                                    hint="data_search finds stock ids, objdata_list the map's custom ones")
+                if copied:   # a copy of a custom object, as the editor's copy and paste: its stock base and its mods
+                    base = copied[0][1].base_id.decode("latin-1")
                 new = op.get("id")
                 if new is None:
                     new = _next_id(kind, base, taken)
@@ -358,7 +373,10 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
                 created.append(new)
                 base_b, new_b = base.encode("latin-1"), new.encode("latin-1")
                 for om in files:  # the editor lists every object in both the main and the skin file
-                    _entry_in(om, True, base_b, new_b)
+                    entry = _entry_in(om, True, base_b, new_b)
+                    for source in (e for o, e in copied if o is om):
+                        entry.mods += [dataclasses.replace(m, value=strings.resolve(m.value)) if m.var_type == STRING
+                                       else dataclasses.replace(m) for m in source.mods]
                 _set_many(files, catalog, kind, True, base_b, new_b, op.get("set", {}), strings, path)
             elif action == "set":
                 custom, base_b, new_b = _locate(files, base_ids, kind, op.get("id"), path)

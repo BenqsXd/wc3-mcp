@@ -338,6 +338,8 @@ class Catalog:
             return hits[offset:offset + limit]
         if kind in PATH_KINDS:
             exts, needle = PATH_KINDS[kind]
+            if any(c in query for c in "*?[") and ":" not in query:
+                query = "*" + query   # storage ids start with their layer (War3.w3mod:...)
             hits = [p for p in self.storage.list(query)
                     if (not exts or p.lower().endswith(exts)) and needle in p.lower()]
             return _group_layers(hits, kind)[offset:offset + limit]
@@ -370,8 +372,14 @@ class Catalog:
                 continue
             name, of = self.name(kind, obj_id), names.get(letter, "")
             if q in obj_id.casefold() or q in name.casefold() or q in of.casefold():
-                out.append({"id": obj_id, "name": name, "suffix": "", "tileset": letter, "tileset_name": of})
+                out.append({"id": obj_id, "name": name, "suffix": "", "tileset": letter, "tileset_name": of,
+                            **(self.tile_pathing(obj_id) if kind == "tile" else {})})
         return out[offset:offset + limit]
+
+    def tile_pathing(self, tile: str) -> dict:
+        """Whether ground of this tile lets players build, units walk and flyers fly (TerrainArt/Terrain.slk)."""
+        row = self._row("tile", tile) or {}
+        return {k: row.get(k, "1") != "0" for k in ("buildable", "walkable", "flyable")}
 
     def get(self, kind: str, obj_id: str, fields: list[str] | None = None) -> dict:
         self._check(kind)
@@ -386,8 +394,9 @@ class Catalog:
             row = self._row(kind, obj_id)
             if row is None:
                 raise missing
+            wanted = {f.lower() for f in fields} if fields else None
             return {"kind": kind, "id": obj_id, "name": self.name(kind, obj_id),
-                    "fields": {k: self.westring(v) for k, v in row.items()}}
+                    "fields": {k: self.westring(v) for k, v in row.items() if wanted is None or k.lower() in wanted}}
         spec = OBJECT_KINDS[kind]
         if obj_id not in self.table(spec.slks[spec.id_slk]).rows:
             raise missing

@@ -32,7 +32,7 @@ DERIVED_WARNING = ("war3map.wpm (pathing), war3map.shd (shadows) and war3map.mmp
                    "the World Editor only: editor_map open + save refreshes them")
 _HINT = ('ops: {"op": "add", "kind": "unit", "type": "hfoo", "x": 0, "y": 0, "owner": 0}, {"op": "add", "kind": '
          '"destructible", "columns": ["type", "x", "y"], "rows": [["LTlt", 0, 0], ["LTlt", 128, 0]]}, {"op": "scatter", '
-         '"kind": "destructible", "types": {"LTlt": 3, "LTlf": 1}, "count": 200, "rect": [-2048, -2048, 2048, 2048], '
+         '"kind": "destructible", "types": {"LTlt": 3, "ATtr": 1}, "count": 200, "rect": [-2048, -2048, 2048, 2048], '
          '"exclude": [{"x": 0, "y": 0, "radius": 600}], "min_distance": 96, "seed": 1}, {"op": "set", "ref": '
          '"unit:12", "life": 50}, {"op": "move", "ref": "doodad:3", "x": 128, "y": -64}, {"op": "delete", "ref": '
          '"item:7"}; placed_list shows refs and fields')

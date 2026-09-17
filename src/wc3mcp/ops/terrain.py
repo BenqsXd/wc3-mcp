@@ -4,6 +4,7 @@ water surface z, drawn only where it is above the ground."""
 import io
 import math
 import random
+from collections import Counter
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -28,6 +29,11 @@ _HINT = ('each op is {"op": <brush>, <area>, <settings>}. Areas: "x"/"y"/"radius
          '512, 512], "height": 0}, {"op": "paint", "tile": "Lgrs"}, {"op": "paint", "tile": "Ldrt", "path": [[0, 0], '
          '[512, 0], [512, 512]], "width": 192}, {"op": "cliff", "x": 0, "y": 0, "radius": 256, "level": 3}, '
          '{"op": "water", "rect": [0, 0, 1024, 1024], "level": -64}')
+PAINT_WARN_CORNERS = 16   # painting fewer corners of an unbuildable tile is detail, not a zone
+PATHING_EFFECTS = {"buildable": "players cannot build on it (CreateUnit still places structures)",
+                   "walkable": "ground units cannot walk on it"}
+DERIVED_PATHING = ("derived from the current tiles, cliffs, water and blight because war3map.wpm predates the last "
+                   "terrain_edit (or is missing); doodad, destructible and building footprints are not included")
 AREA_KEYS = {"x", "y", "radius", "rect", "path", "width"}
 BRUSH_KEYS = {
     "raise": {"amount", "falloff"}, "lower": {"amount", "falloff"}, "plateau": {"height"}, "smooth": {"strength"},
@@ -74,7 +80,27 @@ def _bounds(t: w3e.Terrain) -> list[float]:
 
 
 # ---- get -----------------------------------------------------------------------------------------------------
-def terrain_get(project, area: list | None = None, layers: list | None = None, step: int = 1) -> dict:
+def _corner_pathing(t: w3e.Terrain, catalog, cx: int, cy: int, cache: dict) -> str:
+    """wpm-style letters for a corner from the terrain alone: w unwalkable, f unflyable, b unbuildable, B blight."""
+    c = w3e.corner(t, cx, cy)
+    tile = t.tiles[c["texture"]].decode("latin-1") if c["texture"] < len(t.tiles) else None
+    if tile not in cache:
+        cache[tile] = catalog.tile_pathing(tile) if tile and catalog is not None else {}
+    flags = cache[tile]
+    letters = {k for k, name in (("w", "walkable"), ("f", "flyable"), ("b", "buildable")) if not flags.get(name, True)}
+    near = [(nx, ny) for nx in (cx - 1, cx, cx + 1) for ny in (cy - 1, cy, cy + 1)
+            if 0 <= nx < t.width and 0 <= ny < t.height]
+    if not c["ramp"] and any(w3e.corner(t, nx, ny)["layer"] != c["layer"] for nx, ny in near):
+        letters |= {"w", "b"}   # a cliff edge
+    ground = _height(c["height"]) + (c["layer"] - 2) * 128
+    if c["water"] and _height(c["water_level"]) + WATER_OFFSET > ground:
+        letters.add("b")
+    if c["blight"]:
+        letters.add("B")
+    return "".join(k for k in "wfbB" if k in letters)
+
+
+def terrain_get(project, area: list | None = None, layers: list | None = None, step: int = 1, catalog=None) -> dict:
     t, _ = _load(project)
     layers = list(DEFAULT_LAYERS if layers is None else layers)
     unknown = [x for x in layers if x not in LAYERS]
@@ -92,13 +118,14 @@ def terrain_get(project, area: list | None = None, layers: list | None = None, s
     if len(columns) * len(rows) > MAX_CORNERS:
         raise ToolError("too_large", f"{len(columns)}x{len(rows)} corners is more than {MAX_CORNERS}",
                         hint="pass a smaller area or a larger step")
-    pathing = None
+    pathing, derived, cache = None, False, {}
     if "pathing" in layers:
         data = _read(project, "war3map.wpm")
         try:
             pathing = wpm.parse(data) if data is not None else None
         except FormatError:
             pathing = None
+        derived = pathing is None or bool(project.notes().get("terrain_edited"))
     grids = {name: [] for name in layers}
     for cy in rows:
         line = {name: [] for name in layers}
@@ -115,7 +142,9 @@ def terrain_get(project, area: list | None = None, layers: list | None = None, s
             if "flags" in line:
                 line["flags"].append("".join(k for k, name in (("r", "ramp"), ("b", "blight"), ("w", "water"),
                                                                  ("x", "boundary")) if c[name]))
-            if "pathing" in line:
+            if "pathing" in line and derived:
+                line["pathing"].append(_corner_pathing(t, catalog, cx, cy, cache))
+            elif "pathing" in line:
                 cell = None
                 if pathing is not None:
                     px, py = min(cx * 4, pathing.width - 1), min(cy * 4, pathing.height - 1)
@@ -131,7 +160,9 @@ def terrain_get(project, area: list | None = None, layers: list | None = None, s
             "window": {"left": _xy(t, c0, r0)[0], "bottom": _xy(t, c0, r0)[1], "step": step, "columns": len(columns),
                        "rows": len(rows), "note": "rows run south to north; row j, column i is at (left + i * step * "
                                                   "128, bottom + j * step * 128)"},
-            "layers": grids}
+            "layers": grids,
+            **({"pathing_source": DERIVED_PATHING if derived else "war3map.wpm from the last World Editor save"}
+               if "pathing" in layers else {})}
 
 
 def _area(area) -> list[float]:
@@ -165,6 +196,7 @@ class _Brush:
 
     def __init__(self, t: w3e.Terrain, catalog=None):
         self.t, self.catalog, self.added = t, catalog, {"tiles": [], "cliff_tiles": []}
+        self.painted: dict[tuple[int, int], int] = {}   # corner -> tile index painted by this batch
 
     def _window(self, left: float, bottom: float, right: float, top: float):
         t = self.t
@@ -254,6 +286,7 @@ class _Brush:
             index = self._tile_index(op.get("tile"), f"{path}.tile")
             for cx, cy, _ in corners:
                 w3e.set_corner(t, cx, cy, texture=index, ground_variation=VARIATIONS[(cx * 7 + cy * 13) % len(VARIATIONS)])
+                self.painted[(cx, cy)] = index
         elif kind == "cliff":
             level = _int(op.get("level"), f"{path}.level", 0, 15)
             fields = {"layer": level}
@@ -329,8 +362,15 @@ def terrain_edit(project, catalog, ops: list) -> dict:
     if changed:
         project.write("war3map.w3e", data)
         project.note("terrain_edited")   # map_validate warns until the World Editor recomputes the derived files
-    return {"changed": changed, "palette": _palette(t), "palette_added": brush.added,
-            "warnings": [DERIVED_WARNING] if changed else []}
+    warnings = [DERIVED_WARNING] if changed else []
+    for index, count in sorted(Counter(brush.painted.values()).items()):
+        tile = t.tiles[index].decode("latin-1")
+        flags = catalog.tile_pathing(tile) if catalog is not None else {}
+        effects = [effect for name, effect in PATHING_EFFECTS.items() if not flags.get(name, True)]
+        if count >= PAINT_WARN_CORNERS and effects:
+            warnings.append(f"painted {count} corners with {tile} ({catalog.name('tile', tile)}): "
+                            + " and ".join(effects))
+    return {"changed": changed, "palette": _palette(t), "palette_added": brush.added, "warnings": warnings}
 
 
 # ---- render --------------------------------------------------------------------------------------------------
@@ -356,10 +396,12 @@ def _tile_color(catalog, tile: str, cache: dict) -> tuple[int, int, int]:
     return cache[tile]
 
 
-def terrain_render(project, catalog, scale: int | None = None, objects: bool = True, doodads: bool = True) -> bytes:
+def terrain_render(project, catalog, scale: int | None = None, objects: bool = True, doodads: bool = True,
+                   pathing: bool = False) -> bytes:
     """PNG of the map from above, north up: tile colours, height shading, cliffs, water, blight, boundary, and
     optionally regions (cyan), start locations (white), units (red) and items (yellow), with doodads (magenta), trees
-    (dark green) and other destructibles (orange) under them."""
+    (dark green) and other destructibles (orange) under them. pathing tints ground whose tile is unbuildable red and
+    unwalkable black, from the current tiles."""
     t, _ = _load(project)
     w, h = t.width - 1, t.height - 1
     scale = scale or max(1, min(8, 1024 // max(w, h, 1)))
@@ -386,6 +428,11 @@ def terrain_render(project, catalog, scale: int | None = None, objects: bool = T
     wet = (flag(2) == 1) & (depth > 0)
     rgb[wet] = rgb[wet] * 0.25 + (np.array([40, 90, 160]) * (1 - np.clip(depth[wet], 0, 512) / 1024)[:, None]) * 0.75
     rgb[flag(3) == 1] *= 0.35
+    if pathing:
+        flags = [catalog.tile_pathing(x.decode("latin-1")) for x in t.tiles] or [{}]
+        for name, tint in (("buildable", (220, 30, 30)), ("walkable", (0, 0, 0))):
+            bad = np.array([not f.get(name, True) for f in flags])[index]
+            rgb[bad] = rgb[bad] * 0.4 + np.array(tint) * 0.6
     image = Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8)[::-1], "RGB")
     image = image.resize((w * scale, h * scale), Image.NEAREST)
     if objects:

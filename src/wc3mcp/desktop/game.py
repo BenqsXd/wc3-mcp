@@ -1,6 +1,7 @@
 """Game test runs: launch Warcraft III windowed on a map, collect Preload result files written by the map script
 (PreloadGenEnd into Documents\\Warcraft III\\CustomMapData), keep the useful War3Log.txt lines, close the game.
 Only processes started here are ever closed."""
+import hashlib
 import re
 import subprocess
 import time
@@ -97,6 +98,8 @@ def _result_path(name: str) -> Path:
 class Game:
     def __init__(self):
         self.launched: dict[int, subprocess.Popen] = {}
+        # the game a login_required run left open: (process, launch time, map digest, results)
+        self.waiting: tuple[subprocess.Popen, float, str, list[str]] | None = None
 
     @staticmethod
     def exe() -> Path:
@@ -147,20 +150,28 @@ class Game:
         if not exe.is_file():
             raise ToolError("no_install", f"{exe} not found", hint="set WC3MCP_INSTALL")
         wanted = {name: _result_path(name) for name in results or []}
-        for path in wanted.values():
-            path.unlink(missing_ok=True)  # never read a stale result from an earlier run
+        digest = hashlib.sha256(target.read_bytes()).hexdigest() if target.is_file() else str(target)
+        waiting, self.waiting = self.waiting, None
+        attached = bool(waiting and waiting[0].poll() is None and waiting[2:] == (digest, sorted(wanted)))
+        if waiting and not attached:
+            self._close(waiting[0])   # a different test: the game left open for a login holds its own map
         crashes = self._crash_folders()
         previous = win32gui.GetForegroundWindow()
         started = time.time()
-        process = subprocess.Popen([str(exe), "-launch", "-loadfile", str(target), "-windowmode", "windowed",
-                                    "-nowfpause"], cwd=exe.parent)
-        self.launched[process.pid] = process
+        if attached:   # the same test again after the user logged in: continue in that game, no new launch
+            process, launched_at = waiting[0], waiting[1]
+        else:
+            for path in wanted.values():
+                path.unlink(missing_ok=True)  # never read a stale result from an earlier run
+            process, launched_at = subprocess.Popen([str(exe), "-launch", "-loadfile", str(target), "-windowmode",
+                                                     "windowed", "-nowfpause"], cwd=exe.parent), started
+            self.launched[process.pid] = process
         found: dict[str, list[str]] = {}
         focused_at, running, raised = 0.0, False, 0
         checked_at, login_since, keys = 0.0, None, 0
         while time.time() - started < timeout and process.poll() is None:
             # the game only loads the map while its window is in front: keep it there until the map runs
-            running = running or any("Activating WebUI" in line for line in self._log_lines(started - 5))
+            running = running or any("Activating WebUI" in line for line in self._log_lines(launched_at - 5))
             if not running and time.time() - focused_at > 5:
                 window = self.window(process.pid)
                 if window:
@@ -188,7 +199,7 @@ class Game:
             if wanted and len(found) == len(wanted):
                 break
             time.sleep(1)
-        log, benign, missing_files = split_log(self._log_lines(started - 5))
+        log, benign, missing_files = split_log(self._log_lines(launched_at - 5))
         result = {"seconds": round(time.time() - started, 1), "pid": process.pid, "results": found,
                   "missing": [n for n in wanted if n not in found], "exited_early": process.poll() is not None,
                   "log": log[-200:], "benign_log": {"count": len(benign), "examples": benign[:3], "note": BENIGN_NOTE},
@@ -205,11 +216,14 @@ class Game:
             result["truncated_note"] = ("these result lines (indexes per file) reach the Preload limit of about 259 "
                                         "characters, so the game probably cut them off: split long reports into "
                                         "several Preload calls")
+        if attached:
+            result["continued_game"] = True
         if login:
+            self.waiting = (process, launched_at, digest, sorted(wanted))
             result["login_required"] = True
             result["hint"] = ("the game shows the Battle.net login screen: ask the user to log in there (with 'Keep me "
-                              "logged in'). The game was left open for that; afterwards game_close it and run the "
-                              "test again")
+                              "logged in'), then call game_test again with the same arguments: it continues in that "
+                              "game instead of launching a new one, which could ask for a login again")
         elif result["missing"]:
             result["hint"] = ("no result file was written: the map script failed (script_validate), the game stayed on "
                               f"a login screen, the map did not get that far before timeout, or {PAUSE_NOTE}")
