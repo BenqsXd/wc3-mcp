@@ -543,7 +543,8 @@ def terrain_get(path: str, area: list[float] | None = None,
     flags letters r ramp, b blight, w water, x boundary, pathing letters w unwalkable, f unflyable, b unbuildable,
     B blight. pathing comes from the editor's last save (war3map.wpm), or, after terrain_edit and before the next
     editor save, is derived from the current tiles, cliffs, water and blight without object footprints
-    (pathing_source says which). Also the tile lists and map bounds. At most 65536 corners per call."""
+    (pathing_source says which). An area narrower than the 128-unit corner spacing uses the nearest corner line
+    (window.snapped). Also the tile lists and map bounds. At most 65536 corners per call."""
     return terrain_ops.terrain_get(_project(path), area, layers, step, _catalog("enUS", "Custom_V1", True))
 
 
@@ -597,8 +598,12 @@ def script_validate(path: str) -> dict:
 def map_validate(path: str) -> dict:
     """Cross-file checks of an open map: script language vs script files, GUI trigger code against TriggerData and
     variables, trigger names, references to generated objects, TRIGSTR strings, object data base ids and fields,
-    imports. Errors break the map; warnings are defects that shipped maps also carry, plus a reminder while terrain
-    edits are newer than the pathing, shadow and minimap files only the World Editor recomputes."""
+    imports, placed objects without a loadable model. Errors break the map; warnings are defects that shipped maps also
+    carry, a reminder while terrain edits are newer than the pathing, shadow and minimap files only the World Editor
+    recomputes, and object data pitfalls: command_card (a building's trained units, researches, abilities, Rally or
+    Cancel on one button position, unless its stock base has the same clash), inherited_builds (a copied unit with its
+    own uabi that keeps its base's build list ubui) and locked_ability (an ability whose required research no unit of
+    the map researches and the script never mentions; skipped on melee maps)."""
     return script_ops.map_validate(_project(path), _catalog("enUS", "Custom_V1", True))
 
 
@@ -787,7 +792,8 @@ def editor_log(lines: int = 200) -> dict:
 @_tool
 def game_test(path: str, timeout: float = 240, results: list[str] | None = None, close: bool = True,
               screenshot: bool = False, probe: bool = False, probe_seconds: float = 10,
-              probe_script: str | None = None, probe_script_file: str | None = None) -> dict:
+              probe_script: str | None = None, probe_script_file: str | None = None,
+              probe_functions: str | None = None) -> dict:
     """Run a map in Warcraft III (windowed; the window needs to be in front while loading). The map script reports
     results with PreloadGenClear/PreloadGenStart/Preload("text")/PreloadGenEnd("folder\\\\file.txt"); list those files
     in results (relative to Documents\\Warcraft III\\CustomMapData) and the run ends as soon as all exist. Strings come
@@ -802,19 +808,23 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
     SelectUnit(h, true), waits 0.5 s (TriggerSleepAction), calls ForceUIKey("O") and reports afterwards; a user click in
     the game window changes what screenshot=true captures. probe=true instead runs a throwaway copy of the map (the open
     working copy when the map is open) with one added trigger that reports, probe_seconds into the game, the units,
-    heroes, gold and lumber of every playing slot and the BJDebugMsg text: use it to check that a map loads and runs
-    without touching its own triggers. probe_script (or probe_script_file, a local file; either implies probe=true) adds
-    test code in the map's language (JASS or Lua statements, JASS locals first) that runs at that moment and may call
-    the map's own functions and read its udg_ globals; ProbeReport(text) writes any length of text, returned in
-    probe.reports. screenshot=true saves a PNG of the game window (screenshot_of says what was captured, or why nothing
-    was). Returns the Preload strings per file, the useful War3Log.txt lines (known-benign shipped-data lines are
-    counted separately in benign_log) and any new crash."""
+    heroes, gold and lumber of every playing slot and the text the map shows (BJDebugMsg, DisplayTextToPlayer,
+    DisplayTimedTextToPlayer, DisplayTextToForce, DisplayTimedTextToForce) in probe.messages: use it to check that a map
+    loads and runs without touching its own triggers. probe_script (or probe_script_file, a local file; either implies
+    probe=true) adds test code in the map's language (JASS or Lua statements, JASS locals first) that runs at that
+    moment and may call the map's own functions, read its udg_ globals and wait (TriggerSleepAction; runs of 700 s of
+    waits worked); ProbeReport(text) writes any length of text, returned in probe.reports;
+    ProbeCountEvent(EVENT_PLAYER_UNIT_CONSTRUCT_START, "starts") counts a player-unit event from then on and
+    ProbeEventCount("starts") reads the count. probe_functions adds whole functions of the caller (callbacks for its own
+    triggers) before the probe code. screenshot=true saves a PNG of the game window (screenshot_of says what was
+    captured, or why nothing was). Returns the Preload strings per file, the useful War3Log.txt lines (known-benign
+    shipped-data lines are counted separately in benign_log) and any new crash."""
     target, extra = path, {}
     if probe_script is not None and probe_script_file is not None:
         raise ToolError("bad_value", "give probe_script or probe_script_file, not both")
     if probe_script_file is not None:
         probe_script = triggers_ops.read_text_file(probe_script_file, "probe_script_file")
-    probe = probe or probe_script is not None
+    probe = probe or probe_script is not None or probe_functions is not None
     if probe:
         catalog = _catalog("enUS", None, True)
         opened = _projects.get(_key(path))
@@ -822,7 +832,7 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
         for old in folder.glob("*"):   # earlier runs; a game still open keeps its copy (the rmtree skips it)
             shutil.rmtree(old, ignore_errors=True)
         run = folder / str(time.time_ns()) / Path(path).name   # a new folder per run: never one a game still holds
-        target = str(probe_ops.build(path, run, catalog, opened, probe_seconds, probe_script))
+        target = str(probe_ops.build(path, run, catalog, opened, probe_seconds, probe_script, probe_functions))
         results = list(results or []) + [probe_ops.REPORT]
         extra["probe_map"] = target
     result = desktop_game.GAME.test(target, timeout=timeout, results=results, close=close, screenshot=screenshot)

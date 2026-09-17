@@ -112,6 +112,13 @@ def terrain_get(project, area: list | None = None, layers: list | None = None, s
     r0 = max(0, math.ceil((bottom - t.offset_y) / 128))
     c1 = min(t.width - 1, math.floor((right - t.offset_x) / 128))
     r1 = min(t.height - 1, math.floor((top - t.offset_y) / 128))
+    snapped = []
+    if c0 > c1 and right >= t.offset_x and left <= t.offset_x + (t.width - 1) * 128:   # between two corner lines
+        c0 = c1 = min(t.width - 1, max(0, round(((left + right) / 2 - t.offset_x) / 128)))
+        snapped.append("x")
+    if r0 > r1 and top >= t.offset_y and bottom <= t.offset_y + (t.height - 1) * 128:
+        r0 = r1 = min(t.height - 1, max(0, round(((bottom + top) / 2 - t.offset_y) / 128)))
+        snapped.append("y")
     columns, rows = range(c0, c1 + 1, step), range(r0, r1 + 1, step)
     if not columns or not rows:
         raise _bad("area", f"no terrain corners inside {area}; the map spans {_bounds(t)}")
@@ -159,7 +166,9 @@ def terrain_get(project, area: list | None = None, layers: list | None = None, s
             "bounds": _bounds(t),
             "window": {"left": _xy(t, c0, r0)[0], "bottom": _xy(t, c0, r0)[1], "step": step, "columns": len(columns),
                        "rows": len(rows), "note": "rows run south to north; row j, column i is at (left + i * step * "
-                                                  "128, bottom + j * step * 128)"},
+                                                  "128, bottom + j * step * 128)",
+                       **({"snapped": f"the area held no corner line in {' and '.join(snapped)}, so the nearest one "
+                                      "is used (corners lie 128 apart from the map edge)"} if snapped else {})},
             "layers": grids,
             **({"pathing_source": DERIVED_PATHING if derived else "war3map.wpm from the last World Editor save"}
                if "pathing" in layers else {})}
@@ -458,9 +467,12 @@ def terrain_render(project, catalog, scale: int | None = None, objects: bool = T
         mark = max(0.5, scale / 4)
         for d in placed:
             row = destructibles.get(d.id.decode("latin-1"))
-            color = (200, 0, 200) if row is None else (0, 90, 0) if "tree" in (row.get("targType") or "") else (255, 140, 0)
+            tree = row is not None and "tree" in (row.get("targType") or "")
+            color = (200, 0, 200) if row is None else (0, 90, 0) if tree else (255, 140, 0)
             x, y = px(d.x, d.y)
-            draw.ellipse([x - mark, y - mark, x + mark, y + mark], fill=color)
+            # a light rim keeps dark tree marks visible on dark grass
+            rim = (210, 255, 170) if tree and mark >= 1.5 else None
+            draw.ellipse([x - mark, y - mark, x + mark, y + mark], fill=color, outline=rim)
         udata = _read(project, "war3mapUnits.doo")
         try:
             units = unitsdoo.parse(udata).units if udata else []

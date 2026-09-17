@@ -25,13 +25,15 @@ def test_parse_report():
 
 def test_debug_messages_reach_the_report():
     script = ("globals\n    integer udg_x = 0\nendglobals\nfunction A takes nothing returns nothing\n"
-              '    call BJDebugMsg("a")\n    call BJDebugMsgX()\nendfunction\n')
+              '    call BJDebugMsg("a")\n    call BJDebugMsgX()\n'
+              '    call DisplayTimedTextToPlayer(GetLocalPlayer(), 0, 0, 5, "b")\nendfunction\n')
     routed = probe.route_messages(script)
     assert routed.index("string array wc3mcpProbe_messages") < routed.index("endglobals")
     assert routed.index("function wc3mcpProbe_Msg") < routed.index("function A")
     assert 'call wc3mcpProbe_Msg("a")' in routed and "call BJDebugMsgX()" in routed
+    assert 'call wc3mcpProbe_DisplayTimedTextToPlayer(GetLocalPlayer(), 0, 0, 5, "b")' in routed
     assert routed.count("call BJDebugMsg(s)") == 1   # the route itself still shows the message
-    assert "BJDebugMsg = function(s)" in probe.script("lua", 5) and "heroes" in probe.script("jass", 5)
+    assert '"DisplayTimedTextToPlayer"' in probe.script("lua", 5) and "heroes" in probe.script("jass", 5)
 
 
 @pytest.mark.skipif(not HAVE_INSTALL, reason="needs the Warcraft III install")
@@ -87,6 +89,25 @@ def test_probe_script_compiles_into_the_copy(tmp_path):
     with pytest.raises(ToolError) as e:
         probe.build(source, tmp_path / "probe2" / maps[0].name, catalog, user="call NoSuchNative()")
     assert e.value.code == "probe_script_failed" and "probe_script" in e.value.hint
+    functions = ("function OnBuild takes nothing returns nothing\n"
+                 '    call DisplayTimedTextToPlayer(GetLocalPlayer(), 0, 0, 5, "built")\nendfunction\n')
+    user = ("local trigger t = CreateTrigger()\n"
+            "call TriggerRegisterAnyUnitEventBJ(t, EVENT_PLAYER_UNIT_CONSTRUCT_FINISH)\n"
+            "call TriggerAddAction(t, function OnBuild)\n"
+            'call ProbeCountEvent(EVENT_PLAYER_UNIT_CONSTRUCT_START, "starts")\n'
+            "call TriggerSleepAction(5)\n"
+            'call ProbeReport("starts=" + I2S(ProbeEventCount("starts")))')
+    copy = probe.build(source, tmp_path / "probe3" / maps[0].name, catalog, user=user, functions=functions)
+    project = MapProject.open(copy)
+    try:
+        text = project.read("war3map.j").decode("utf-8", "replace")
+        assert text.index("function OnBuild") < text.index("function Trig_wc3mcpProbe_User")
+        assert "hashtable wc3mcpProbe_table" in text and "wc3mcpProbe_DisplayTimedTextToPlayer(GetLocalPlayer()" in text
+    finally:
+        project.close(discard=True)
+    with pytest.raises(ToolError) as e:
+        probe.build(source, tmp_path / "probe4" / maps[0].name, catalog, functions="function Broken takes nothing")
+    assert e.value.code == "probe_script_failed" and "probe_functions" in e.value.hint
 
 
 def test_probe_script_can_call_the_maps_own_functions(tmp_path):
