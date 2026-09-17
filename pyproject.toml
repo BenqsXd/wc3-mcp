@@ -2,6 +2,8 @@
 name = "wc3mcp"
 version = "0.7.0"
 description = "MCP server for making Warcraft III maps and operating the World Editor"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.13"
 dependencies = ["mcp>=1.27,<2", "pywin32>=306", "numpy>=2", "pillow>=11"]
 

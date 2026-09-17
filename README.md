@@ -128,3 +128,8 @@ uv run pytest -m game      # launches Warcraft III (log in to Battle.net when as
 ```
 
 Design notes and phase plans are in `docs/superpowers`.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Free to use, change and share, for personal projects and others.
+Warcraft III and its game data belong to Blizzard Entertainment; this project reads a local install and ships none of it.
