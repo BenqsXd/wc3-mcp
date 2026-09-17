@@ -38,6 +38,7 @@ Generated placements and terrain passes are mechanical. Keep them out of the con
 
 - A map spans `tiles × 128` world units centred on the origin (96×96: −6144..6144). The playable area is 12 tiles narrower and shorter and is **not** centred (a 96×96 map: `[-5376, -5632, 5376, 5120]`). `placed_list` returns both under `bounds`.
 - Every `terrain_edit` op is a flat object: `{"op": "paint", "tile": "Lgrs", "x": 0, "y": 0, "radius": 384}`. A nested form such as `{"paint": {...}}` fails with `bad_op`. Areas: `"x"/"y"/"radius"`, `"rect": [left, bottom, right, top]`, `"path": [[x, y], ...]` with `"width"` (roads), or **no area** for the whole map. Do not send 50 circles for what one rect or path does.
+- Brushes known to work: `paint`, `noise` (`amount`, `seed`, `falloff`; over the whole map for gentle hills) and `plateau` (a circle flattened to the height of its centre corner).
 - A map holds at most 16 ground tiles. A new map already holds all of its tileset's tiles plus 2 cliff tiles: Ashenvale (`A`) 8 tiles (8 free), Lordaeron Summer (`L`) 6 tiles, `Ldrt, Ldro, Ldrg, Lrok, Lgrs, Lgrd` (10 free). `terrain_get` and every `terrain_edit` result report the palette (`tiles`, `free`) and what the edit added (`palette_added`).
 - `map_new` takes sizes from 32 to 480 in steps of 32. It fills the map with the tileset's first tile, which is often dirt, not grass (`Ldrt` for Lordaeron Summer, `Adrt` for Ashenvale). Pass `fill_tile` and read `fill_tile` in the result: a road in the ground tile shows nothing.
 - `data_search kind=tile` results carry `tileset` and `tileset_name`; `query="Ashenvale"` finds that tileset's tiles by name.
@@ -46,7 +47,7 @@ Generated placements and terrain passes are mechanical. Keep them out of the con
 
 ## Placed objects and start locations
 
-- `map_new` places the start locations inside the playable area. Move one with `placed_edit` `{"op": "move", "ref": "start_location:N", ...}`: it also moves the player's start in `war3map.w3i` (the position the map script uses) and reports `synced`. `info_edit players[N].start` alone does not move the marker; `map_validate` warns when the two disagree.
+- `map_new` places the start locations well inside the playable area (64×64, 4 players: `(±1632, 1376)` and `(±1632, -1888)`; 8 players: a ring of radius about 2336 around `(0, -256)`). Move one with `placed_edit` `{"op": "move", "ref": "start_location:N", ...}`: it also moves the player's start in `war3map.w3i` (the position the map script uses) and reports `synced`. `info_edit players[N].start` alone does not move the marker; `map_validate` warns when the two disagree.
 - Useful `add` fields: `owner`, `angle`, `variation`, `scale`, `acquisition: "camp"` (creep camp behaviour), `drops: {"sets": [[{"item": "phea", "chance": 100}]]}`.
 - The World Editor clamps a doodad's or destructible's scale to its type's minimum and maximum (`dmis`/`dmas`, `bmis`/`bmas`) when it saves: `ZPsh` placed at 1.55 reads back as 1.2. `placed_edit` warns when a scale is out of range. For bigger objects, create a custom type with a higher maximum (`objdata_edit`) and place that.
 - Placed-object refs stay stable across a World Editor save: the same ref still names the same object.
@@ -69,19 +70,30 @@ The World Editor draws classic (SD) models, and some HD models have no classic c
 - A `"script"` trigger runs only through the editor's `InitTrig_<script name>` function, which assigns `gg_trg_<name> = CreateTrigger()`. Send the actions alone and the tools add that wrapper (the result says what was added), or write the whole thing yourself. The script name is the trigger name with every character outside `A-Z a-z 0-9 _` turned into `_` (`gg_trg_<script name>`), so identifier-safe names keep the script readable and unambiguous.
 - `run_on_init` makes a script trigger run at map start. A GUI trigger runs at map start through the event `{"fn": "MapInitializationEvent"}`.
 - A `trigger` op naming an existing trigger replaces it (`created` stays empty). To change a few lines of a long script, use `{"op": "script_replace", "name": "SWTest", "old": "2900.0, -500.0", "new": "2900.0, -250.0"}` (or `"header": true` for the map header) instead of resending the whole script; `old` must occur exactly once.
+- Trigger code is emitted in trigger-tree order: a function defined in an earlier trigger (or category) can be called from a later one, not the other way round. Put shared helper functions in the first triggers.
 - `validate=true` returns pjass / Lua errors straight away, each with `script_line`, its line inside the script you sent. Without it, `triggers_edit` warns that the map script is not regenerated yet; `map_save` or `script_build` regenerates it.
 - `map_save` compiles a regenerated or edited script and refuses to save when it does not compile; `validation.script` shows the result.
-- `{"op": "delete", "what": "variable", "name": ...}` removes a global; it refuses while triggers use it.
-- `variable` ops create GUI globals, emitted as `udg_<Name>`; `array_size` makes an array. Types known to work: `integer`, `real`, `boolean`, `unit`, `leaderboard`, `timer`, `timerdialog`.
+- `{"op": "delete", "what": "variable" | "trigger" | "category", "name": ...}` removes a global (refused while triggers use it), a trigger, or an empty category.
+- `variable` ops create GUI globals, emitted as `udg_<Name>`; `array_size` makes an array. Types known to work: `integer`, `real`, `boolean`, `string`, `unit`, `hashtable`, `dialog`, `leaderboard`, `timer`, `timerdialog`. The generated `InitGlobals` initializes arrays for indices `0..array_size` inclusive, and a `dialog` array gets `DialogCreate()` for each of them. A `hashtable` variable starts as `null`: call `InitHashtable()` first.
+- A `run_on_init` trigger already sees the preplaced units: `GroupEnumUnitsOfPlayer(g, Player(PLAYER_NEUTRAL_AGGRESSIVE), null)` enumerates the creeps.
 - Deleting the default `Melee Initialization` trigger removes all melee behaviour (starting units, victory and defeat), which a non-melee map needs.
-- The Reforged natives `BlzSetUnitMaxHP`, `GetEventDamageSource` and the event `EVENT_PLAYER_UNIT_DAMAGED` (with `TriggerRegisterAnyUnitEventBJ`) pass pjass and work in the game.
+- Reforged natives that pass pjass and work in the game: `BlzSetUnitMaxHP`, `BlzGetUnitMaxHP`, `GetEventDamageSource`, `BlzSetEventDamage`, `BlzGetUnitAbilityCooldownRemaining`, `BlzSetAbilityResearchTooltip`, `BlzSetAbilityResearchExtendedTooltip`, `BlzGetAbilityResearchTooltip`, `BlzGetUnitAbility`, `BlzGetAbilityStringField` / `BlzSetAbilityStringField`, and the event `EVENT_PLAYER_UNIT_DAMAGED` (with `TriggerRegisterAnyUnitEventBJ`).
 
 ## Map info and object data
 
 - `info_edit` `set` of a whole list (`forces`, `players`) replaces it, and every element must be complete, including `unknown_flag_bits`. Read the shape from `info_get` first.
 - `objdata_edit` `create` takes an explicit `id` (`"h000"`) or allocates one like the editor. `set` also works on stock ids (`hgtw`), which makes modified standard objects.
 - Fields take raw codes, for example `ubui` (structures built), `ureq` (requirements), `ugol` / `ulum` (gold / lumber cost), `ubld` (build time), `umvs` (movement speed), or `Name`. Setting `ureq` to `""` removes a building's tech requirements.
-- Per-level ability fields take level keys: `{"aran": {"1": 620}}`, `{"acdn": {"1": 20}}`. Other fields take plain values (`"aher": 0`, `"alev": 1`). A unit's ability list `uabi` is a comma-separated string (`"A003,A004"`).
+- Per-level ability fields take level keys: `{"aran": {"1": 620}}`, `{"acdn": {"1": 20}}`. Other fields take plain values (`"aher": 0`, `"alev": 1`); Channel's animation names `aani` has no levels. A unit's `uabi`, `uhab`, `usei` and an item's `iabi` are comma-separated id strings (`"A003,A004"`).
+- `objdata_get` sizes `levels` and per-level lists by the map's own `alev` (abilities) or `glvl` (upgrades); values stored for levels beyond it are listed under `unused_levels` and do not exist in the game.
+- A hero's `uhab` takes at most 5 abilities (`maxVal` 5): with 11, `SelectHeroSkill` learned the 1st and 4th but not the 9th.
+- Item fields: `iabi` abilities, `igol` gold cost, `iico` icon, `ifil` model, `icla` class, `ilev` level, `isel` sold by merchants, `ipaw` sellable, `iprn` random choice, `isto` stock maximum, `istr` replenish interval, `isst` start delay, `isit` initial stock, `uhot` hotkey, `utip` / `utub` tooltips, `ides` description. A custom item inherits its base's hotkey (`rst1`: `S`).
+- Stock item abilities and their bonus fields (all per level): `AIx5` all stats (`Iagi`, `Iint`, `Istr`, `Ihid`), `AItc` damage (`Iatt`), `AIsx` attack speed (`Isx1`, a fraction), `AIlf` max life (`Ilif`), `Arel` life regeneration (`Ihpr`), `AImb` max mana (`Iman`), `AIrm` mana regeneration (`Imrp`), `AId3` armor (`Idef`), `AIcs` critical strike (`Ocr1` chance, `Ocr2` multiplier). Basic items: `rst1`, `rag1`, `rin1` (+3 stat), `ratc` Claws +12, `gcel` Gloves of Haste, `rde2` Ring of Protection +3, `prvt` Periapt, `rlif` Ring of Regeneration, `penr` Pendant of Energy, `rwiz` Sobi Mask.
+- A shop sells the items in its `usei`: a custom copy of `nmgv` (Magic Vault) with `uabi` `"Aneu,Avul,Apit"` sold items to a hero, and `IssueNeutralImmediateOrderById` bought one and charged the gold.
+- Channel (`ANcl`): `Ncl1` follow-through time, `Ncl2` target type (0 none, 1 unit, 2 point, 3 unit or point), `Ncl3` option bits (1 visible, 2 targeting image, 4 physical, 8 universal, 16 unique cast), `Ncl4` art duration, `Ncl5` disable other abilities, `Ncl6` base order id. Several Channel copies on one unit need distinct `Ncl6` orders (`acidbomb`, `howlofterror`, `avengerform`, `doom`); with `Ncl1` 0 and `Ncl5` 0 each cast by its own order string.
+- A hidden, learnable, effect-free hero ability: copy `Aamk` (Attribute Bonus) with `Iagi`/`Iint`/`Istr` 0 and `Ihid` 1 on every level. It shows in the learn menu with its `arar` icon and `aret`/`arut` tooltips and has no command-card button.
+- `data_search kind=icon` / `model` take globs (`*BTN*Staff*`). Use a result's `ref` in object data and scripts (`ReplaceableTextures\CommandButtons\BTNSkillz.blp`); `layers` says which storage layers hold it.
+- Art fields (for example an ability's research icon `arar`) live in the skin files (`war3mapSkin.w3a`), so `merge_external` keeps them with the working copy's changes.
 - True Sight abilities (`Adtg`, `Atru`, `ANtr`, `Agyv`, `Adts`, `Adt1`) detect within `aran` (Cast Range), not `aare`.
 - `Apiv` (Permanent Invisibility) fades in over `adur`/`ahdu`, 2 seconds by default. With both set to 0, a unit given the ability turns invisible at once.
 
@@ -91,6 +103,29 @@ The World Editor draws classic (SD) models, and some HD models have no classic c
 - A single-player run can create units for an empty player slot (`Player(1)`), and visibility queries against that player work as for a playing one.
 - `SetUnitAcquireRange(u, 0)` does not stop a unit from attacking an enemy already inside its attack range.
 - `EVENT_PLAYER_UNIT_ATTACKED` fired once while a unit hit the same target for several swings. `EVENT_PLAYER_UNIT_DAMAGED` fires on every hit, and `GetEventDamageSource()` returns the attacker.
+- In a single-player game an open dialog (`DialogDisplay`) pauses game time: timers and `TriggerSleepAction` wait until it is clicked. `GetClickedDialog()` / `GetClickedButton()` identify the click; map buttons to options with `SaveInteger(ht, GetHandleId(DialogAddButton(...)), 0, option)`.
+
+Heroes and abilities:
+- `SetHeroLevel(h, 10, false)` on a new hero gives 10 unspent skill points. `SelectHeroSkill` fires `EVENT_PLAYER_HERO_SKILL`; in the handler `GetLearnedSkill()` names the ability and `GetUnitAbilityLevel` already returns the new level.
+- After `SetPlayerAbilityAvailable(p, heroAbility, false)`, `SelectHeroSkill` for it does nothing (no level, no point spent) until it is made available again.
+- `UnitAddAbility` of stock hero abilities (`AHtb`, `AUfn`, `AOcr`, `AHav`) onto a hero works and `SetUnitAbilityLevel` sets their level; they do not appear in the learn menu. A hero ability at its maximum level is not shown in the learn menu either.
+- `BlzSetAbilityResearchTooltip(abilCode, text, level)` changes the learn-menu tooltip. The learn-menu icon cannot change at runtime: `BlzSetAbilityIcon` and `ABILITY_SF_ICON_RESEARCH` have no visible effect there, `BlzGetUnitAbility` returns `null` for a hero ability not learned yet, and an empty `arar` shows a placeholder portrait.
+- `ForceUIKey("O")` opens the hero learn menu only after `SelectUnit(h, true)` and a 0.5 s `TriggerSleepAction`, not right after the selection.
+- A Channel spell's cooldown starts even when its `EVENT_PLAYER_UNIT_SPELL_EFFECT` handler moves the caster (`SetUnitPosition`) and issues an attack order.
+
+Damage:
+- `UnitDamageTarget(src, t, 189, true, false, ATTACK_TYPE_NORMAL, DAMAGE_TYPE_MAGIC, WEAPON_TYPE_WHOKNOWS)` removed 188 life from an Ogre Lord (`nogl`); 100 of it on a hero arrived as 75 (`GetEventDamage`).
+- In `EVENT_PLAYER_UNIT_DAMAGED`, `BlzSetEventDamage(0.0)` prevents the life loss and `BlzSetEventDamage(d - x)` reduces it by x.
+- A unit given `Abun` (Cargo Hold) with `UnitAddAbility` did not attack enemies 350 units away.
+
+Items:
+- `EVENT_PLAYER_UNIT_PICKUP_ITEM` fires for `UnitAddItemById`, `UnitAddItem` and shop purchases.
+- Recipes: in the pickup handler, `TriggerSleepAction(0.0)`, then `RemoveItem` the components and `UnitAddItemById` the result. The result's own pickup event runs the handler again without combining twice.
+- `UnitAddItemToSlotById(h, id, 4)` puts an item in slot 4. `UnitDropItemSlot` right after `UnitAddItem` did not move the item.
+- Hero swap keeping items: `UnitRemoveItem` + `SetItemVisible(item, false)`, `RemoveUnit` the old hero, then `SetItemVisible(item, true)` + `UnitAddItem` on the new one; `SetHeroXP(new, GetHeroXP(old), false)` keeps the level.
+
+Deaths:
+- `ReviveHero(h, x, y, true)` after a `TriggerSleepAction` in the death handler revives the hero at (x, y) with full life. A death handler with `TriggerSleepAction(45.0)` and `CreateUnit` respawns a creep.
 
 ## World Editor
 
@@ -108,7 +143,7 @@ The World Editor draws classic (SD) models, and some HD models have no classic c
 
 - `game_test` launches the map and ends as soon as every file listed in `results` exists under `Documents\Warcraft III\CustomMapData`. The map script writes such a file with `PreloadGenClear()` / `PreloadGenStart()` / `Preload("text")` / `PreloadGenEnd("mymap\\results.txt")`. A run whose files never appear lasts the full `timeout` and lists them under `missing`.
 - `game_test probe=true` needs no reporting trigger of your own. It runs a throwaway copy that reports, `probe_seconds` into the game, the units, heroes, gold and lumber of every playing slot, plus the `BJDebugMsg` text (`probe.messages`). Use it to check that a map loads and runs.
-- For a specific check, pass `probe_script` (or `probe_script_file`): statements in the map's language, JASS locals first, that run in the throwaway copy at `probe_seconds`. `ProbeReport(text)` writes text of any length, returned in `probe.reports`. The real map never gets test triggers, so there is nothing to remove before shipping.
+- For a specific check, pass `probe_script` (or `probe_script_file`): statements in the map's language, JASS locals first, that run in the throwaway copy at `probe_seconds`. They can call the map's own functions (the probe trigger comes after all map triggers) and read its `udg_` globals. `ProbeReport(text)` writes text of any length, returned in `probe.reports`. The real map never gets test triggers, so there is nothing to remove before shipping.
   ```
   local unit u = CreateUnit(Player(0), 'hfoo', 0, 0, 270)
   if IsUnitVisible(u, Player(1)) then
@@ -117,19 +152,24 @@ The World Editor draws classic (SD) models, and some HD models have no classic c
       call ProbeReport("visible=0")
   endif
   ```
-- The game keeps about 259 characters of one `Preload` string and silently drops the rest. `game_test` lists result lines that reach that length under `truncated`. Split long reports into several `Preload` calls, or use `ProbeReport`.
-- A run that writes its result file ends as soon as the file exists: 36–124 seconds in practice, most of it launch and map load.
+- The game keeps about 259 characters of one `Preload` string and silently drops the rest. `game_test` lists result lines that reach that length under `truncated`. Split long reports into several `Preload` calls, or use `ProbeReport`. Result strings come back unescaped (single backslashes).
+- A run that writes its result file ends as soon as the file exists: 34–124 seconds in practice, most of it launch and map load.
+- A map with `loading_screen` `title`, `subtitle` or `text` waits on "PRESS ANY KEY TO CONTINUE" after loading. `game_test` presses space when it sees that screen and reports `loading_screen_keys`.
+- An open dialog pauses a single-player game, so a map that shows a dialog early (a hero draft) never reaches a later `probe_seconds` or test timer on its own. Run the test code before the dialog opens (`probe_seconds` 0.3 worked). A timed-out run's hint mentions this; `screenshot=true` shows the dialog.
+- To capture the hero learn menu: in the test code, `SelectUnit(h, true)`, `TriggerSleepAction(0.5)`, `ForceUIKey("O")`, then report; `screenshot=true` captures it. A user click in the game window meanwhile changes what is captured.
 - `screenshot=true` saves a PNG of the game window. When the window will not come to the front, the tools draw it from the window itself; `screenshot_of` says what was captured, or why nothing was. `focus` says how often the window was raised.
 - `log` holds the useful `War3Log.txt` lines, `missing_files` the files the game could not load, and `benign_log` counts shipped-data lines such as `model creation failed - C:/Users/<builder>/Perforce/.../GuardTowerBirth.mdl` or `Solid texture substituted - Units\_skeletons\Gore_Diffuse.tif`. Do not chase benign lines as map defects.
 - `game_status` returns recent `War3Log.txt` lines even with no game running, including runs started from the World Editor's own test command.
 
 ## Rules
 
-- The game loads a map only while its window is in front, and Warcraft III can show a Battle.net login first. **Never type credentials**: ask the user to log in (with "Keep me logged in") and approve any authenticator request.
-- If `game_test` returns no results and `exited_early`, the login was not completed or the map failed to load: take a screenshot (`screenshot=true`) and tell the user.
+- The game loads a map only while its window is in front, and Warcraft III can show a Battle.net login first, also again later in a session. **Never type credentials**: ask the user to log in (with "Keep me logged in") and approve any authenticator request.
+- `game_test` recognises the login screen and returns `login_required: true` after about 30 seconds, leaving the game open. Ask the user to log in there, then run the test again (`game_close` closes the old game).
+- If `game_test` returns no results and `exited_early`, the map failed to load: take a screenshot (`screenshot=true`) and tell the user.
 - Keep a backup (`map_save` makes one) before replacing a user's map, and say which file changed.
 
 ## Common practice (not verified by the tools)
 
 - Create leaderboards, multiboards and timer dialogs from a short timer (for example 0.1 seconds) after map start, not directly at initialization, where they may not display.
 - Adding ability `Abun` (Cargo Hold) to a unit is a common way to remove its attack, for example so that creeps walk a path without fighting.
+- Client-side UI changes (`BlzSetAbilityPosX/Y`, `BlzSetAbilityResearchTooltip`) go inside `GetLocalPlayer()` blocks, on the assumption that they do not desync a multiplayer game. Not tested with several players.
