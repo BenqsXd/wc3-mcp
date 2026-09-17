@@ -68,6 +68,14 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 0.5
+
+- `game_test probe_script` can call the map's own trigger functions: the probe trigger now comes after all map triggers.
+- `game_test` presses a key on a loading screen that waits for one (maps with loading-screen text), and ends a run stuck on the Battle.net login screen after about 30 seconds with `login_required`, leaving the game open for the user.
+- `game_test` returns Preload strings unescaped, and a run without results hints that an open dialog pauses a single-player game.
+- `objdata_get` sizes `levels` by the map's own `alev`/`glvl` and lists values beyond it as `unused_levels`.
+- `data_search kind=icon|model|file` returns one result per file with `ref` (the object-data path, `.blp` icons and `.mdl` models) and its storage `layers`.
+
 ## What's new in 0.4
 
 - Model checks cover classic graphics, which the World Editor uses: HD-only files such as `ZPsh` variation 3 no longer pass as present, and `data_search` lists the `variations_ok` of a partly usable type.
