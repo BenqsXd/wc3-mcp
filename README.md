@@ -68,6 +68,13 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 0.7
+
+- Probes observe more: `ProbeCountEvent` / `ProbeEventCount` count player-unit events, `probe_functions` adds your own callback functions, and `probe.messages` includes text shown with `DisplayTextToPlayer`, `DisplayTimedTextToPlayer` and the force variants.
+- `map_validate` warns about object data pitfalls: `command_card` (buttons sharing a position, including Rally and Cancel), `inherited_builds` (a copied worker that keeps its base's build list) and `locked_ability` (a required research nothing in the map offers).
+- `terrain_get` snaps an area narrower than the corner spacing to the nearest corner line (`window.snapped`).
+- `terrain_render` gives tree marks a light rim so they show on dark grass.
+
 ## What's new in 0.6
 
 - `game_test` after `login_required`: once the user has logged in, the same call continues in the game left open instead of launching again. Each probe run gets its own copy, so an open game never blocks the next run.
