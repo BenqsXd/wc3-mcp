@@ -143,7 +143,8 @@ class Game:
         return win.screenshot(h), title
 
     def test(self, map_path, timeout: float = 240, results: list[str] | None = None, close: bool = True,
-             screenshot: bool = False, wait: bool = True, meta: dict | None = None) -> dict:
+             screenshot: bool = False, wait: bool = True, meta: dict | None = None, shots: int = 0,
+             shot_every: float = 3.0) -> dict:
         """Run the map, blocking until it ends. wait=False instead runs it in a background thread and returns at
         once; `status()` then reports the run and holds its result when it ends."""
         target = Path(map_path).resolve()
@@ -159,27 +160,28 @@ class Game:
                "written": [], "result": None, "error": None, "thread": None, "meta": meta or {}}
         self.run = job
         if wait:
-            self._run(job, target, timeout, results, close, screenshot)
+            self._run(job, target, timeout, results, close, screenshot, shots, shot_every)
             if job["error"] is not None:
                 raise job["error"]
             return job["result"]
         job["thread"] = threading.Thread(target=self._run, daemon=True,
-                                         args=(job, target, timeout, results, close, screenshot))
+                                         args=(job, target, timeout, results, close, screenshot, shots, shot_every))
         job["thread"].start()
         return {"started": True, "map": str(target), "timeout": timeout, "results": job["results"],
                 "note": "the run continues in the background: game_status reports its progress and, once it ends, its "
                         "whole result under run.result (the working copy is free meanwhile; a probe runs on a copy)"}
 
-    def _run(self, job: dict, target: Path, timeout: float, results, close: bool, screenshot: bool) -> None:
+    def _run(self, job: dict, target: Path, timeout: float, results, close: bool, screenshot: bool,
+             shots: int = 0, shot_every: float = 3.0) -> None:
         try:
-            job["result"] = self._test(job, target, timeout, results, close, screenshot)
+            job["result"] = self._test(job, target, timeout, results, close, screenshot, shots, shot_every)
         except ToolError as e:
             job["error"] = e
         except Exception as e:   # a background run must not take the server down
             job["error"] = ToolError("game_failed", f"the run failed: {e}")
 
     def _test(self, job: dict, target: Path, timeout: float, results: list[str] | None, close: bool,
-              screenshot: bool) -> dict:
+              screenshot: bool, shots: int = 0, shot_every: float = 3.0) -> dict:
         exe = self.exe()
         wanted = {name: _result_path(name) for name in results or []}
         digest = hashlib.sha256(target.read_bytes()).hexdigest() if target.is_file() else str(target)
@@ -201,6 +203,7 @@ class Game:
         found: dict[str, list[str]] = {}
         focused_at, running, raised = 0.0, False, 0
         checked_at, login_since, keys = 0.0, None, 0
+        shot_at, series = 0.0, []   # screenshots while the map runs: the scenery as the game draws it
         while time.time() - started < timeout and process.poll() is None:
             # the game only loads the map while its window is in front: keep it there until the map runs
             running = running or any("Activating WebUI" in line for line in self._log_lines(launched_at - 5))
@@ -223,6 +226,11 @@ class Game:
                 login_since = (login_since or checked_at) if state == "login" else None
                 if login_since and checked_at - login_since >= LOGIN_WAIT:
                     break
+            if running and len(series) < shots and time.time() - shot_at >= shot_every:
+                shot_at = time.time()
+                image, _of = self._screenshot(process.pid)
+                if image:
+                    series.append(image)
             for name, path in wanted.items():
                 if name not in found and path.exists():
                     text = path.read_text("utf-8", "replace")
@@ -249,6 +257,11 @@ class Game:
             result["truncated_note"] = ("these result lines (indexes per file) reach the Preload limit of about 259 "
                                         "characters, so the game probably cut them off: split long reports into "
                                         "several Preload calls")
+        if shots:
+            result["screenshots"] = series
+            result["screenshots_note"] = (f"{len(series)} of {shots} screenshot(s), one every {shot_every:g} s while "
+                                          "the map ran: move the camera from the map's test code (ProbeCamera) to "
+                                          "look at a place")
         if attached:
             result["continued_game"] = True
         if login:

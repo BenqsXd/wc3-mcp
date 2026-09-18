@@ -24,6 +24,7 @@ from .ops import campaign as campaign_ops
 from .ops import elements as elements_ops
 from .ops import imports as imports_ops
 from .ops import info as info_ops
+from .ops import layout as layout_ops
 from .ops import newmap as newmap_ops
 from .ops import objdata as objdata_ops
 from .ops import placed as placed_ops
@@ -561,8 +562,32 @@ def placed_edit(path: str, ops: list[dict] | None = None, ops_file: str | None =
     chance}]}), color, waygate (region name), doodad z and flags. created lists the new refs as ranges in op order
     ("doodad:422..909"; verbose=true lists every ref). ops_file: a local JSON file holding the ops array instead of
     ops. Placing a doodad or destructible whose model the installed game cannot load, or whose scale is outside its
-    type's own minimum and maximum, gives a warning."""
+    type's own minimum and maximum, gives a warning.
+    Scenery ops build a layout instead of a heap, all seeded and deterministic, all taking the placement fields of
+    their kind plus "exclude", "where" and "seed": {"op": "forest", "types" (weights), area ("rect", "x"/"y"/"radius"
+    or "path" with "width"), "spacing" (the distance between trees at full density), "density" 0-1, "edge" (how far in
+    from the border the wood thins), "clearings"/"clearing_radius", "on_tiles": ["Lgrs"], "count"}; {"op": "line",
+    "path", "spacing", "offset", "sides": both|left|right|alternate|center, "face": path|out|in|<degrees>, "jitter"}
+    for fences, lamp rows and the props along a road; {"op": "town", "rect", "block": [w, h], "street", "margin",
+    "spacing", "fill" 0-1, "props" (weights), "prop_spacing", "plaza": [l, b, r, t]} puts a row of buildings along
+    every block side facing its street and returns the streets for terrain_edit to pave; {"op": "cluster", "x", "y",
+    "radius", "count", "spacing", "falloff", "scale_range": [small, big]} for rocks and flower beds; {"op": "clear",
+    area, "kinds", "types"} empties an area first. They keep off water, cliffs and the map boundary, and layout_check
+    reports the spacing, the ground and what is still reachable afterwards."""
     return placed_ops.placed_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file), verbose)
+
+
+@_tool
+def layout_check(path: str, area: list[float] | None = None, kinds: list[str] | None = None,
+                 min_distance: float | None = None) -> dict:
+    """Numbers that say whether placed scenery reads as placed: how many objects of which types stand in the area,
+    their nearest-neighbour spacing (min, p10, median, mean and spread - the coefficient of variation, which is near 0
+    for a grid stamp and 0.15-0.45 for hand-placed work), how many stand on water, on ground no unit can stand on or
+    outside the playable area, which tiles they ended up on, and how much of the walkable map the start locations can
+    still reach after the decoration went in. Pair it with terrain_render for the look; this catches what a top-down
+    picture cannot show. kinds filters (doodad, destructible, unit, item), min_distance also counts the pairs closer
+    than it."""
+    return layout_ops.layout_check(_project(path), _catalog("enUS", "Custom_V1", True), area, kinds, min_distance)
 
 
 @_tool
@@ -831,7 +856,8 @@ def editor_log(lines: int = 200) -> dict:
 def game_test(path: str, timeout: float = 240, results: list[str] | None = None, close: bool = True,
               screenshot: bool = False, probe: bool = False, probe_seconds: float = 10,
               probe_script: str | None = None, probe_script_file: str | None = None,
-              probe_functions: str | None = None, wait: bool = True) -> dict:
+              probe_functions: str | None = None, wait: bool = True, screenshots: int = 0,
+              screenshot_every: float = 3.0) -> dict:
     """Run a map in Warcraft III (windowed; the window needs to be in front while loading) and collect what the map
     reports. The map script writes a result file with PreloadGenClear/PreloadGenStart/Preload("text")/
     PreloadGenEnd("folder\\\\file.txt"); list those files in results, relative to the CustomMapData folder of
@@ -840,12 +866,16 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
     lumber of every playing slot and the text the map shows, in probe.messages. probe_script (or probe_script_file, a
     local file; either implies probe=true) adds test code in the map's language (JASS or Lua statements, JASS locals
     first) that runs at that moment and may call the map's own functions, read its udg_ globals and wait
-    (TriggerSleepAction); ProbeReport(text) comes back in probe.reports, ProbeCountEvent(EVENT_PLAYER_UNIT_DEATH,
+    (TriggerSleepAction) and move the camera (ProbeCamera(x, y, distance, seconds) looks at a place, waits there and
+    reports it in probe.camera, which pairs with screenshots); ProbeReport(text) comes back in probe.reports,
+    ProbeCountEvent(EVENT_PLAYER_UNIT_DEATH,
     "deaths") and ProbeEventCount("deaths") count a player-unit event, ProbeExpect("gold rose", cond) records a
     pass/fail check (probe.checks, checks_failed, checks_passed), and probe_functions adds whole functions
     (callbacks for the test code's own triggers) before it. wait=false runs it in the background and returns at once:
     game_status then reports the run and its result when it ends, so the working copy is free meanwhile (a second run
-    while one is going is refused). screenshot=true saves a PNG of the game window. A Battle.net login screen ends the
+    while one is going is refused). screenshot=true saves a PNG of the game window at the end; screenshots=N with
+    screenshot_every seconds saves a series while the map runs (paths in screenshots), which is how the scenery gets
+    looked at in the game: move the camera over it with ProbeCamera on the same schedule. A Battle.net login screen ends the
     run after about 30 s with login_required and leaves the game open: once the user has logged in there, the same call
     continues in that game (continued_game) instead of launching again. Returns the Preload strings per file, the
     useful War3Log.txt lines (known-benign shipped-data lines counted in benign_log) and any new crash. The skill's
@@ -868,12 +898,22 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
         results = list(results or []) + [probe_ops.REPORT]
         extra["probe_map"] = target
     result = desktop_game.GAME.test(target, timeout=timeout, results=results, close=close, screenshot=screenshot,
-                                    wait=wait, meta={"probe": probe, "extra": extra})
+                                    wait=wait, meta={"probe": probe, "extra": extra}, shots=screenshots,
+                                    shot_every=screenshot_every)
     return {**(_finish_test(result, probe) if wait else result), **extra}
 
 
 def _finish_test(result: dict, probe: bool) -> dict:
-    """The parts of a run's result that need the server: the screenshot file and the probe report."""
+    """The parts of a run's result that need the server: the screenshot files and the probe report."""
+    series = result.get("screenshots")
+    if series and not all(isinstance(shot, str) for shot in series):
+        folder = config.home() / "screenshots"
+        folder.mkdir(parents=True, exist_ok=True)
+        result["screenshots"] = []
+        for i, image in enumerate(series):
+            shot = folder / f"game-{result['pid']}-{i}.png"
+            shot.write_bytes(image)
+            result["screenshots"].append(str(shot))
     if result.get("screenshot"):
         shot = config.home() / "screenshots" / f"game-{result['pid']}.png"
         shot.parent.mkdir(parents=True, exist_ok=True)

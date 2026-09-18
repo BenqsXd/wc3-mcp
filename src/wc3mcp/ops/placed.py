@@ -7,6 +7,7 @@ import re
 from ..errors import ToolError
 from ..formats import doo, unitsdoo, w3e, w3i, w3r
 from ..formats.binary import FormatError
+from . import layout
 from .elements import _bad, _bool, _int, _num, _out
 from .objdata import objdata_get, objdata_list
 from .triggers import SCRIPT_WARNING, _load, _read, script_users
@@ -124,6 +125,16 @@ class _Map:
     def ground(self, x: float, y: float) -> float:
         return w3e.ground_height(self.terrain, x, y) if self.terrain else 0.0
 
+    def _ground_ok(self, x: float, y: float, where: str) -> bool:
+        t = self.terrain
+        if where == "any" or t is None:
+            return True
+        cx = min(max(round((x - t.offset_x) / 128), 0), t.width - 1)
+        cy = min(max(round((y - t.offset_y) / 128), 0), t.height - 1)
+        c = w3e.corner(t, cx, cy)
+        wet = c["water"] and (c["water_level"] - c["height"]) / 4 - 89.6 - (c["layer"] - 2) * 128 > 0  # as rendered
+        return not c["boundary"] and wet == (where == "water")
+
     # ---- JSON
     def regions(self) -> list[w3r.Region]:
         rf, _ = _parse(self.project, "war3map.w3r", w3r)
@@ -201,12 +212,14 @@ def placed_list(project, catalog, kind: str | None = None, area: list | None = N
 
 
 # ---- edits -----------------------------------------------------------------------------------------------------
-class _Edit(_Map):
+class _Edit(_Map, layout.LayoutOps):
     def __init__(self, project, catalog):
         super().__init__(project, catalog)
         self.region_list = None
         self.created: list[str] = []
         self.warnings: list[str] = []
+        self.notes: list[str] = []       # what a layout op built, in op order
+        self.streets: list[list] = []    # town streets, for terrain_edit to pave
         self.starts: list = []   # start locations placed or moved: war3map.w3i keeps its own copy of the position
 
     def _find(self, ref, path: str):
@@ -223,6 +236,29 @@ class _Edit(_Map):
             raise ToolError("ambiguous", f"{path}: {len(found)} objects share the ref {ref!r}",
                             hint="the map has duplicate editor ids; open and save it in the World Editor first")
         return kind, found[0]
+
+    @staticmethod
+    def _fields(kind: str) -> set:
+        return FIELDS[kind]
+
+    def _zones(self, op: dict, path: str) -> list[tuple]:
+        """exclude: circles and rectangles nothing may be placed in."""
+        zones = []
+        for i, z in enumerate(op.get("exclude") or []):
+            zpath = f"{path}.exclude[{i}]"
+            if isinstance(z, dict) and set(z) == {"rect"} and isinstance(z["rect"], list) and len(z["rect"]) == 4:
+                zones.append(("rect", *(_num(v, zpath) for v in z["rect"])))
+            elif isinstance(z, dict) and set(z) == {"x", "y", "radius"}:
+                zones.append(("circle", _num(z["x"], zpath), _num(z["y"], zpath), _num(z["radius"], zpath)))
+            else:
+                raise _bad(zpath, 'expected {"x", "y", "radius"} or {"rect": [left, bottom, right, top]}')
+        return zones
+
+    def _refs_in(self, kind: str, hit, types: set | None) -> list[str]:
+        """Refs of the placed objects of one kind whose position passes `hit` (and whose type is wanted)."""
+        pool = self.units.units if kind in ("unit", "item", "start_location") else self.doodads.doodads
+        return [f"{kind}:{o.editor_id}" for o in list(pool)
+                if self.kind_of(o) == kind and hit(o.x, o.y) and (types is None or _id(o.id) in types)]
 
     def _type(self, kind: str, value, path: str) -> bytes:
         raw = _rawcode(value, path)
@@ -535,15 +571,7 @@ class _Edit(_Map):
         right, top = min(right, bounds[2]), min(top, bounds[3])
         if left >= right or bottom >= top:
             raise _bad(path, f"the area does not overlap the playable area {bounds}")
-        zones = []
-        for i, z in enumerate(op.get("exclude") or []):
-            zpath = f"{path}.exclude[{i}]"
-            if isinstance(z, dict) and set(z) == {"rect"} and isinstance(z["rect"], list) and len(z["rect"]) == 4:
-                zones.append(("rect", *(_num(v, zpath) for v in z["rect"])))
-            elif isinstance(z, dict) and set(z) == {"x", "y", "radius"}:
-                zones.append(("circle", _num(z["x"], zpath), _num(z["y"], zpath), _num(z["radius"], zpath)))
-            else:
-                raise _bad(zpath, 'expected {"x", "y", "radius"} or {"rect": [left, bottom, right, top]}')
+        zones = self._zones(op, path)
         where = op.get("where", "land")
         if where not in ("land", "water", "any"):
             raise _bad(f"{path}.where", 'expected "land", "water" or "any"')
@@ -557,7 +585,7 @@ class _Edit(_Map):
             x, y = rng.uniform(left, right), rng.uniform(bottom, top)
             if circle and (x - circle[0]) ** 2 + (y - circle[1]) ** 2 > circle[2] ** 2:
                 continue
-            if any(_in_zone(z, x, y) for z in zones) or not self._ground_ok(x, y, where):
+            if any(layout._zone_hit(z, x, y) for z in zones) or not self._ground_ok(x, y, where):
                 continue
             key = (int(x // cell), int(y // cell))
             if gap and any((x - px) ** 2 + (y - py) ** 2 < gap * gap
@@ -584,16 +612,6 @@ class _Edit(_Map):
         if placed < count:
             self.warnings.append(f"{path}: placed {placed} of {count}; the area is too full for min_distance, "
                                  "exclude and where")
-
-    def _ground_ok(self, x: float, y: float, where: str) -> bool:
-        t = self.terrain
-        if where == "any" or t is None:
-            return True
-        cx = min(max(round((x - t.offset_x) / 128), 0), t.width - 1)
-        cy = min(max(round((y - t.offset_y) / 128), 0), t.height - 1)
-        c = w3e.corner(t, cx, cy)
-        wet = c["water"] and (c["water_level"] - c["height"]) / 4 - 89.6 - (c["layer"] - 2) * 128 > 0  # as rendered
-        return not c["boundary"] and wet == (where == "water")
 
     def op_set(self, op: dict, path: str) -> None:
         kind, o = self._find(op.get("ref"), f"{path}.ref")
@@ -660,15 +678,13 @@ class _Edit(_Map):
             self.warnings += [SCRIPT_WARNING, DERIVED_WARNING]
         result = {"changed": bool(changed), "files": changed, "created_count": len(self.created),
                   "created": self.created if verbose else ref_ranges(self.created), "warnings": self.warnings}
+        if self.notes:
+            result["layout"] = self.notes
+        if self.streets:
+            result["streets"] = self.streets
         if synced:
             result["synced"] = synced
         return result
-
-
-def _in_zone(zone: tuple, x: float, y: float) -> bool:
-    if zone[0] == "rect":
-        return zone[1] <= x <= zone[3] and zone[2] <= y <= zone[4]
-    return (x - zone[1]) ** 2 + (y - zone[2]) ** 2 <= zone[3] ** 2
 
 
 def _float_or(value, default: float) -> float:
@@ -712,7 +728,7 @@ def placed_edit(project, catalog, ops: list, verbose: bool = False) -> dict:
         path = f"ops[{i}]"
         try:
             action = op.get("op") if isinstance(op, dict) else None
-            if action not in ("add", "set", "move", "delete", "scatter"):
+            if action not in ("add", "set", "move", "delete", "scatter", *layout.OP_KEYS):
                 raise ToolError("bad_op", f"{path}: unknown op {action!r}", hint=_HINT)
             if action == "add" and ("rows" in op or "columns" in op):
                 for single, where in _rows(op, path):

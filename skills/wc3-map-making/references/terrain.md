@@ -51,3 +51,19 @@ The World Editor draws classic (SD) models, and some HD models have no classic c
 - `placed_edit` warns when it places one (per variation), and `scatter` uses only the variations that load.
 - `map_validate` warns (check `model`) for every placed doodad, destructible or unit whose model loads from neither the game data nor the map's imports.
 - Walk-through plant doodads that load on Lordaeron Summer: `ZPsh` Shrub (variations 0–2), `APct` Cattail, `LPcr` Corn, `ZPfw` Flowers, `ZPf0` Tulips. `XOcl` Magical Lantern, `LTlt` Summer Tree Wall and `YTct` Cityscape Summer Tree Wall also load. `LTlt` is the only tree of Lordaeron Summer (`data_search kind=destructible query=Tree tileset=L` lists it and two tree bridges); there is no `LTlf`.
+
+## Scenery that looks placed
+
+`placed_edit` has generator ops that build a layout instead of a heap. All of them are seeded and deterministic, take the placement fields of their kind (owner, scale, ...) plus `exclude`, `where` and `seed`, and keep off water, cliffs and the map boundary. Use them instead of `scatter` whenever the result is meant to look like part of the world; `scatter` stays for "sprinkle N of these anywhere".
+
+- **`forest`** — trees at Poisson-disk spacing, thinner toward the edge of the area and around clearings. `spacing` is the distance between trees at full density, `density` (0-1) scales it, `edge` is how far in from the border the wood thins, `clearings`/`clearing_radius` punch holes, `on_tiles` keeps it to the right ground. Run it twice for a canopy plus underbrush: the same area, doodads instead of destructibles, lower density and a wider `edge`.
+- **`line`** — objects at an even spacing along a `path`: `offset` from the line, `sides` (`both`, `left`, `right`, `alternate`, `center`), `face` (`path`, `out`, `in` or an angle) and `jitter` for a hand-placed wobble. Fences, lamp rows, docks, market stalls.
+- **`town`** — a street grid: a row of buildings along every block side, set back by `margin`, `spacing` apart, each facing its street, with `props` between them and the block middles left as yards. `fill` below 1 leaves gaps (and puts a prop in the gap), `plaza` keeps an area open. The result's `streets` are polylines for `terrain_edit` to pave.
+- **`cluster`** — a clump that is dense in the middle and thins out, with `scale_range` shrinking the objects toward the rim. Rocks, rubble, flower beds.
+- **`clear`** — delete what is in an area (`rect`, circle or `path` with `width`) before a road or a building site goes in.
+
+A road is three ops: `terrain_edit` `{"op": "paint", "path": [...], "width": ...}` for the ground, `placed_edit` `clear` along the same path, then `line` for the lanterns. Paint the verge with a second, wider paint op in a different tile.
+
+`layout_check` then reports what a top-down render cannot show: the nearest-neighbour spacing (`min`, `p10`, `median`, `mean` and `spread`, the coefficient of variation — near 0 is a grid stamp, 0.15-0.45 reads as hand-placed, above 0.6 as random clumps), how many objects stand on water or on ground no unit can stand on, which tiles they ended up on, and how much of the walkable map the start locations still reach. `map_validate` reports the same reachability as a warning when decoration walls something off.
+
+For the look itself: `terrain_render` from above, and `game_test screenshots=N screenshot_every=S` with `ProbeCamera(x, y, distance, seconds)` in the probe code to walk the camera over the scenery and photograph it in the game.
