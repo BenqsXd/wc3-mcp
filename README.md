@@ -68,6 +68,19 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 0.9
+
+- **Scenery that looks placed.** `placed_edit` gained generator ops that build a layout instead of a heap, with Poisson-disk spacing: `forest` (density from noise, thinning toward the edge and around clearings, kept to the right tiles), `line` (even spacing along a path, with offset, sides and facing), `town` (a row of buildings along every block side facing its street, props between them, streets returned for `terrain_edit` to pave), `cluster` (dense in the middle, objects shrinking to the rim) and `clear` (empty an area first).
+- **`layout_check`** reports what a top-down picture cannot show: nearest-neighbour spacing with its spread (a grid stamp is near 0, hand-placed work 0.15-0.45), objects on water or on ground no unit can stand on, the tiles they ended up on, and how much of the walkable map the start locations still reach.
+- **`game_test screenshots=N`** saves a series of pictures while the map runs, and the probe helper `ProbeCamera(x, y, distance, seconds)` walks the camera over the scenery, so the result can be looked at in the game.
+- **`data_search` / `data_get kind=native`** answer from the installed build's `common.j`, `Blizzard.j` and `common.ai`: natives, functions, constants and handle types with their signatures.
+- **`ui_get` / `ui_edit`** read and write custom UI: `.fdf` layouts (the game's own included), the `.toc` beside them and the loader script, with a check for unknown frame types, bad anchors, a `SetPoint` to a frame that does not exist and missing textures.
+- **`objdata_diff`** shows what a batch changed against the map on disk or a snapshot, field by field.
+- **`map_validate`** gained `ability_order` (two abilities of one unit sharing an order string) and `reachable` (start locations cut off from each other, or a preplaced unit its own player cannot walk to).
+- **`script_validate lint=true`** gained a desync rule: game state changed, or a random number drawn, inside a `GetLocalPlayer()` block.
+- **`ProbeExpect(name, condition)`** records pass/fail checks, so a test run answers with a verdict (`probe.checks`, `checks_failed`) instead of text.
+- `terrain_render write_preview=true` writes `war3mapPreview.tga`, the picture the map list shows.
+
 ## What's new in 0.8
 
 - Fewer, smaller calls: `data_get` and `objdata_get` take a **list of ids** and answer compactly (raw code -> value, empty fields left out, about a tenth of the size); `verbose=true` brings back the field metadata.

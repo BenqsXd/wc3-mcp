@@ -243,3 +243,19 @@ def test_unbuildable_tiles_warn_and_show_in_derived_pathing(tmp_path):
         assert red > green + 60
     finally:
         project.close(discard=True)
+
+
+@needs_maps
+def test_preview_image_is_a_square_tga(tmp_path):
+    """war3mapPreview.tga: what the map list shows instead of the minimap."""
+    from wc3mcp.ops.terrain import preview
+
+    catalog = Catalog(_storage())
+    src = tmp_path / ladder_maps()[0].name
+    src.write_bytes(ladder_maps()[0].read_bytes())
+    project = MapProject.open(src)
+    try:
+        image = Image.open(io.BytesIO(preview(project, catalog, size=128)))
+        assert image.format == "TGA" and image.size == (128, 128) and image.mode == "RGB"
+    finally:
+        project.close(discard=True)

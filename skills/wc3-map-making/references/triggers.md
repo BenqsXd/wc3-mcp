@@ -34,3 +34,17 @@ Trigger code is emitted in **trigger-tree order**, so a function can only be cal
 - `validate=true` on `triggers_edit` returns pjass / Lua errors straight away, each with `script_line`, its line inside the script you sent. Without it, `triggers_edit` warns that the map script is not regenerated yet; `map_save` or `script_build` regenerates it.
 - `map_save` compiles a regenerated or edited script and refuses to save when it does not compile; `validation.script` shows the result.
 - Reforged natives that pass pjass and work in the game: `BlzSetUnitMaxHP`, `BlzGetUnitMaxHP`, `GetEventDamageSource`, `BlzSetEventDamage`, `BlzGetUnitAbilityCooldownRemaining`, `BlzSetAbilityResearchTooltip`, `BlzSetAbilityResearchExtendedTooltip`, `BlzGetAbilityResearchTooltip`, `BlzGetUnitAbility`, `BlzGetAbilityStringField` / `BlzSetAbilityStringField`, and the event `EVENT_PLAYER_UNIT_DAMAGED` (with `TriggerRegisterAnyUnitEventBJ`).
+
+## The script API of the installed build
+
+`data_search kind=native` and `data_get kind=native` answer from this install's `common.j`, `Blizzard.j` and `common.ai`: natives, Blizzard.j functions, constants and handle types, each with its signature. Look a function up instead of remembering it — the answer matches the patch the map will run on.
+
+- `data_get kind=native id=CreateUnit` gives `native CreateUnit takes player id, integer unitid, real x, real y, real face returns unit` plus its parameters as a list.
+- `data_search kind=native query=EVENT_PLAYER_UNIT_SPELL` lists the event constants; globs work too (`Blz*Frame*`).
+- A list of ids in one call works here as everywhere: `data_get kind=native id=["CreateUnit", "SetUnitX"]`.
+
+## Custom user interface
+
+`ui_get` reads the `.fdf` layout files a map holds (and the game's own, so the stock UI can be studied), parsed into frames with their type, name, parent and template. `ui_edit` writes one — from `statements` (the same shape) or from ready FDF text — imports it under `war3mapImported`, lists it in a `.toc` beside it and returns the script that loads it (`BlzLoadTOCFile`, then `BlzGetFrameByName` or `BlzCreateFrame`).
+
+Both check the layout and report: a frame type the game does not know, an anchor that is not one of the nine corners, a `SetPoint` to a frame the file never defines, and a texture that is in neither the map's imports nor the game data. Each of those shows up in the game as a missing or misplaced panel, so the check is worth more than a launch.

@@ -52,3 +52,7 @@ A script that orders a unit to cast needs the order string, and **the ability da
 - Known disagreements: `ANlm` Summon Lava Spawn takes `lavamonster` (editor), not `slimemonster` (data); `AUin` Inferno takes `dreadlordinferno` (editor), not `inferno`; `AHpx` Phoenix takes `summonphoenix` (data), not `phoenix`.
 - `IssueImmediateOrder`, `IssuePointOrder` and `IssueTargetOrder` return `false` for a string the unit cannot use, and a rejected order leaves `GetUnitCurrentOrder` at 0, so a script can try one string, check the result and fall back to the other.
 - `map_validate` warns (check `order_string`) when a script issues an order that is one of these disagreeing data orders, or one that matches no ability order and no editor preset at all.
+
+## Reviewing a batch
+
+`objdata_diff` says what the map's object data of one kind changed against the map file on disk (`against="source"`) or against a snapshot (`map_snapshot action=create` first): objects added or deleted, and per object every field whose value differs, with the value before and after. Read it before `map_save`, or after a World Editor session to see what the editor did.

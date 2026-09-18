@@ -188,3 +188,33 @@ def test_model_check_follows_the_maps_model_field(plain_project, catalog):
     assert model == {"files": [r"units\nightelf\Wisp\Wisp.mdl"], "source": "map", "missing": []}
     assert objdata_get(plain_project, catalog, "unit", "u001")["model"]["missing"] == [r"war3mapImported\Nothing.mdl"]
     assert "source" not in objdata_get(plain_project, catalog, "unit", "uaco")["model"]
+
+
+def test_objdata_diff_against_the_map_on_disk_and_a_snapshot(plain_project, catalog):
+    """Reviewing a batch before it is saved: which objects came and went, and every field that changed."""
+    from wc3mcp.ops.objdata import objdata_diff
+
+    source = lambda name: None   # noqa: E731 - a melee map has no object data of its own yet
+    objdata_edit(plain_project, catalog, "unit",
+                 [{"op": "create", "base": "hfoo", "id": "h001", "set": {"uhpm": 700, "unam": "Guard"}},
+                  {"op": "set", "id": "hgtw", "set": {"ugol": 150}}])
+    doc = objdata_diff(plain_project, catalog, "unit", source)
+    assert [o["id"] for o in doc["added"]] == ["h001", "hgtw"] and doc["removed"] == []
+    assert doc["changed"] == [] and doc["count"] == 2
+    plain_project.snapshot("create", "before")
+    objdata_edit(plain_project, catalog, "unit", [{"op": "set", "id": "h001", "set": {"uhpm": 900}},
+                                                  {"op": "delete", "id": "hgtw"}])
+    from wc3mcp.project.workspace import MapProject   # the snapshot's files, as the server's reader does it
+    import json as _json
+    from wc3mcp import config
+    folder = config.home() / "snapshots" / plain_project.work.name / "before" / "files"
+    files = _json.loads((folder.parent / "manifest.json").read_text("utf-8"))["files"]
+    paths = {e["name"].upper(): folder / e["path"] for e in files.values()}
+    snapshot = lambda name: paths[name.upper()].read_bytes() if name.upper() in paths else None  # noqa: E731
+    doc = objdata_diff(plain_project, catalog, "unit", snapshot)
+    assert doc["added"] == [] and [o["id"] for o in doc["removed"]] == ["hgtw"]
+    [changed] = doc["changed"]
+    assert changed["id"] == "h001" and changed["base"] == "hfoo"
+    life = next(f for f in changed["fields"] if f["field"] == "uhpm")
+    assert (life["before"], life["after"]) == (700, 900) and "Hit Points" in life["name"]
+    assert MapProject is not None
