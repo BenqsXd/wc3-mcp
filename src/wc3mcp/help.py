@@ -333,6 +333,76 @@ BlzGetFrameByName. ui_get reads a file back, the game's own UI included.
 """)
 
 
+page("strings_edit", """
+strings_edit(path, ops) - all-or-nothing edits to the map's string table (war3map.wts).
+
+  {"op": "set", "id": 3, "text": "Guard Tower"}          changes one entry, or creates it with that id
+  {"op": "add", "text": "New quest"}                     answers with the id it got ("id" forces one)
+  {"op": "remove", "id": 7}
+  {"op": "replace", "find": "Guard", "with": "Sentry", "regex": false, "ids": [3, 4]}
+      goes through every entry (or only the ids given): one name changed everywhere the map shows it
+  {"op": "import", "entries": {"3": "Wachturm", "4": "Wache"}}     a translated table in one go
+
+strings_get(path, query, limit, offset, used_by) reads them back; used_by lists the files that point at each entry
+and marks the ones nothing refers to any more. Object data, map info and GUI triggers hold TRIGSTR references into
+this table, so they follow a change, but the map script keeps its own copy of trigger text: map_save or script_build
+regenerates it.
+""")
+
+page("script_recipe", """
+script_recipe(name, params, path, trigger, install) - tested JASS systems as triggers_edit ops.
+
+  damage_detection   one function every damage event passes through            (no parameters)
+  unit_indexer       a number on every unit, plus a hashtable for its data     (no parameters)
+  respawn            units of one owner come back where they died              delay, owner
+  waves              timed waves from a spawn to a target, growing each round  spawn, target, types, interval,
+                                                                              count, growth, owner
+  scoreboard         a multiboard with a row per player                        title, column
+  hero_tavern        a tavern that sells heroes and places the bought one      heroes, at, tavern
+  quest              an entry in the quest log                                 title, description, icon, required
+  camera             the camera every player starts with                       distance, angle, rotation
+  cinematic          camera shots with spoken lines and their waits            shots, lines, letterbox, start_after
+
+  cinematic shots: [{"at": [x, y], "seconds": 4, "distance", "angle", "rotation", "pan_to": [x, y], "pan_seconds"}]
+  cinematic lines: [{"name": "Arthas", "text": "...", "seconds": 4, "unit": "Hamg"}] - line i belongs to shot i
+
+Without a name it lists them. The ops come back for triggers_edit so they can be edited first; install=true (with a
+path) puts them in, rebuilds the script and checks it with pjass. Each recipe names the trigger after itself unless
+"trigger" says otherwise, puts it in a "Systems" category, and declares its state as GUI variables.
+""")
+
+page("balance_report", """
+balance_report(path, kind, ids, compare, balance) - what the map's own objects are worth, from their fields.
+
+  kind="unit"     damage per second per enabled attack ((base + dice * (sides + 1) / 2) / cooldown), effective life
+                  (life / (1 - 0.06 * armour / (1 + 0.06 * armour))), gold, lumber, food, speed, sight, build time,
+                  and damage per gold, life per gold and a combined worth per 100 gold
+  kind="item"     the bonuses its abilities give (Iagi, Iint, Istr, Iatt, Ilif, Iman, Idef, ...) and per 100 gold
+  kind="ability"  the per-level curve: cooldown, mana, range, duration, area, damage, damage per mana, damage per
+                  second of cooldown
+
+ids defaults to what the map created or modified (objdata_list). compare=true adds the stock objects closest in price
+and food, and flags a ratio far outside theirs. The result carries the formulas and the fields it read, so a number
+can be checked instead of believed.
+""")
+
+page("map_flow", """
+map_flow(path, area) and melee_check(path, sample) - how a map plays, in walking distances.
+
+map_flow, per start location: the distance to its own gold mine and to the nearest expansion (and where that is), the
+walkable corners within 1500 units (room for a base), and how much ground it reaches. Per pair of starts: the walking
+distance between them, the narrowest choke on the way and where that choke is. Then the walkable corners of the map,
+how many of them the starts reach, and the pockets they do not - on a melee map mostly creep camps ringed by trees,
+which open when the trees come down. A choke under about 400 world units is a one-unit pass, 400-900 a lane, above
+1500 open ground.
+
+melee_check measures the same map the way the melee maps shipped with this install are measured - mines per player,
+start distance, distance to a player's own mine, creep camps, playable area per player, tile count, doodad and unit
+density - and reports each metric with the shipped maps' p10, median and p90 for the same player count and a verdict
+(inside, below, above). The norms are mined from those maps once per install and cached; sample caps how many are read
+the first time.
+""")
+
 def help_text(topic: str | None = None) -> dict:
     """One reference page, or the list of them."""
     if topic is None or topic not in TOPICS:

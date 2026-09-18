@@ -528,7 +528,7 @@ def strings_edit(path: str, ops: list[dict]) -> dict:
     "Sentry", "regex": false, "ids": [3, 4]} over every entry (one name changed everywhere the map shows it), and
     {"op": "import", "entries": {"3": "Wachturm"}} for a translated table in one go. Object data, map info and GUI
     triggers point at these entries, so they all follow; the map script keeps its own copy, so map_save (or
-    script_build) has to regenerate it afterwards."""
+    script_build) has to regenerate it afterwards. wc3_help("strings_edit") has the op shapes."""
     return text_ops.strings_edit(_project(path), ops)
 
 
@@ -599,7 +599,7 @@ def balance_report(path: str, kind: Literal["unit", "item", "ability"] = "unit",
     give per 100 gold; for an ability the per-level curve with damage per mana and per second of cooldown. compare
     puts the stock objects closest in price (and food) beside each one and flags a ratio far outside what they show.
     ids defaults to what the map created or modified. The result carries the formulas and the fields it read, so the
-    numbers can be checked rather than believed."""
+    numbers can be checked rather than believed. wc3_help("balance_report") has the formulas."""
     return balance_ops.balance_report(_project(path), _catalog("enUS", balance, True), kind, ids, compare)
 
 
@@ -714,7 +714,8 @@ def map_flow(path: str, area: list[float] | None = None) -> dict:
     mine and to the nearest expansion, the walkable room around it, and how much ground it reaches; per pair of
     starts the distance between them and the narrowest choke on the way, with where that choke is; plus the walkable
     share of the map and the pockets no start can reach on foot (on a melee map most of those are creep camps ringed
-    by trees). Numbers are world units over the pathing grid, terrain plus every placed object's footprint."""
+    by trees). Numbers are world units over the pathing grid, terrain plus every placed object's footprint.
+    wc3_help("map_flow") explains the numbers, melee_check included."""
     return flow_ops.flow_report(_project(path), _catalog("enUS", "Custom_V1", True), area)
 
 
@@ -793,7 +794,7 @@ def script_recipe(name: str | None = None, params: dict | None = None, path: str
     that sells heroes and places the bought one), quest (an entry in the quest log) and camera (the camera every
     player starts with). Without a name it lists them with their parameters. install=true (with path) puts the ops
     into the open map, rebuilds the script and checks it with pjass; otherwise the ops come back for triggers_edit,
-    so they can be edited first."""
+    so they can be edited first. wc3_help("script_recipe") lists every recipe with its parameters."""
     if name is None:
         return recipe_ops.recipe_list()
     doc = recipe_ops.recipe(name, params, trigger)

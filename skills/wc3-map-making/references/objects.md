@@ -56,3 +56,20 @@ A script that orders a unit to cast needs the order string, and **the ability da
 ## Reviewing a batch
 
 `objdata_diff` says what the map's object data of one kind changed against the map file on disk (`against="source"`) or against a snapshot (`map_snapshot action=create` first): objects added or deleted, and per object every field whose value differs, with the value before and after. Read it before `map_save`, or after a World Editor session to see what the editor did.
+
+## What an object is worth
+
+`balance_report` computes it from the fields instead of guessing: for a unit the damage per second of every enabled
+attack ((base + dice * (sides + 1) / 2) / cooldown), the effective life its armour buys (life / (1 - 0.06 * armour /
+(1 + 0.06 * armour))), and both per 100 gold; for an item the bonuses its abilities give per 100 gold; for an ability
+the per-level curve with damage per mana and per second of cooldown. Every row carries the stock objects closest in
+price and food, and a flag when a ratio is far outside theirs - which is how a tier-1 unit that out-damages a Knight
+for half the gold gets caught without a game run. The result names the formulas and the fields it read.
+
+## The string table
+
+`strings_get` reads war3map.wts: every name, tooltip and quest text the map shows, with `used_by` saying which files
+point at each entry and marking the ones nothing refers to any more. `strings_edit` sets, adds and removes entries,
+imports a translated table in one go, and `replace` renames one thing everywhere the map shows it. Object data, map
+info and GUI triggers all point at these entries, so they follow; the map script keeps its own copy, so `map_save`
+(or `script_build`) has to regenerate it afterwards.
