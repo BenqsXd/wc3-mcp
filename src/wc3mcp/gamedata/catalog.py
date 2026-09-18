@@ -35,7 +35,10 @@ def _has_value(value) -> bool:
 
 def compact(doc: dict) -> dict:
     """An object document without the per-field metadata: raw code -> value (or per-level values), leaving out
-    fields that hold nothing. About a tenth of the verbose size; verbose=true names, categorises and types them."""
+    fields that hold nothing. About a tenth of the verbose size; verbose=true names, categorises and types them.
+    Documents that carry no field metadata (terrain and sound rows, assets, trigger data) pass through."""
+    if not any(isinstance(entry, dict) for entry in doc.get("fields", {}).values()):
+        return doc
     fields, modified, refs, unused = {}, [], {}, {}
     for rawcode, entry in doc["fields"].items():
         value = entry["values"] if "values" in entry else entry.get("value")

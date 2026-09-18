@@ -120,9 +120,11 @@ def _many(kind: str, id, get, verbose: bool) -> dict:
     docs = [get(one) for one in ids]
     if not verbose:
         docs = [catalog_compact(doc) for doc in docs]
+    # the note only fits documents that have object fields (trigger data and asset paths pass through as they are)
+    note = {} if verbose or not any("fields" in doc for doc in docs) else {"note": COMPACT_NOTE}
     if isinstance(id, str):
-        return {**docs[0], **({} if verbose else {"note": COMPACT_NOTE})}
-    return {"kind": kind, "count": len(docs), "objects": docs, **({} if verbose else {"note": COMPACT_NOTE})}
+        return {**docs[0], **note}
+    return {"kind": kind, "count": len(docs), "objects": docs, **note}
 
 
 def _catalog(locale: str, balance: str | None, hd: bool) -> Catalog:

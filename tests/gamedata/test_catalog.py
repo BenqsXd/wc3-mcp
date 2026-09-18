@@ -153,3 +153,13 @@ def test_compact_leaves_out_the_field_metadata_and_the_empty_fields(cat):
     assert len(str(small)) * 4 < len(str(verbose))       # the point of it: a fraction of the size
     leveled = compact(cat.get("ability", "AHbz", ["Hbz1"]))
     assert leveled["fields"]["Hbz1"] == ["6", "8", "10"]
+
+
+def test_compact_passes_documents_without_field_metadata_through(cat):
+    """Terrain and sound rows, asset paths and trigger data have no per-field entries to strip."""
+    from wc3mcp.gamedata.catalog import compact
+
+    for kind, obj_id in (("trigger_function", "KillUnit"), ("trigger_type", "unit"), ("tile", "Lgrs"),
+                         ("icon", "War3.w3mod:ReplaceableTextures/CommandButtons/BTNFootman.dds")):
+        doc = cat.get(kind, obj_id)
+        assert compact(doc) == doc, kind
