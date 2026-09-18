@@ -13,6 +13,7 @@ from mcp.server.fastmcp.exceptions import ToolError as McpToolError
 
 from . import config
 from .casc.storage import open_storage
+from .mpq.reader import Archive as MpqArchive
 from .desktop import editor as desktop_editor
 from .desktop import game as desktop_game
 from .errors import ToolError
@@ -32,6 +33,7 @@ from .ops import probe as probe_ops
 from .ops import script as script_ops
 from .ops import terrain as terrain_ops
 from .ops import triggers as triggers_ops
+from .ops import ui as ui_ops
 from .project.workspace import MapProject, project_id
 
 log = logging.getLogger("wc3mcp")
@@ -127,6 +129,31 @@ def _many(kind: str, id, get, verbose: bool) -> dict:
     if isinstance(id, str):
         return {**docs[0], **note}
     return {"kind": kind, "count": len(docs), "objects": docs, **note}
+
+
+def _version_reader(project, against: str):
+    """A read(name) -> bytes | None over another version of the map: the file on disk, or a snapshot."""
+    if against == "source":
+        source = Path(project.m["source"])
+        if source.is_dir():
+            return lambda name: (source / name.replace("\\", "/")).read_bytes()                 if (source / name.replace("\\", "/")).is_file() else None
+        if not source.is_file():
+            raise ToolError("not_found", f"the map file {source} is gone, so there is nothing to compare with",
+                            hint="map_snapshot create makes a version to compare with instead")
+        archive = MpqArchive.open(source)
+        return lambda name: archive.read(name) if archive.find(name) is not None else None
+    folder = config.home() / "snapshots" / project.work.name / against / "files"
+    if not folder.is_dir():
+        raise ToolError("no_such_snapshot", f"snapshot {against!r} does not exist",
+                        hint='map_snapshot action=list, or against="source" for the map file')
+    files = json.loads((folder.parent / "manifest.json").read_text("utf-8"))["files"]
+    paths = {entry["name"].upper(): folder / entry["path"] for entry in files.values()}
+
+    def read(name: str):
+        found = paths.get(name.upper())
+        return found.read_bytes() if found and found.is_file() else None
+
+    return read
 
 
 def _catalog(locale: str, balance: str | None, hd: bool) -> Catalog:
@@ -477,6 +504,37 @@ def objdata_edit(path: str, kind: ObjectKind, ops: list[dict] | None = None, bal
 
 
 @_tool
+def ui_get(path: str, file: str | None = None) -> dict:
+    """Custom user interface of an open map. Without file: the .fdf and .toc files it holds. With one: that layout
+    file parsed into frames (type, name, parent, what it inherits) and its statements, plus the problems a check
+    found. A file the map does not hold is read from the game data instead, so the stock UI can be studied
+    (data_search kind=file query=*.fdf lists it)."""
+    return ui_ops.ui_get(_project(path), _catalog("enUS", "Custom_V1", True), file)
+
+
+@_tool
+def ui_edit(path: str, file: str, statements: list[dict] | None = None, text: str | None = None,
+            toc: str | None = None) -> dict:
+    """Write a custom UI layout into an open map: an .fdf built from statements (the ui_get shape: {"block": "Frame",
+    "args": ["BACKDROP", "MyPanel"], "statements": [{"key": "Width", "args": [0.2]}, {"key": "SetPoint", "args":
+    ["TOPLEFT", "ConsoleUI", "TOPLEFT", 0.01, -0.01]}]}) or from ready FDF text, imported under war3mapImported and
+    listed in a .toc next to it. Returns the frames it defines, the problems a check found (unknown frame type, an
+    anchor that is not a corner, a SetPoint to a frame the file does not define, a texture the map does not hold) and
+    the script that loads it (BlzLoadTOCFile, then BlzGetFrameByName or BlzCreateFrame)."""
+    return ui_ops.ui_edit(_project(path), _catalog("enUS", "Custom_V1", True), file, statements, text, toc)
+
+
+@_tool
+def objdata_diff(path: str, kind: ObjectKind, against: str = "source", balance: str | None = "Custom_V1") -> dict:
+    """What this map's object data of one kind changed against the map file on disk ("source") or a snapshot (its
+    label, from map_snapshot): objects added or deleted, and per object each field whose value differs, with the
+    value before and after. Use it to review a batch before map_save, or to see what a World Editor session did."""
+    project = _project(path)
+    return objdata_ops.objdata_diff(project, _catalog("enUS", balance, True), kind,
+                                    _version_reader(project, against))
+
+
+@_tool
 def triggers_tree(path: str) -> dict:
     """Trigger Editor overview of an open map: categories, triggers (type gui/text/comment, enabled, initially on,
     run on map init, function count) and global variables."""
@@ -622,13 +680,18 @@ def terrain_edit(path: str, ops: list[dict] | None = None, ops_file: str | None 
 
 @_tool
 def terrain_render(path: str, scale: int | None = None, objects: bool = True, doodads: bool = True,
-                   pathing: bool = False) -> Image:
+                   pathing: bool = False, write_preview: bool = False) -> Image:
     """Top-down PNG of the map's terrain, north up, scale pixels per tile (default: fits 1024 px): tile colours,
     height shading, darkened cliffs, water, blight and boundary; objects draws regions (cyan), start locations
     (white), units (red) and items (yellow), and with doodads also doodads (magenta), trees (dark green) and other
     destructibles (orange) as small marks, enough to see coverage, gaps and clumps. pathing=true tints ground on
-    unbuildable tiles red and on unwalkable tiles black, from the current tiles (no editor save needed)."""
-    return Image(data=terrain_ops.terrain_render(_project(path), _catalog("enUS", "Custom_V1", True), scale, objects,
+    unbuildable tiles red and on unwalkable tiles black, from the current tiles (no editor save needed).
+    write_preview=true also writes this view into the map as war3mapPreview.tga, the picture the map list shows
+    instead of the minimap (the minimap itself, war3mapMap.blp, is map_save's job)."""
+    project = _project(path)
+    if write_preview:
+        project.write("war3mapPreview.tga", terrain_ops.preview(project, _catalog("enUS", "Custom_V1", True)))
+    return Image(data=terrain_ops.terrain_render(project, _catalog("enUS", "Custom_V1", True), scale, objects,
                                                  objects and doodads, pathing), format="png")
 
 

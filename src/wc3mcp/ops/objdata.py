@@ -419,3 +419,66 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
         project.write(strings_file(project), wts_after)
         changed = True
     return {"changed": changed, "created": created, "warnings": []}
+
+
+# ---- diff ------------------------------------------------------------------------------------------------------
+def _side(read, kind: str, catalog) -> dict:
+    """{object id: {(field, level): value}} of one version of the map, main and skin files merged."""
+    ext = _check_kind(kind)
+    out: dict[str, dict] = {}
+    for prefix in ("war3map", "war3mapSkin"):
+        data = read(f"{prefix}.{ext}")
+        if data is None:
+            continue
+        try:
+            om = objmods.parse(data, ext in LEVEL_EXTENSIONS)
+        except FormatError as e:
+            raise ToolError("bad_file", f"{prefix}.{ext}: {e}") from e
+        for custom, table in ((False, om.original), (True, om.custom)):
+            for entry in table:
+                item = out.setdefault(_key(entry, custom), {})
+                item["base"] = entry.base_id.decode("latin-1")
+                item["custom"] = custom
+                for mod in entry.mods:
+                    item[(mod.id.decode("latin-1"), mod.level)] = _f32(mod.value) if mod.var_type in (REAL, UNREAL) \
+                        else mod.value
+    return out
+
+
+def objdata_diff(project, catalog, kind: str, before) -> dict:
+    """What this map's object data of one kind changed against `before(name) -> bytes | None`: objects added or
+    deleted, and per object the fields whose value differs, with both values."""
+    now, was = _side(lambda n: _maybe(project, n), kind, catalog), _side(before, kind, catalog)
+    strings = load_strings(project)
+    names = {f.id: f.display_name or f.field for f in catalog.fields(kind)}
+    added = sorted(set(now) - set(was))
+    removed = sorted(set(was) - set(now))
+    changed = []
+    for oid in sorted(set(now) & set(was)):
+        fields = []
+        for key in sorted(set(now[oid]) | set(was[oid]), key=str):
+            if key in ("base", "custom") or now[oid].get(key) == was[oid].get(key):
+                continue
+            rawcode, level = key
+            fields.append({"field": rawcode, "name": names.get(rawcode, rawcode),
+                           **({"level": level} if level else {}),
+                           "before": _resolved(was[oid].get(key), strings),
+                           "after": _resolved(now[oid].get(key), strings)})
+        if fields:
+            changed.append({"id": oid, "base": now[oid].get("base"), "fields": fields})
+    return {"kind": kind, "added": [{"id": oid, "base": now[oid].get("base")} for oid in added],
+            "removed": [{"id": oid, "base": was[oid].get("base")} for oid in removed], "changed": changed,
+            "count": len(added) + len(removed) + sum(len(c["fields"]) for c in changed)}
+
+
+def _maybe(project, name: str) -> bytes | None:
+    try:
+        return project.read(name)
+    except ToolError as e:
+        if e.code != "no_such_file":
+            raise
+        return None
+
+
+def _resolved(value, strings: TriggerStrings):
+    return strings.resolve(value) if isinstance(value, str) and TRIGSTR.match(value) else value

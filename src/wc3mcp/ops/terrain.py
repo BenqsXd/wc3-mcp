@@ -502,3 +502,12 @@ def minimap(project, catalog) -> bytes:
     except (ToolError, FormatError, ValueError):
         pass  # no readable map info: the whole terrain
     return blp.encode(image.resize((256, 256), Image.Resampling.BILINEAR), mipmaps=False)
+
+
+def preview(project, catalog, size: int = 256) -> bytes:
+    """war3mapPreview.tga: the picture the map list shows instead of the minimap. Same view as the minimap, written
+    as an uncompressed TGA, which is what the game reads there."""
+    image = Image.open(io.BytesIO(terrain_render(project, catalog, scale=1, objects=True, doodads=False)))
+    out = io.BytesIO()
+    image.convert("RGB").resize((size, size), Image.Resampling.BILINEAR).save(out, format="TGA")
+    return out.getvalue()
