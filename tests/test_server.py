@@ -444,3 +444,51 @@ def test_map_save_compiles_the_script(tmp_path):
     saved = payload(call("map_save", {"path": path}))
     assert saved["saved"] and saved["validation"]["script"]["ok"]
     payload(call("map_close", {"path": path}))
+
+
+def test_batch_runs_several_tools_in_one_call(tmp_path):
+    """The chains that always go together (edit, rebuild, check) in one round trip."""
+    src = tmp_path / "batch.w3x"
+    src.write_bytes(write_archive({"war3map.j": b"// script"}))
+    out = payload(call("wc3_batch", {"calls": [
+        {"tool": "map_open", "args": {"path": str(src)}},
+        {"tool": "map_file_read", "args": {"path": str(src), "name": "war3map.j"}},
+        {"tool": "map_status", "args": {"path": str(src)}}]}))
+    assert out["ran"] == 3 and out["failed"] == 0
+    assert [r["tool"] for r in out["results"]] == ["map_open", "map_file_read", "map_status"]
+    assert out["results"][1]["result"]["content"] == "// script"
+    stopped = payload(call("wc3_batch", {"calls": [
+        {"tool": "map_status", "args": {"path": str(tmp_path / "gone.w3x")}},
+        {"tool": "map_status", "args": {"path": str(src)}}]}))
+    assert stopped["ran"] == 1 and stopped["failed"] == 1
+    assert stopped["results"][0]["error"]["code"] == "not_open"
+    both = payload(call("wc3_batch", {"stop_on_error": False, "calls": [
+        {"tool": "map_status", "args": {"path": str(tmp_path / "gone.w3x")}},
+        {"tool": "map_status", "args": {"path": str(src)}}]}))
+    assert both["ran"] == 2 and both["failed"] == 1 and both["results"][1]["ok"]
+    for calls, code in (([{"tool": "no_such_tool", "args": {}}], "not_found"),
+                        ([{"tool": "wc3_batch", "args": {"calls": []}}], "not_found"),
+                        ([{"tool": "terrain_render", "args": {"path": str(src)}}], "bad_value"),
+                        ([{"tool": "map_status", "args": "path"}], "bad_value"),
+                        ([], "bad_value")):
+        err = call("wc3_batch", {"calls": calls})
+        assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == code, calls
+    bad_args = payload(call("wc3_batch", {"calls": [{"tool": "map_status", "args": {"nope": 1}}]}))
+    assert bad_args["results"][0]["error"]["code"] == "bad_value"
+    zero = payload(call("wc3_batch", {"calls": [{"tool": "wc3_help"}]}))   # a tool that takes nothing needs no args
+    assert zero["results"][0]["ok"] and zero["results"][0]["result"]["topics"]
+    payload(call("map_close", {"path": str(src)}))
+
+
+def test_help_pages_hold_what_the_descriptions_left_out():
+    listing = payload(call("wc3_help", {}))
+    assert "placed_edit" in listing["topics"] and "game_test" in listing["topics"]
+    page = payload(call("wc3_help", {"topic": "placed_edit"}))
+    assert page["topic"] == "placed_edit" and '"op": "forest"' in page["text"] and "scatter" in page["text"]
+    unknown = payload(call("wc3_help", {"topic": "nope"}))
+    assert unknown["unknown_topic"] == "nope" and unknown["topics"]
+    tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
+    for name in listing["topics"]:
+        # a page named after a tool is pointed at from that tool; a topic page (terrain_landscape) from its tool too
+        holder = name if name in tools else "terrain_edit"
+        assert f'wc3_help("{name}")' in tools[holder].description, name
