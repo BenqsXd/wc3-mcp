@@ -47,6 +47,20 @@ EVENT_NATIVES = ("GetTriggerUnit", "GetAttacker", "GetKillingUnit", "GetDyingUni
 WAITS = ("TriggerSleepAction", "PolledWait")
 # a JASS thread stops at about 300000 operations, so a loop of this many iterations needs a timer instead
 OP_LIMIT = 8190
+# calls that change the game state itself: inside a GetLocalPlayer() block they run on one client only
+STATE_CHANGING = frozenset("""
+CreateUnit CreateUnitAtLoc CreateUnitByName RemoveUnit KillUnit SetUnitX SetUnitY SetUnitPosition SetUnitPositionLoc
+SetUnitOwner SetUnitState SetUnitLifePercentBJ SetUnitManaPercentBJ UnitAddAbility UnitRemoveAbility UnitAddItem
+UnitAddItemById UnitRemoveItem RemoveItem CreateItem SetPlayerState AdjustPlayerStateBJ SetPlayerTechResearched
+IssueImmediateOrder IssuePointOrder IssueTargetOrder IssueBuildOrderById IssueImmediateOrderById IssuePointOrderById
+IssueTargetOrderById UnitDamageTarget SetHeroLevel AddHeroXP SetHeroXP SelectHeroSkill CreateDestructable
+RemoveDestructable KillDestructable SetPlayerAlliance SetPlayerAllianceStateBJ TriggerExecute ConditionalTriggerExecute
+EnableTrigger DisableTrigger DestroyTrigger TriggerSleepAction PolledWait SetUnitFacing PauseUnit ShowUnit
+CustomVictoryBJ CustomDefeatBJ EndGameBJ SetUnitScale SetUnitVertexColor
+""".split())
+# random draws: each client draws its own number, so the game states drift apart
+RANDOM = frozenset(("GetRandomInt", "GetRandomReal", "ChooseRandomItemEx", "ChooseRandomCreep", "GetRandomDirectionDeg",
+                    "GetRandomLocInRect"))
 # destroy calls whose handle is dead afterwards (KillUnit is left out: a dead unit stays a valid handle)
 DESTROYED = ("RemoveUnit", "RemoveLocation", "DestroyGroup", "RemoveRect", "DestroyTrigger", "DestroyTimer",
              "RemoveItem", "DestroyEffect", "DestroyForce", "DestroyLeaderboard", "DestroyMultiboard",
@@ -176,7 +190,25 @@ def _after_destroy(name: str, first_line: int, body: str, text: str) -> list[dic
     return out
 
 
-RULES = (_leaks, _event_after_wait, _dead_trigger, _loops, _after_destroy)
+def _desync(name: str, first_line: int, body: str, text: str) -> list[dict]:
+    """GetLocalPlayer() splits the clients: inside such a block only what one client sees may change, and the two
+    sides must run the same number of game actions, or the players desync and drop."""
+    out = []
+    for m in re.finditer(r"(?m)^[ \t]*(?:if|elseif)\b[^\n]*\bGetLocalPlayer\s*\(", body):
+        block = body[m.end():]
+        end = re.search(r"(?m)^[ \t]*endif\b", block)
+        inside = block[:end.start() if end else len(block)]
+        called = {c for c in re.findall(r"\b(\w+)\s*\(", inside) if c in STATE_CHANGING or c in RANDOM}
+        if called:
+            worst = sorted(called, key=lambda c: (c not in STATE_CHANGING, c))[0]
+            out.append(_hit("desync", _line(body, m.start(), first_line), name,
+                            f"{worst}() runs inside a GetLocalPlayer() block: it changes the game state (or draws a "
+                            "random number) on one client only, which desyncs a multiplayer game — keep the block to "
+                            "what one player sees (sounds, text, camera, UI, selection)"))
+    return out
+
+
+RULES = (_leaks, _event_after_wait, _dead_trigger, _loops, _after_destroy, _desync)
 
 
 def lint(text: str) -> list[dict]:

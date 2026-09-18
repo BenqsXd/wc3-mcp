@@ -40,7 +40,8 @@ mcp = FastMCP("wc3", instructions=(
     "items, buffs, upgrades, doodads, destructibles, terrain, sounds and assets with data_search / data_get."))
 
 Kind = Literal["unit", "item", "ability", "buff", "upgrade", "destructible", "doodad", "tile", "cliff", "water",
-               "weather", "sound", "model", "icon", "file", "trigger_function", "trigger_type", "trigger_preset"]
+               "weather", "sound", "model", "icon", "file", "trigger_function", "trigger_type", "trigger_preset",
+               "native"]
 ObjectKind = Literal["unit", "item", "destructible", "doodad", "ability", "buff", "upgrade"]
 MAX_READ = 1024 * 1024
 _projects: dict[str, MapProject] = {}
@@ -373,11 +374,14 @@ def map_snapshot(path: str, action: Literal["create", "restore", "list", "diff"]
 def data_search(kind: Kind, query: str = "", limit: int = 50, offset: int = 0, locale: str = "enUS",
                 balance: str | None = "Custom_V1", hd: bool = True, tileset: str | None = None) -> dict:
     """Search base game data by id, name or editor suffix (object, terrain and sound kinds) or by path substring or
-    glob (model, icon, file; a glob without a layer prefix matches in any layer, e.g. "PathTextures/8x8*"). model,
+    glob (model, icon, file; a glob without a layer prefix matches in any layer, e.g. "PathTextures/8x8*"), or by name
+    or signature text (native). model,
     icon and file results give one entry per file: ref is the path as object data and scripts write it
     (backslashes, icons as .blp, models as .mdl), layers the storage layers holding it (base, _HD, _DE, ...) and id a
     storage path for data_file and the asset tools. trigger_function / trigger_type / trigger_preset search GUI
-    trigger functions, variable types and preset values. Tile results carry buildable, walkable and flyable (an
+    trigger functions, variable types and preset values. kind=native searches the script API of the installed build
+    (common.j, Blizzard.j, common.ai): natives, Blizzard.j functions, constants and handle types, each with its
+    signature, so a script never has to guess one; globs work too ("Blz*Frame*"). Tile results carry buildable, walkable and flyable (an
     unbuildable tile silently stops player build orders). tileset (a letter, e.g. "L", or a name, e.g. "Lordaeron
     Summer") lists only what that tileset offers for kind=tile, cliff, doodad and destructible; tile and cliff results
     name their tileset. Doodad and destructible results carry model_ok: false when the installed game cannot load the
@@ -620,8 +624,9 @@ def script_validate(path: str, lint: bool = False) -> dict:
     Errors carry line, message, the script section and the trigger they are in. lint=true adds the runtime traps a
     compiler cannot see (JASS only), each with its line, function and trigger: leaked locations, groups, forces, rects
     and boolexprs, event data read after a TriggerSleepAction, a trigger with an action but no event, a loop without
-    exitwhen or over the operation limit, a handle used after it was destroyed, and a local or parameter named after a
-    JASS type. They are heuristics, so each names what to check; a firing rule is usually a game run saved."""
+    exitwhen or over the operation limit, a handle used after it was destroyed, a local or parameter named after a
+    JASS type, and game state changed inside a GetLocalPlayer() block (a multiplayer desync). They are heuristics, so
+    each names what to check; a firing rule is usually a game run saved."""
     return script_ops.script_validate(_project(path), _catalog("enUS", "Custom_V1", True), lint=lint)
 
 
@@ -632,9 +637,11 @@ def map_validate(path: str) -> dict:
     imports, placed objects without a loadable model, and a trigger calling a function that a later trigger defines
     (function_order, which does not compile). Errors break the map; warnings are defects that shipped maps also carry,
     a reminder while terrain edits are newer than the derived files only the World Editor recomputes (derived_files),
-    order strings a unit will refuse (order_string) and the object data pitfalls of a copied object: command_card (two
-    buttons on one position), inherited_builds (a kept ubui build list) and locked_ability (a required research
-    nothing in the map offers). Each warning's message says what to check."""
+    order strings a unit will refuse (order_string), two abilities of one unit sharing an order (ability_order),
+    ground a player cannot walk to (reachable: start locations cut off from each other, or a preplaced unit its own
+    player cannot reach) and the object data pitfalls of a copied object: command_card (two buttons on one position),
+    inherited_builds (a kept ubui build list) and locked_ability (a required research nothing in the map offers).
+    Each warning's message says what to check."""
     return script_ops.map_validate(_project(path), _catalog("enUS", "Custom_V1", True))
 
 
@@ -834,7 +841,8 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
     local file; either implies probe=true) adds test code in the map's language (JASS or Lua statements, JASS locals
     first) that runs at that moment and may call the map's own functions, read its udg_ globals and wait
     (TriggerSleepAction); ProbeReport(text) comes back in probe.reports, ProbeCountEvent(EVENT_PLAYER_UNIT_DEATH,
-    "deaths") and ProbeEventCount("deaths") count a player-unit event, and probe_functions adds whole functions
+    "deaths") and ProbeEventCount("deaths") count a player-unit event, ProbeExpect("gold rose", cond) records a
+    pass/fail check (probe.checks, checks_failed, checks_passed), and probe_functions adds whole functions
     (callbacks for the test code's own triggers) before it. wait=false runs it in the background and returns at once:
     game_status then reports the run and its result when it ends, so the working copy is free meanwhile (a second run
     while one is going is refused). screenshot=true saves a PNG of the game window. A Battle.net login screen ends the
