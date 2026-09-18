@@ -22,9 +22,11 @@ from .gamedata.catalog import COMPACT_NOTE, Catalog
 from .gamedata.catalog import compact as catalog_compact
 from .ops import ai as ai_ops
 from .ops import assets as assets_ops
+from .ops import balance as balance_ops
 from .ops import campaign as campaign_ops
 from .ops import elements as elements_ops
 from .ops import imports as imports_ops
+from .ops import flow as flow_ops
 from .ops import heightmap as heightmap_ops
 from .ops import info as info_ops
 from .ops import layout as layout_ops
@@ -567,6 +569,18 @@ def ui_edit(path: str, file: str, statements: list[dict] | None = None, text: st
 
 
 @_tool
+def balance_report(path: str, kind: Literal["unit", "item", "ability"] = "unit", ids: list[str] | None = None,
+                   compare: bool = True, balance: str | None = "Custom_V1") -> dict:
+    """What the map's own objects are worth, computed from their fields: for a unit the damage per second of each
+    enabled attack, the effective life its armour buys, and both per 100 gold; for an item the bonuses its abilities
+    give per 100 gold; for an ability the per-level curve with damage per mana and per second of cooldown. compare
+    puts the stock objects closest in price (and food) beside each one and flags a ratio far outside what they show.
+    ids defaults to what the map created or modified. The result carries the formulas and the fields it read, so the
+    numbers can be checked rather than believed."""
+    return balance_ops.balance_report(_project(path), _catalog("enUS", balance, True), kind, ids, compare)
+
+
+@_tool
 def objdata_diff(path: str, kind: ObjectKind, against: str = "source", balance: str | None = "Custom_V1") -> dict:
     """What this map's object data of one kind changed against the map file on disk ("source") or a snapshot (its
     label, from map_snapshot): objects added or deleted, and per object each field whose value differs, with the
@@ -655,6 +669,27 @@ def layout_check(path: str, area: list[float] | None = None, kinds: list[str] | 
     picture cannot show. kinds filters (doodad, destructible, unit, item), min_distance also counts the pairs closer
     than it."""
     return layout_ops.layout_check(_project(path), _catalog("enUS", "Custom_V1", True), area, kinds, min_distance)
+
+
+@_tool
+def map_flow(path: str, area: list[float] | None = None) -> dict:
+    """How a map plays, in walking distances rather than straight lines: per start location the way to its own gold
+    mine and to the nearest expansion, the walkable room around it, and how much ground it reaches; per pair of
+    starts the distance between them and the narrowest choke on the way, with where that choke is; plus the walkable
+    share of the map and the pockets no start can reach on foot (on a melee map most of those are creep camps ringed
+    by trees). Numbers are world units over the pathing grid, terrain plus every placed object's footprint."""
+    return flow_ops.flow_report(_project(path), _catalog("enUS", "Custom_V1", True), area)
+
+
+@_tool
+def melee_check(path: str, sample: int = 40) -> dict:
+    """Measure an open map the way the melee maps shipped with this install are measured, and report every metric
+    against their range: gold mines per player, the walking distance between starts, the distance to a player's own
+    mine, creep camps, playable area per player, the tile count, and doodad and unit density. Each metric comes back
+    with the map's value, the shipped maps' p10, median and p90 for the same number of players, and a verdict
+    (inside, below, above). The norms are mined from those maps once per install and cached, so nothing here is a
+    rule of thumb; sample caps how many maps are read the first time."""
+    return flow_ops.melee_check(_project(path), _catalog("enUS", "Custom_V1", True), sample)
 
 
 @_tool
