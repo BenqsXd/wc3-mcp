@@ -1,4 +1,5 @@
 import io
+import json
 import math
 
 import pytest
@@ -257,5 +258,30 @@ def test_preview_image_is_a_square_tga(tmp_path):
     try:
         image = Image.open(io.BytesIO(preview(project, catalog, size=128)))
         assert image.format == "TGA" and image.size == (128, 128) and image.mode == "RGB"
+    finally:
+        project.close(discard=True)
+
+
+@needs_maps
+def test_terrain_get_packs_rows_and_summarises(tmp_path):
+    """A whole map's terrain cell by cell is the biggest answer these tools give: runs and summary shrink it."""
+    catalog = Catalog(_storage(), balance="Custom_V1")
+    src = tmp_path / ladder_maps()[0].name
+    src.write_bytes(ladder_maps()[0].read_bytes())
+    project = MapProject.open(src)
+    try:
+        layers = ["height", "texture", "pathing"]
+        grid = terrain.terrain_get(project, None, layers, 2, catalog)
+        runs = terrain.terrain_get(project, None, layers, 2, catalog, format="runs")
+        summary = terrain.terrain_get(project, None, layers, 2, catalog, format="summary")
+        assert len(json.dumps(runs)) < len(json.dumps(grid))
+        assert len(json.dumps(summary)) * 10 < len(json.dumps(grid))
+        unpacked = [[value for value, count in row for _ in range(count)] for row in runs["runs"]["texture"]]
+        assert unpacked == grid["layers"]["texture"]          # the same data, packed
+        heights = summary["summary"]["height"]
+        flat = [h for row in grid["layers"]["height"] for h in row]
+        assert heights["min"] == round(min(flat), 1) and heights["max"] == round(max(flat), 1)
+        assert sum(summary["summary"]["texture"]["counts"].values()) <= summary["summary"]["corners"]
+        assert error(terrain.terrain_get, project, None, layers, 2, catalog, "pretty").code == "bad_value"
     finally:
         project.close(discard=True)

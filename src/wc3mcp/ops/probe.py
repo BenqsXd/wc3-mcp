@@ -145,6 +145,8 @@ end
 # writes text in pieces short enough for Preload (report= then report+= lines, joined again by parse);
 # ProbeExpect(name, condition) records a pass/fail check, so a run answers with a verdict instead of text;
 # ProbeCamera(x, y, distance, seconds) looks at a place and waits there, for game_test's screenshots;
+# ProbeStartAI(player, "human.ai") gives an empty slot a melee AI so a run has an opponent, and
+# ProbeGold(player, gold, lumber) pays for what the test wants built;
 # ProbeCountEvent(playerunitevent, name) counts that event from then on, ProbeEventCount(name) reads the count;
 # probe_functions (the caller's own functions) come right before Trig_wc3mcpProbe_User
 JASS_USER = """function wc3mcpProbe_Counted takes nothing returns nothing
@@ -178,6 +180,17 @@ function ProbeReport takes string s returns nothing
         call Preload("report+=" + SubString(s, i, i + 200))
         set i = i + 200
     endloop
+endfunction
+
+function ProbeStartAI takes integer slot, string script returns nothing
+    call SetPlayerController(Player(slot), MAP_CONTROL_COMPUTER)
+    call StartMeleeAI(Player(slot), script)
+    call Preload("ai=" + I2S(slot) + ":" + script)
+endfunction
+
+function ProbeGold takes integer slot, integer gold, integer lumber returns nothing
+    call SetPlayerState(Player(slot), PLAYER_STATE_RESOURCE_GOLD, gold)
+    call SetPlayerState(Player(slot), PLAYER_STATE_RESOURCE_LUMBER, lumber)
 endfunction
 
 function ProbeCamera takes real x, real y, real distance, real seconds returns nothing
@@ -219,6 +232,17 @@ function ProbeReport(s)
     for i = 201, #s, 200 do
         Preload("report+=" .. string.sub(s, i, i + 199))
     end
+end
+
+function ProbeStartAI(slot, script)
+    SetPlayerController(Player(slot), MAP_CONTROL_COMPUTER)
+    StartMeleeAI(Player(slot), script)
+    Preload("ai=" .. slot .. ":" .. script)
+end
+
+function ProbeGold(slot, gold, lumber)
+    SetPlayerState(Player(slot), PLAYER_STATE_RESOURCE_GOLD, gold)
+    SetPlayerState(Player(slot), PLAYER_STATE_RESOURCE_LUMBER, lumber or 0)
 end
 
 function ProbeCamera(x, y, distance, seconds)
@@ -319,6 +343,8 @@ def parse(lines: list[str]) -> dict:
             out["reports"][-1] += value
         elif key == "camera" and sep:
             out.setdefault("camera", []).append(value)
+        elif key == "ai" and sep:
+            out.setdefault("ai", []).append(value)
         elif key == "check" and sep:
             verdict, _, name = value.partition(":")
             out.setdefault("checks", {})[name] = verdict == "pass"

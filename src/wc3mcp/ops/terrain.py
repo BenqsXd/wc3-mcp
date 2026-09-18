@@ -102,7 +102,41 @@ def _corner_pathing(t: w3e.Terrain, catalog, cx: int, cy: int, cache: dict) -> s
     return "".join(k for k in "wfbB" if k in letters)
 
 
-def terrain_get(project, area: list | None = None, layers: list | None = None, step: int = 1, catalog=None) -> dict:
+def _runs(row: list) -> list:
+    """A row as [value, count] pairs: terrain repeats, so this is usually a fraction of the cells."""
+    out = []
+    for value in row:
+        if out and out[-1][0] == value:
+            out[-1][1] += 1
+        else:
+            out.append([value, 1])
+    return out
+
+
+def _summary(grids: dict) -> dict:
+    """What a caller usually wants to know about an area without reading every corner."""
+    from collections import Counter
+
+    out = {}
+    for name, rows in grids.items():
+        values = [v for row in rows for v in row]
+        if not values:
+            continue
+        if name in ("height", "water"):
+            numbers = [v for v in values if isinstance(v, (int, float))]
+            if numbers:
+                out[name] = {"min": round(min(numbers), 1), "max": round(max(numbers), 1),
+                             "mean": round(sum(numbers) / len(numbers), 1),
+                             "share": round(len(numbers) / len(values), 3)}
+        else:
+            counts = Counter("" if v is None else v for v in values)
+            out[name] = {"counts": dict(counts.most_common(12)), "kinds": len(counts)}
+    out["corners"] = sum(len(row) for row in next(iter(grids.values()), []))
+    return out
+
+
+def terrain_get(project, area: list | None = None, layers: list | None = None, step: int = 1, catalog=None,
+                format: str = "grid") -> dict:
     t, _ = _load(project)
     layers = list(DEFAULT_LAYERS if layers is None else layers)
     unknown = [x for x in layers if x not in LAYERS]
@@ -162,6 +196,16 @@ def terrain_get(project, area: list | None = None, layers: list | None = None, s
                     k for k, bit in (("w", 2), ("f", 4), ("b", 8), ("B", 0x20)) if cell & bit))
         for name in layers:
             grids[name].append(line[name])
+    if format not in ("grid", "runs", "summary"):
+        raise _bad("format", 'expected "grid", "runs" or "summary"')
+    shown: dict = {"layers": grids}
+    if format == "runs":
+        shown = {"runs": {name: [_runs(row) for row in rows] for name, rows in grids.items()},
+                 "runs_note": "each row is [value, count] pairs, left to right; the grid is the same data unpacked"}
+    elif format == "summary":
+        shown = {"summary": _summary(grids),
+                 "summary_note": "counts are corners per value; height and water give their range and mean, and "
+                                 "water share is the part of the area that is under water"}
     return {"version": t.version, "tileset": t.tileset, "tiles": [x.decode("latin-1") for x in t.tiles],
             "cliff_tiles": [x.decode("latin-1") for x in t.cliff_tiles], "palette": _palette(t),
             "corners": [t.width, t.height],
@@ -171,7 +215,7 @@ def terrain_get(project, area: list | None = None, layers: list | None = None, s
                                                   "128, bottom + j * step * 128)",
                        **({"snapped": f"the area held no corner line in {' and '.join(snapped)}, so the nearest one "
                                       "is used (corners lie 128 apart from the map edge)"} if snapped else {})},
-            "layers": grids,
+            **shown,
             **({"pathing_source": DERIVED_PATHING if derived else "war3map.wpm from the last World Editor save"}
                if "pathing" in layers else {})}
 
