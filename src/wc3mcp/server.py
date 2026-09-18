@@ -16,7 +16,8 @@ from .casc.storage import open_storage
 from .desktop import editor as desktop_editor
 from .desktop import game as desktop_game
 from .errors import ToolError
-from .gamedata.catalog import Catalog
+from .gamedata.catalog import COMPACT_NOTE, Catalog
+from .gamedata.catalog import compact as catalog_compact
 from .ops import ai as ai_ops
 from .ops import assets as assets_ops
 from .ops import campaign as campaign_ops
@@ -57,15 +58,17 @@ def _tool(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         start = time.perf_counter()
+        ms = lambda: (time.perf_counter() - start) * 1000  # noqa: E731
         try:
             result = fn(*args, **kwargs)
         except ToolError as e:
-            log.info("%s error %s %s", fn.__name__, e.code, _brief(kwargs))
+            log.info("%s error %s %.0fms %s", fn.__name__, e.code, ms(), _brief(kwargs))
             raise McpToolError(json.dumps(e.to_dict())) from e
         except Exception:
-            log.exception("%s crashed %s", fn.__name__, _brief(kwargs))
+            log.exception("%s crashed %.0fms %s", fn.__name__, ms(), _brief(kwargs))
             raise
-        log.info("%s ok %.0fms %s", fn.__name__, (time.perf_counter() - start) * 1000, _brief(kwargs))
+        # result bytes: what the answer costs the conversation, so a later session can see where the tokens go
+        log.info("%s ok %.0fms %dB %s", fn.__name__, ms(), len(json.dumps(result, default=str)), _brief(kwargs))
         return result
     return mcp.tool()(wrapper)
 
@@ -102,6 +105,24 @@ def _ops(ops: list | None, ops_file: str | None) -> list:
     if not isinstance(loaded, list):
         raise ToolError("bad_value", f"ops_file {ops_file} must hold a JSON array of ops", path="ops_file")
     return loaded
+
+
+MAX_IDS = 50
+
+
+def _many(kind: str, id, get, verbose: bool) -> dict:
+    """One id or a list of them through `get`, verbose or compact (data_get / objdata_get share this)."""
+    ids = [id] if isinstance(id, str) else id
+    if not isinstance(ids, list) or not ids or not all(isinstance(i, str) and i for i in ids):
+        raise ToolError("bad_value", "id must be an id or a list of ids", path="id")
+    if len(ids) > MAX_IDS:
+        raise ToolError("bad_value", f"{len(ids)} ids at once; the limit is {MAX_IDS}", path="id")
+    docs = [get(one) for one in ids]
+    if not verbose:
+        docs = [catalog_compact(doc) for doc in docs]
+    if isinstance(id, str):
+        return {**docs[0], **({} if verbose else {"note": COMPACT_NOTE})}
+    return {"kind": kind, "count": len(docs), "objects": docs, **({} if verbose else {"note": COMPACT_NOTE})}
 
 
 def _catalog(locale: str, balance: str | None, hd: bool) -> Catalog:
@@ -235,10 +256,10 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
     changes, or force=true, which overwrites the map with the working copy. rebuild_script: auto regenerates war3map.j / war3map.lua when triggers, regions, cameras, sounds,
     placed objects or map info changed (maps with trigger data), always regenerates whenever possible, never leaves
     the script alone. The minimap war3mapMap.blp is added when missing and redrawn after terrain edits unless the map
-    imports its own. validate runs map_validate first, compiles a regenerated or edited map
-    script (pjass / Lua check, reported in validation.script) and refuses to save on errors of either. The World Editor keeps the map
-    file open, so when it shows the same map the safe round trip is: edits here -> editor_map close -> map_save ->
-    editor_map open -> editor_map save (which recomputes pathing, shadows and the minimap)."""
+    imports its own. validate runs map_validate first, compiles a regenerated or edited map script (pjass / Lua check,
+    reported in validation.script) and refuses to save on errors of either. The World Editor keeps the map file open
+    while it shows it, so it has to close before a save here (the round trip is in the skill's
+    references/testing.md)."""
     project = _project(path)
     merged = project.merge_source() if merge_external and project.source_changed() else None
     catalog = _catalog("enUS", script_ops.balance(project), True)
@@ -358,9 +379,8 @@ def data_search(kind: Kind, query: str = "", limit: int = 50, offset: int = 0, l
     unbuildable tile silently stops player build orders). tileset (a letter, e.g. "L", or a name, e.g. "Lordaeron
     Summer") lists only what that tileset offers for kind=tile, cliff, doodad and destructible; tile and cliff results
     name their tileset. Doodad and destructible results carry model_ok: false when the installed game cannot load the
-    id's model in HD or in classic graphics, which the World Editor uses (it would place but render nothing, or show
-    a checkerboard cube in the editor); variations_ok then lists the variations that do load. balance selects the
-    gameplay data set: Custom_V1 (current), Custom_V0, Melee_V0, or null for the base files."""
+    id's model in HD or in classic graphics (the editor's), and variations_ok then lists the variations that do load.
+    balance selects the gameplay data set: Custom_V1 (current), Custom_V0, Melee_V0, or null for the base files."""
     catalog = _catalog(locale, balance, hd)
     results = catalog.search(kind, query, limit=min(limit, 500), offset=offset, tileset=tileset)
     return {"kind": kind, "query": query, "offset": offset, "count": len(results), "results": results,
@@ -368,13 +388,16 @@ def data_search(kind: Kind, query: str = "", limit: int = 50, offset: int = 0, l
 
 
 @_tool
-def data_get(kind: Kind, id: str, fields: list[str] | None = None, locale: str = "enUS",
-             balance: str | None = "Custom_V1", hd: bool = True) -> dict:
-    """Base data for one object with editor field raw codes, names, types and values (per level for leveled
-    fields). fields filters by raw code (e.g. uhpm), field name, or display-name substring. Doodads, destructibles and
-    units also list their model files and the ones the installed game cannot load in HD or classic graphics
-    (model.missing)."""
-    return _catalog(locale, balance, hd).get(kind, id, fields)
+def data_get(kind: Kind, id: str | list[str], fields: list[str] | None = None, verbose: bool = False,
+             locale: str = "enUS", balance: str | None = "Custom_V1", hd: bool = True) -> dict:
+    """Base data for one object, or for a list of ids in one call (objects, in the order asked). fields filters by
+    raw code (e.g. uhpm), field name, or display-name substring. verbose=true adds each field's name, category and
+    type around its value, which is about ten times the size. Doodads, destructibles and units also list their model
+    files and the ones the installed game cannot load in HD or classic graphics (model.missing). An ability carries
+    orders: its own order fields (data) and the World Editor's presets for it with their targeting (editor); for a few
+    abilities they disagree and only one of them works."""
+    catalog = _catalog(locale, balance, hd)
+    return _many(kind, id, lambda one: catalog.get(kind, one, fields), verbose)
 
 
 @_tool
@@ -423,13 +446,15 @@ def objdata_list(path: str, kind: ObjectKind, custom_only: bool = False, balance
 
 
 @_tool
-def objdata_get(path: str, kind: ObjectKind, id: str, fields: list[str] | None = None,
-                balance: str | None = "Custom_V1") -> dict:
-    """One object as the Object Editor shows it: base game values merged with this map's modifications. Each field
-    has raw code, name, type, value (or per-level values) and whether the map modifies it. levels and the per-level
-    lists follow the map's own level count (alev, glvl); values the map stores for levels beyond it are listed under
-    unused_levels. fields filters by raw code, field name or display-name substring."""
-    return objdata_ops.objdata_get(_project(path), _catalog("enUS", balance, True), kind, id, fields)
+def objdata_get(path: str, kind: ObjectKind, id: str | list[str], fields: list[str] | None = None,
+                verbose: bool = False, balance: str | None = "Custom_V1") -> dict:
+    """One object as the Object Editor shows it, or a list of ids in one call (objects): base game values merged with
+    this map's modifications. modified lists the raw codes the map changes; verbose=true instead gives each field its
+    name, type and which levels are modified, at about ten times the size. levels and the per-level lists follow the
+    map's own level count (alev, glvl); values the map stores for levels beyond it are listed under unused_levels.
+    fields filters by raw code, field name or display-name substring."""
+    project, catalog = _project(path), _catalog("enUS", balance, True)
+    return _many(kind, id, lambda one: objdata_ops.objdata_get(project, catalog, kind, one, fields), verbose)
 
 
 @_tool
@@ -465,7 +490,7 @@ def triggers_edit(path: str, ops: list[dict] | None = None, validate: bool = Fal
     {"op": "variable", "name", "type", "array_size"?, "initial"?, "category"?, "new_name"?};
     {"op": "trigger", "name", "category"?, "description"?, "enabled"?, "initially_on"?, "run_on_init"?,
      "events"/"conditions"/"actions": [{"fn": "KillUnit", "args": [{"call": "GetTriggerUnit"}]}, ...] or
-     "script": "<JASS or Lua>" or "script_file": "C:/local/trigger.j", "new_name"?};
+     "script": "<JASS or Lua>" or "script_file": "C:/local/trigger.j", "new_name"?, "index"? or "after"?};
     {"op": "delete", "what": "trigger"|"category"|"variable", "name"}; {"op": "header", "script"?, "script_file"?,
     "comment"?}; {"op": "script_replace", "name" (or "header": true), "old", "new"} replaces one exact piece of a
     script trigger's text (or the map header) without resending the script; old must occur exactly once.
@@ -473,10 +498,11 @@ def triggers_edit(path: str, ops: list[dict] | None = None, validate: bool = Fal
     functions take "if"/"then"/"else" (IfThenElseMultiple), "conditions" (And/OrMultiple) or "actions" (loops).
     GUI code is checked against TriggerData; data_search kind=trigger_function finds functions. run_on_init is for
     script triggers; a GUI trigger runs at map start through the event {"fn": "MapInitializationEvent"}.
-    A "script" trigger gets the editor's InitTrig_<script name> wrapper added when it does not define one, so the
-    actions alone are enough (the result says what was added). validate=true regenerates the map script and checks it
-    right away (pjass, or the Lua syntax check) instead of waiting for map_save; each error also carries script_line,
-    its line inside the script that was sent. ops_file: a local JSON file holding the ops array instead of ops."""
+    Replacing a trigger keeps its place in the category, because the script emits trigger functions in tree order;
+    index (0-based, inside the category) or after ("<trigger>", or null for first) moves one on purpose.
+    validate=true regenerates the map script and checks it right away (pjass, or the Lua syntax check) instead of
+    waiting for map_save; each error also carries script_line, its line inside the script that was sent. ops_file: a
+    local JSON file holding the ops array instead of ops. The skill's references/triggers.md has the JASS pitfalls."""
     return triggers_ops.triggers_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file), validate)
 
 
@@ -528,8 +554,8 @@ def placed_edit(path: str, ops: list[dict] | None = None, ops_file: str | None =
     sets: [[{item, chance}]]}, random (uDNR/bDNR/iDNR: {level, item_class}, {group, position} or {units: [{type,
     chance}]}), color, waygate (region name), doodad z and flags. created lists the new refs as ranges in op order
     ("doodad:422..909"; verbose=true lists every ref). ops_file: a local JSON file holding the ops array instead of
-    ops. A doodad or destructible whose model the installed game cannot load, or whose scale is outside its type's
-    minimum and maximum (the World Editor clamps it on save), is placed with a warning."""
+    ops. Placing a doodad or destructible whose model the installed game cannot load, or whose scale is outside its
+    type's own minimum and maximum, gives a warning."""
     return placed_ops.placed_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file), verbose)
 
 
@@ -558,9 +584,8 @@ def terrain_edit(path: str, ops: list[dict] | None = None, ops_file: str | None 
     (data_search kind=tile, tileset=<letter>), cliff {"level" 0..15, "cliff": cliff tile id}, water {"level": surface z,
     or null to remove}, ramp / blight / boundary {"value": true|false}. The result reports the map's tile palette and
     what the ops added to it (a map holds at most 16 ground tiles), and warns when a batch paints an unbuildable or
-    unwalkable tile over more than a few corners (data_search kind=tile shows buildable, walkable and flyable). Pathing,
-    shadows and the minimap are recomputed by the World Editor on its next save. ops_file: a local JSON file holding the
-    ops array instead of ops."""
+    unwalkable tile over more than a few corners. Only a World Editor save recomputes pathing, shadows and the minimap
+    icons from the new terrain. ops_file: a local JSON file holding the ops array instead of ops."""
     return terrain_ops.terrain_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file))
 
 
@@ -588,22 +613,26 @@ def script_build(path: str) -> dict:
 
 
 @_tool
-def script_validate(path: str) -> dict:
+def script_validate(path: str, lint: bool = False) -> dict:
     """Check the map script: pjass (JassHelper for vJASS) for war3map.j, a Lua 5.3 syntax check for war3map.lua.
-    Errors carry line, message, the script section and the trigger they are in."""
-    return script_ops.script_validate(_project(path), _catalog("enUS", "Custom_V1", True))
+    Errors carry line, message, the script section and the trigger they are in. lint=true adds the runtime traps a
+    compiler cannot see (JASS only), each with its line, function and trigger: leaked locations, groups, forces, rects
+    and boolexprs, event data read after a TriggerSleepAction, a trigger with an action but no event, a loop without
+    exitwhen or over the operation limit, a handle used after it was destroyed, and a local or parameter named after a
+    JASS type. They are heuristics, so each names what to check; a firing rule is usually a game run saved."""
+    return script_ops.script_validate(_project(path), _catalog("enUS", "Custom_V1", True), lint=lint)
 
 
 @_tool
 def map_validate(path: str) -> dict:
     """Cross-file checks of an open map: script language vs script files, GUI trigger code against TriggerData and
     variables, trigger names, references to generated objects, TRIGSTR strings, object data base ids and fields,
-    imports, placed objects without a loadable model. Errors break the map; warnings are defects that shipped maps also
-    carry, a reminder while terrain edits are newer than the pathing, shadow and minimap files only the World Editor
-    recomputes, and object data pitfalls: command_card (a building's trained units, researches, abilities, Rally or
-    Cancel on one button position, unless its stock base has the same clash), inherited_builds (a copied unit with its
-    own uabi that keeps its base's build list ubui) and locked_ability (an ability whose required research no unit of
-    the map researches and the script never mentions; skipped on melee maps)."""
+    imports, placed objects without a loadable model, and a trigger calling a function that a later trigger defines
+    (function_order, which does not compile). Errors break the map; warnings are defects that shipped maps also carry,
+    a reminder while terrain edits are newer than the derived files only the World Editor recomputes (derived_files),
+    order strings a unit will refuse (order_string) and the object data pitfalls of a copied object: command_card (two
+    buttons on one position), inherited_builds (a kept ubui build list) and locked_ability (a required research
+    nothing in the map offers). Each warning's message says what to check."""
     return script_ops.map_validate(_project(path), _catalog("enUS", "Custom_V1", True))
 
 
@@ -793,32 +822,25 @@ def editor_log(lines: int = 200) -> dict:
 def game_test(path: str, timeout: float = 240, results: list[str] | None = None, close: bool = True,
               screenshot: bool = False, probe: bool = False, probe_seconds: float = 10,
               probe_script: str | None = None, probe_script_file: str | None = None,
-              probe_functions: str | None = None) -> dict:
-    """Run a map in Warcraft III (windowed; the window needs to be in front while loading). The map script reports
-    results with PreloadGenClear/PreloadGenStart/Preload("text")/PreloadGenEnd("folder\\\\file.txt"); list those files
-    in results (relative to Documents\\Warcraft III\\CustomMapData) and the run ends as soon as all exist. Strings come
-    back unescaped (single backslashes). The game keeps about 259 characters of one Preload string: longer lines come
-    back cut off and are listed in truncated. A loading screen that waits for a key (maps with loading_screen title,
-    subtitle or text) gets a space key press (loading_screen_keys). A Battle.net login screen ends the run after about
-    30 s with login_required and leaves the game open: once the user has logged in there, call game_test again with the
-    same arguments and it continues in that game (continued_game) instead of launching a new one. Every other run is a
-    new launch that may ask for a login again, so put all checks of a session into as few runs as possible. An open
-    dialog (DialogDisplay) pauses a single-player game until someone clicks it, so timers and probe_seconds wait for it:
-    report before the dialog opens (e.g. probe_seconds 0.3). To capture the hero learn menu, the map's test code runs
-    SelectUnit(h, true), waits 0.5 s (TriggerSleepAction), calls ForceUIKey("O") and reports afterwards; a user click in
-    the game window changes what screenshot=true captures. probe=true instead runs a throwaway copy of the map (the open
-    working copy when the map is open) with one added trigger that reports, probe_seconds into the game, the units,
-    heroes, gold and lumber of every playing slot and the text the map shows (BJDebugMsg, DisplayTextToPlayer,
-    DisplayTimedTextToPlayer, DisplayTextToForce, DisplayTimedTextToForce) in probe.messages: use it to check that a map
-    loads and runs without touching its own triggers. probe_script (or probe_script_file, a local file; either implies
-    probe=true) adds test code in the map's language (JASS or Lua statements, JASS locals first) that runs at that
-    moment and may call the map's own functions, read its udg_ globals and wait (TriggerSleepAction; runs of 700 s of
-    waits worked); ProbeReport(text) writes any length of text, returned in probe.reports;
-    ProbeCountEvent(EVENT_PLAYER_UNIT_CONSTRUCT_START, "starts") counts a player-unit event from then on and
-    ProbeEventCount("starts") reads the count. probe_functions adds whole functions of the caller (callbacks for its own
-    triggers) before the probe code. screenshot=true saves a PNG of the game window (screenshot_of says what was
-    captured, or why nothing was). Returns the Preload strings per file, the useful War3Log.txt lines (known-benign
-    shipped-data lines are counted separately in benign_log) and any new crash."""
+              probe_functions: str | None = None, wait: bool = True) -> dict:
+    """Run a map in Warcraft III (windowed; the window needs to be in front while loading) and collect what the map
+    reports. The map script writes a result file with PreloadGenClear/PreloadGenStart/Preload("text")/
+    PreloadGenEnd("folder\\\\file.txt"); list those files in results, relative to the CustomMapData folder of
+    Documents\\Warcraft III, and the run ends as soon as all exist. probe=true instead runs a throwaway copy of the map (the open working copy
+    when the map is open) with one added trigger that reports, probe_seconds into the game, the units, heroes, gold and
+    lumber of every playing slot and the text the map shows, in probe.messages. probe_script (or probe_script_file, a
+    local file; either implies probe=true) adds test code in the map's language (JASS or Lua statements, JASS locals
+    first) that runs at that moment and may call the map's own functions, read its udg_ globals and wait
+    (TriggerSleepAction); ProbeReport(text) comes back in probe.reports, ProbeCountEvent(EVENT_PLAYER_UNIT_DEATH,
+    "deaths") and ProbeEventCount("deaths") count a player-unit event, and probe_functions adds whole functions
+    (callbacks for the test code's own triggers) before it. wait=false runs it in the background and returns at once:
+    game_status then reports the run and its result when it ends, so the working copy is free meanwhile (a second run
+    while one is going is refused). screenshot=true saves a PNG of the game window. A Battle.net login screen ends the
+    run after about 30 s with login_required and leaves the game open: once the user has logged in there, the same call
+    continues in that game (continued_game) instead of launching again. Returns the Preload strings per file, the
+    useful War3Log.txt lines (known-benign shipped-data lines counted in benign_log) and any new crash. The skill's
+    references/testing.md has the pitfalls: the 259-character Preload limit, dialogs pausing a single-player game,
+    loading screens that wait for a key, and how few launches a session should use."""
     target, extra = path, {}
     if probe_script is not None and probe_script_file is not None:
         raise ToolError("bad_value", "give probe_script or probe_script_file, not both")
@@ -835,7 +857,13 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
         target = str(probe_ops.build(path, run, catalog, opened, probe_seconds, probe_script, probe_functions))
         results = list(results or []) + [probe_ops.REPORT]
         extra["probe_map"] = target
-    result = desktop_game.GAME.test(target, timeout=timeout, results=results, close=close, screenshot=screenshot)
+    result = desktop_game.GAME.test(target, timeout=timeout, results=results, close=close, screenshot=screenshot,
+                                    wait=wait, meta={"probe": probe, "extra": extra})
+    return {**(_finish_test(result, probe) if wait else result), **extra}
+
+
+def _finish_test(result: dict, probe: bool) -> dict:
+    """The parts of a run's result that need the server: the screenshot file and the probe report."""
     if result.get("screenshot"):
         shot = config.home() / "screenshots" / f"game-{result['pid']}.png"
         shot.parent.mkdir(parents=True, exist_ok=True)
@@ -849,12 +877,19 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
         if lines is None and not result.get("login_required"):
             result["hint"] = ("the probed copy never reported: the game did not reach the map, it ended before "
                               f"probe_seconds, or {desktop_game.PAUSE_NOTE}")
-    return {**result, **extra}
+    return result
 
 
 @_tool
 def game_status() -> dict:
-    """Game processes (and which this server launched), their windows and the useful War3Log.txt lines."""
+    """Game processes (and which this server launched), their windows and the useful War3Log.txt lines. A game_test
+    run started with wait=false is reported under run: while it goes, how long it has taken and which result files
+    it has; when it ends, its whole result (probe reports included) under run.result."""
+    job = desktop_game.GAME.run
+    if job is not None and job["result"] is not None and not job.get("finished"):
+        job["result"] = _finish_test(job["result"], job["meta"].get("probe", False))
+        job["result"].update(job["meta"].get("extra") or {})
+        job["finished"] = True
     return desktop_game.GAME.status()
 
 

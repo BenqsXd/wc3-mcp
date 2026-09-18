@@ -96,3 +96,53 @@ def test_command_card_pitfalls_are_warnings(catalog):
     scripted = validate({"war3map.w3u": objmods.serialize(units),
                          "war3map.j": f"call SetPlayerTechResearched(Player(0), '{research}', 1)".encode()}, catalog)
     assert not [w for w in scripted["warnings"] if w["check"] == "locked_ability" and research in w["message"]]
+
+
+@pytest.fixture
+def scripted(tmp_path, catalog):
+    """A shipped map opened as a working copy, ready for custom text triggers."""
+    from wc3mcp.project.workspace import MapProject
+
+    src = tmp_path / "checks.w3x"
+    src.write_bytes(open_sample(next(m for m in sample_map_ids() if m.endswith(".w3m") or m.endswith(".w3x"))).data)
+    return MapProject.open(src)
+
+
+def _wrapped(name: str, body: str) -> str:
+    return (f"function Trig_{name}_Actions takes nothing returns nothing\n{body}\nendfunction\n"
+            f"function InitTrig_{name} takes nothing returns nothing\n"
+            f"    set gg_trg_{name} = CreateTrigger()\n"
+            f"    call TriggerAddAction(gg_trg_{name}, function Trig_{name}_Actions)\nendfunction\n")
+
+
+def test_a_trigger_calling_a_later_triggers_function_is_an_error(scripted, catalog):
+    """The script emits trigger functions in tree order, so a call into a later trigger does not compile."""
+    from wc3mcp.ops.script import map_validate
+    from wc3mcp.ops.triggers import triggers_edit
+
+    triggers_edit(scripted, catalog, [
+        {"op": "category", "name": "Waves"},
+        {"op": "trigger", "name": "Rounds", "category": "Waves", "script": _wrapped("Rounds", "    call RR_Idx(0)")},
+        {"op": "trigger", "name": "Helpers", "category": "Waves",
+         "script": _wrapped("Helpers", "    call BJDebugMsg(\"x\")") +
+                   "function RR_Idx takes integer i returns nothing\nendfunction\n"}])
+    errors = [e for e in map_validate(scripted, catalog)["errors"] if e["check"] == "function_order"]
+    assert len(errors) == 1 and "Rounds calls RR_Idx()" in errors[0]["message"]
+    assert "'Helpers' defines" in errors[0]["message"] and '"index"' in errors[0]["message"]
+    triggers_edit(scripted, catalog, [{"op": "trigger", "name": "Helpers", "index": 0}])
+    assert [e for e in map_validate(scripted, catalog)["errors"] if e["check"] == "function_order"] == []
+
+
+def test_order_strings_a_unit_will_refuse_are_warnings(scripted, catalog):
+    from wc3mcp.ops.script import map_validate
+    from wc3mcp.ops.triggers import triggers_edit
+
+    triggers_edit(scripted, catalog, [{"op": "category", "name": "Casts"}, {
+        "op": "trigger", "name": "Cast", "category": "Casts", "script": _wrapped("Cast", """
+    call IssueImmediateOrder(udg_Hero, "slimemonster")
+    call IssueImmediateOrder(udg_Hero, "summonlavaspawnnow")
+    call IssuePointOrder(udg_Hero, "attack", 0, 0)""")}])
+    found = {w["message"] for w in map_validate(scripted, catalog)["warnings"] if w["check"] == "order_string"}
+    assert len(found) == 2
+    assert any("'slimemonster' is the ability data's order of ANlm" in m and "'lavamonster'" in m for m in found)
+    assert any("'summonlavaspawnnow' matches no ability order" in m for m in found)

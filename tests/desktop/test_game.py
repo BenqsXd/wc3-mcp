@@ -165,7 +165,7 @@ def test_screen_state_reads_login_and_waiting_loading_screens():
 
 
 def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False, runner=None, map_bytes=b"",
-              launches=None):
+              launches=None, wait=True):
     clock = {"now": 1000.0}
     fake_time = type("T", (), {"time": staticmethod(lambda: clock["now"]),
                                "sleep": staticmethod(lambda s: clock.__setitem__("now", clock["now"] + s))})
@@ -195,7 +195,7 @@ def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False, runne
             out.write_text('function PreloadFiles takes nothing returns nothing\n\tcall Preload( "ok" )\nendfunction\n')
 
     monkeypatch.setattr(game.win, "send_input", press)
-    result = (runner or game.Game()).test(tmp_path / "map.w3x", timeout=300, results=[r"t\r.txt"])
+    result = (runner or game.Game()).test(tmp_path / "map.w3x", timeout=300, results=[r"t\r.txt"], wait=wait)
     return result, keys, closed
 
 
@@ -224,3 +224,27 @@ def test_the_same_test_after_a_login_continues_in_the_open_game(monkeypatch, tmp
     other, _, closed = _fake_run(monkeypatch, tmp_path, ["press_key"], write_result_after_key=True, runner=runner,
                                  map_bytes=b"another map", launches=launches)
     assert "continued_game" not in other and len(launches) == 3 and len(closed) == 2   # the open game, then the run
+
+
+def test_a_background_run_reports_its_result_through_the_status(monkeypatch, tmp_path):
+    """wait=False returns at once and the run keeps going in a thread, so the working copy is free meanwhile."""
+    runner = game.Game()
+    started, _, _ = _fake_run(monkeypatch, tmp_path, [None, "press_key"], write_result_after_key=True, runner=runner,
+                              wait=False)
+    assert started["started"] and started["results"] == [r"t\r.txt"] and "game_status" in started["note"]
+    runner.run["thread"].join(30)
+    run = runner.status()["run"]
+    assert run["state"] == "done" and run["background"] and run["written"] == [r"t\r.txt"]
+    assert run["result"]["results"] == {r"t\r.txt": ["ok"]} and run["result"]["loading_screen_keys"] == 1
+
+
+def test_a_second_run_while_one_is_going_is_refused(monkeypatch, tmp_path):
+    from wc3mcp.errors import ToolError
+
+    runner = game.Game()
+    runner.run = {"map": str(tmp_path / "map.w3x"), "started": 1.0, "thread": type("T", (), {"is_alive": lambda s: True})(),
+                  "timeout": 300, "results": [], "written": [], "result": None, "error": None, "meta": {}}
+    with pytest.raises(ToolError) as e:
+        _fake_run(monkeypatch, tmp_path, [None], runner=runner)
+    assert e.value.code == "run_active" and "game_status" in e.value.hint
+    assert runner.run_status()["state"] == "running" and "still going" in runner.run_status()["note"]

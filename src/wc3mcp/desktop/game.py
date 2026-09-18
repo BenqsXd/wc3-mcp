@@ -4,6 +4,7 @@ Only processes started here are ever closed."""
 import hashlib
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path, PureWindowsPath
 
@@ -100,6 +101,8 @@ class Game:
         self.launched: dict[int, subprocess.Popen] = {}
         # the game a login_required run left open: (process, launch time, map digest, results)
         self.waiting: tuple[subprocess.Popen, float, str, list[str]] | None = None
+        # a run started with wait=False: the thread running it, its progress and, once it ends, its result
+        self.run: dict | None = None
 
     @staticmethod
     def exe() -> Path:
@@ -140,15 +143,44 @@ class Game:
         return win.screenshot(h), title
 
     def test(self, map_path, timeout: float = 240, results: list[str] | None = None, close: bool = True,
-             screenshot: bool = False) -> dict:
-        """Run the map. With `results`, returns as soon as every listed Preload file has been written; without
-        them, runs for `timeout` seconds."""
+             screenshot: bool = False, wait: bool = True, meta: dict | None = None) -> dict:
+        """Run the map, blocking until it ends. wait=False instead runs it in a background thread and returns at
+        once; `status()` then reports the run and holds its result when it ends."""
         target = Path(map_path).resolve()
         if not target.exists():
             raise ToolError("not_found", f"no map at {target}")
+        if not self.exe().is_file():
+            raise ToolError("no_install", f"{self.exe()} not found", hint="set WC3MCP_INSTALL")
+        if self.run is not None and self.run["thread"] is not None and self.run["thread"].is_alive():
+            raise ToolError("run_active", f"the game_test run of {Path(self.run['map']).name} started "
+                            f"{round(time.time() - self.run['started'])} s ago is still running",
+                            hint="game_status reports it (and its result once it ends); game_close ends it")
+        job = {"map": str(target), "started": time.time(), "timeout": timeout, "results": sorted(results or []),
+               "written": [], "result": None, "error": None, "thread": None, "meta": meta or {}}
+        self.run = job
+        if wait:
+            self._run(job, target, timeout, results, close, screenshot)
+            if job["error"] is not None:
+                raise job["error"]
+            return job["result"]
+        job["thread"] = threading.Thread(target=self._run, daemon=True,
+                                         args=(job, target, timeout, results, close, screenshot))
+        job["thread"].start()
+        return {"started": True, "map": str(target), "timeout": timeout, "results": job["results"],
+                "note": "the run continues in the background: game_status reports its progress and, once it ends, its "
+                        "whole result under run.result (the working copy is free meanwhile; a probe runs on a copy)"}
+
+    def _run(self, job: dict, target: Path, timeout: float, results, close: bool, screenshot: bool) -> None:
+        try:
+            job["result"] = self._test(job, target, timeout, results, close, screenshot)
+        except ToolError as e:
+            job["error"] = e
+        except Exception as e:   # a background run must not take the server down
+            job["error"] = ToolError("game_failed", f"the run failed: {e}")
+
+    def _test(self, job: dict, target: Path, timeout: float, results: list[str] | None, close: bool,
+              screenshot: bool) -> dict:
         exe = self.exe()
-        if not exe.is_file():
-            raise ToolError("no_install", f"{exe} not found", hint="set WC3MCP_INSTALL")
         wanted = {name: _result_path(name) for name in results or []}
         digest = hashlib.sha256(target.read_bytes()).hexdigest() if target.is_file() else str(target)
         waiting, self.waiting = self.waiting, None
@@ -196,6 +228,7 @@ class Game:
                     text = path.read_text("utf-8", "replace")
                     if "endfunction" in text:  # PreloadGenEnd writes the whole file at once
                         found[name] = parse_preload(text)
+                        job["written"] = sorted(found)
             if wanted and len(found) == len(wanted):
                 break
             time.sleep(1)
@@ -249,18 +282,42 @@ class Game:
         self.launched.pop(process.pid, None)
         return True
 
+    def run_status(self) -> dict | None:
+        """The last game_test run: how far a background run is, or the result it ended with."""
+        job = self.run
+        if job is None:
+            return None
+        alive = job["thread"] is not None and job["thread"].is_alive()
+        out = {"state": "running" if alive else "failed" if job["error"] is not None else "done",
+               "map": job["map"], "seconds": round(time.time() - job["started"], 1), "timeout": job["timeout"],
+               "results": job["results"], "written": job["written"], "background": job["thread"] is not None}
+        if alive:
+            out["note"] = ("the run is still going: call game_status again for its result (the map's own working copy "
+                           "is free while it runs)")
+        elif job["error"] is not None:
+            out["error"] = job["error"].to_dict()
+        elif job["result"] is not None:
+            out["result"] = job["result"]
+        return out
+
     def status(self) -> dict:
         alive = {pid: p for pid, p in self.launched.items() if p.poll() is None}
         log, benign, missing_files = split_log(self._log_lines())
+        run = self.run_status()
         return {"running": bool(alive),
                 "processes": [{"pid": pid, "launched_by_server": pid in alive} for pid in win.processes(EXE_NAME)],
                 "windows": [win.info(h)["title"] for pid in alive for h in win.windows(pid)],
+                **({"run": run} if run else {}),
                 "log": log[-50:], "benign_log": {"count": len(benign), "examples": benign[:3], "note": BENIGN_NOTE},
                 "missing_files": missing_files[:50]}
 
     def close(self) -> dict:
         closed = [pid for pid, p in list(self.launched.items()) if self._close(p)]
-        return {"closed": closed, "running": self.status()["running"]}
+        job = self.run
+        if job is not None and job["thread"] is not None and job["thread"].is_alive():
+            job["thread"].join(30)   # closing the game ends its loop; then the run can report what it collected
+        return {"closed": closed, "running": self.status()["running"],
+                **({"run": self.run_status()} if self.run else {})}
 
 
 GAME = Game()

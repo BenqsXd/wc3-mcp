@@ -217,3 +217,49 @@ def test_script_replace_edits_part_of_a_script(melee, catalog):
         with pytest.raises(ToolError) as e:
             triggers_edit(melee, catalog, [{"op": "script_replace", **op}])
         assert e.value.code == code
+
+
+def test_replacing_a_trigger_keeps_its_place_and_after_index_move_it(melee, catalog):
+    """Trigger functions are emitted in tree order, so a replacement must not move the trigger to the end: the
+    triggers that followed it would stop seeing its functions."""
+    def order():
+        return [t["name"] for t in triggers_tree(melee, catalog)["triggers"] if t["category"] == "Waves"]
+
+    triggers_edit(melee, catalog, [{"op": "category", "name": "Waves"}] + [
+        {"op": "trigger", "name": name, "category": "Waves", "script": f"function {name} takes nothing returns nothing\n"
+         f"endfunction\nfunction InitTrig_{name} takes nothing returns nothing\nendfunction\n"}
+        for name in ("Helpers", "Spawns", "Rounds")])
+    assert order() == ["Helpers", "Spawns", "Rounds"]
+    triggers_edit(melee, catalog, [{"op": "trigger", "name": "Helpers", "category": "Waves",
+                                    "script": "function InitTrig_Helpers takes nothing returns nothing\nendfunction\n"}])
+    assert order() == ["Helpers", "Spawns", "Rounds"]           # the same category: stays where it was
+    triggers_edit(melee, catalog, [{"op": "trigger", "name": "Rounds", "index": 0}])
+    assert order() == ["Rounds", "Helpers", "Spawns"]
+    triggers_edit(melee, catalog, [{"op": "trigger", "name": "Rounds", "after": "Helpers"}])
+    assert order() == ["Helpers", "Rounds", "Spawns"]
+    triggers_edit(melee, catalog, [{"op": "trigger", "name": "Rounds", "after": None}])
+    assert order() == ["Rounds", "Helpers", "Spawns"]
+    for op, code in (({"op": "trigger", "name": "Rounds", "index": 9}, "bad_value"),
+                     ({"op": "trigger", "name": "Rounds", "after": "Melee Initialization"}, "bad_value"),
+                     ({"op": "trigger", "name": "Rounds", "after": "Rounds"}, "bad_value")):
+        with pytest.raises(ToolError) as e:
+            triggers_edit(melee, catalog, [op])
+        assert e.value.code == code
+    assert order() == ["Rounds", "Helpers", "Spawns"]           # a failed batch changes nothing
+
+
+def test_a_handle_variable_type_the_editor_has_no_global_for_is_named(melee, catalog):
+    triggers_edit(melee, catalog, [{"op": "variable", "name": "Camp", "type": "group"},
+                                   {"op": "variable", "name": "Zone", "type": "rect"},
+                                   {"op": "variable", "name": "Veil", "type": "fogmodifier"}])
+    assert {v["name"]: v["type"] for v in triggers_tree(melee, catalog)["variables"]} == {
+        "Camp": "group", "Zone": "rect", "Veil": "fogmodifier"}
+    with pytest.raises(ToolError) as e:
+        triggers_edit(melee, catalog, [{"op": "variable", "name": "Pool", "type": "itempool"}])
+    assert e.value.code == "bad_value" and "ChooseRandomItemEx" in e.value.hint
+    with pytest.raises(ToolError) as e:
+        triggers_edit(melee, catalog, [{"op": "variable", "name": "Where", "type": "point"}])
+    assert '"location"' in e.value.hint
+    with pytest.raises(ToolError) as e:
+        triggers_edit(melee, catalog, [{"op": "variable", "name": "Nope", "type": "spaceship"}])
+    assert "data_search kind=trigger_type" in e.value.hint

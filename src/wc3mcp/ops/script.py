@@ -221,11 +221,16 @@ def script_build(project, catalog) -> dict:
     return {"changed": data != before, "language": lang, "file": name}
 
 
-def script_validate(project, catalog) -> dict:
+def script_validate(project, catalog, lint: bool = False) -> dict:
     lang = language(project)
     name = _script_file(project, lang)
     text = project.read(name).decode("utf-8", "surrogateescape")
-    result = scripts.validate_lua(text) if lang == "lua" else scripts.validate_jass(text, catalog)
+    if lang == "lua":
+        result = scripts.validate_lua(text)
+        if lint:
+            result["lint"], result["lint_note"] = [], "lint rules cover JASS scripts only"
+    else:
+        result = scripts.validate_jass(text, catalog, lint=lint)
     return {"language": lang, "file": name, **result}
 
 

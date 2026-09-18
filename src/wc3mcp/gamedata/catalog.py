@@ -17,6 +17,43 @@ KINDS = tuple(OBJECT_KINDS) + tuple(ROW_KINDS) + tuple(PATH_KINDS) + TRIGGER_KIN
 
 # the extension object data and scripts name a file by: the game finds the .dds or .mdx next to it
 REF_EXTENSION = {"icon": ".blp", "model": ".mdl"}
+# ability fields holding an order string, and the GUI preset types that list order strings with their targeting
+ORDER_FIELDS = {"aord": "use/turn on", "aoro": "turn on", "aorf": "turn off"}
+ORDER_TARGETS = {"unitordernotarg": "immediate", "unitorderptarg": "point", "unitorderutarg": "unit",
+                 "unitorderitarg": "item", "unitorderdtarg": "destructible"}
+ORDER_NOTE = ("the game accepts only one of data and editor when they differ: Issue*Order returns false for a "
+              "rejected string, so a script can try one and fall back to the other")
+
+
+COMPACT_NOTE = ("fields are raw code -> value (per-level fields a list), and fields holding nothing are left out; "
+                "verbose=true adds each field's name, category, type and, for a map, which levels it modifies")
+
+
+def _has_value(value) -> bool:
+    return any(v is not None for v in value) if isinstance(value, list) else value is not None
+
+
+def compact(doc: dict) -> dict:
+    """An object document without the per-field metadata: raw code -> value (or per-level values), leaving out
+    fields that hold nothing. About a tenth of the verbose size; verbose=true names, categorises and types them."""
+    fields, modified, refs, unused = {}, [], {}, {}
+    for rawcode, entry in doc["fields"].items():
+        value = entry["values"] if "values" in entry else entry.get("value")
+        if entry.get("modified"):
+            modified.append(rawcode)
+        if _has_value(value) or entry.get("modified"):
+            fields[rawcode] = value
+        if entry.get("value_refs") or entry.get("value_ref"):
+            refs[rawcode] = entry.get("value_refs") or entry["value_ref"]
+        if entry.get("unused_levels"):
+            unused[rawcode] = entry["unused_levels"]
+    out = {**{k: v for k, v in doc.items() if k != "fields"}, "fields": fields}
+    if any("modified" in entry for entry in doc["fields"].values()):   # an open map's object data
+        out["modified"] = modified
+    for key, value in (("value_refs", refs), ("unused_levels", unused)):
+        if value:
+            out[key] = value
+    return out
 
 
 def _group_layers(paths: list[str], kind: str) -> list[dict]:
@@ -376,6 +413,36 @@ class Catalog:
                             **(self.tile_pathing(obj_id) if kind == "tile" else {})})
         return out[offset:offset + limit]
 
+    @cached_property
+    def _order_presets(self) -> dict[str, list[dict]]:
+        """Editor order presets by the ability they belong to: display name (and its part after " - ") -> orders."""
+        index: dict[str, list[dict]] = {}
+        for p in self.trigger_data.presets.values():
+            target = ORDER_TARGETS.get(p.type)
+            if target is None:
+                continue
+            entry = {"order": p.code.strip("`'"), "targets": target, "preset": p.name, "name": p.display}
+            for key in {p.display.casefold(), p.display.rpartition(" - ")[2].casefold()}:
+                rows = index.setdefault(key, [])
+                if not any(r["order"] == entry["order"] and r["targets"] == target for r in rows):
+                    rows.append(entry)
+        return index
+
+    def ability_orders(self, obj_id: str) -> dict:
+        """The order strings of one ability: the ability data's own fields and the World Editor's presets for it,
+        which disagree for a few abilities (only one of the two works, per ability)."""
+        data = {f: v for f in ORDER_FIELDS if (v := self.field("ability", obj_id, f))}
+        name = self.name("ability", obj_id)
+        # the hero skill preset of this ability carries its id, and names it the way the order presets do
+        label = next((p.display for p in self.trigger_data.presets.values()
+                      if p.type == "heroskillcode" and p.code.strip("`'") == obj_id), None)
+        editor = self._order_presets.get((label or name).casefold()) or self._order_presets.get(name.casefold()) or []
+        out = {"data": data, "editor": editor}
+        # only the main order is compared: the turn on/off strings of an autocast have no preset of their own
+        if data.get("aord") and editor and data["aord"].casefold() not in {e["order"].casefold() for e in editor}:
+            out.update(disagree=True, note=ORDER_NOTE)
+        return out
+
     def tile_pathing(self, tile: str) -> dict:
         """Whether ground of this tile lets players build, units walk and flyers fly (TerrainArt/Terrain.slk)."""
         row = self._row("tile", tile) or {}
@@ -416,6 +483,8 @@ class Catalog:
                 entry["value"] = self.value(kind, obj_id, meta)
             out[meta.id] = entry
         doc = {"kind": kind, "id": obj_id, "name": self.name(kind, obj_id), "levels": levels, "fields": out}
+        if kind == "ability":
+            doc["orders"] = self.ability_orders(obj_id)
         models = self.missing_models(kind, obj_id) if kind in MODEL_FIELDS else None
         if models is not None:
             doc["model"] = {"files": models[0], "missing": models[1]}

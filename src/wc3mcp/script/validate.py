@@ -163,13 +163,22 @@ def _jasshelper(script_text, tools: Path, timeout):
     return result
 
 
-def validate_jass(text: str, catalog, vjass: bool | None = None, timeout: int = 60) -> dict:
+def validate_jass(text: str, catalog, vjass: bool | None = None, timeout: int = 60, lint: bool = False) -> dict:
+    from . import lint as linter
+
     tools = tool_dir(catalog)
     started = time.perf_counter()
     try:
         result = (_jasshelper if (is_vjass(text) if vjass is None else vjass) else _pjass)(text, tools, timeout)
     except subprocess.TimeoutExpired as e:
         raise ToolError("timeout", f"script validation took longer than {timeout} s") from e
+    if lint:
+        result["lint"] = linter.lint(text)
+    elif result["errors"]:
+        # pjass points at the function line and every declaration after it, never at the reserved name itself
+        found = linter.reserved_names(text)
+        if found:
+            result["lint"] = found
     result["seconds"] = round(time.perf_counter() - started, 3)
     return result
 

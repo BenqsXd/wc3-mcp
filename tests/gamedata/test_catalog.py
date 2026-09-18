@@ -124,3 +124,32 @@ def test_models_must_load_in_classic_graphics(cat):
     assert cat.get("doodad", "LCss", ["dfil"])["model"]["missing"] == [
         r"Doodads\LordaeronCapital\Props\Statues\Lordaeron_Statue_Sword.mdl"]
     assert "variations_ok" not in next(r for r in cat.search("doodad", "Grass Patch") if r["id"] == "LPgp")
+
+
+def test_ability_orders_name_the_data_and_the_editor_string(cat):
+    """For a few abilities the two disagree and only one of them works in the game (tested by issuing it)."""
+    lava = cat.get("ability", "ANlm", ["aord"])["orders"]
+    assert lava["data"] == {"aord": "slimemonster"} and lava["disagree"] is True
+    assert lava["editor"] == [{"order": "lavamonster", "targets": "immediate", "preset": "UnitOrderLavaMonster",
+                               "name": "Neutral Fire Lord - Summon Lava Spawn"}]
+    bolt = cat.get("ability", "AHtb")["orders"]                     # data and editor agree
+    assert bolt["data"] == {"aord": "thunderbolt"} and "disagree" not in bolt
+    assert [e["order"] for e in bolt["editor"]] == ["thunderbolt"] and bolt["editor"][0]["targets"] == "unit"
+    drain = cat.ability_orders("AHdr")                              # only the editor names an order
+    assert drain["data"] == {} and [e["order"] for e in drain["editor"]] == ["drain"]
+    assert cat.ability_orders("Arel") == {"data": {}, "editor": []}  # a passive ability has none
+    assert "orders" not in cat.get("unit", "hfoo")
+
+
+def test_compact_leaves_out_the_field_metadata_and_the_empty_fields(cat):
+    from wc3mcp.gamedata.catalog import compact
+
+    verbose = cat.get("unit", "hfoo")
+    small = compact(verbose)
+    assert small["fields"]["uhpm"] == "420" and small["name"] == "Footman" and small["model"] == verbose["model"]
+    assert "modified" not in small                       # base data: nothing modifies anything
+    empty = [k for k, v in verbose["fields"].items() if v.get("value") is None and "values" not in v]
+    assert empty and not (set(empty) & set(small["fields"]))
+    assert len(str(small)) * 4 < len(str(verbose))       # the point of it: a fraction of the size
+    leveled = compact(cat.get("ability", "AHbz", ["Hbz1"]))
+    assert leveled["fields"]["Hbz1"] == ["6", "8", "10"]
