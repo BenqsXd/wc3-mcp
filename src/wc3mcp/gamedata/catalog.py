@@ -3,12 +3,13 @@ from dataclasses import dataclass
 from functools import cached_property
 
 from ..errors import ToolError
+from . import natives as natives_module
 from .kinds import OBJECT_KINDS, PATH_KINDS, ROW_KINDS
 from .profile import parse_profile, split_list, unquote
 from .slk import Table, parse_slk
 from .triggerdata import KIND_NAMES, TriggerData
 
-TRIGGER_KINDS = ("trigger_function", "trigger_type", "trigger_preset")
+TRIGGER_KINDS = ("trigger_function", "trigger_type", "trigger_preset", "native")
 # model file field and variation count field of the placeable kinds
 MODEL_FIELDS = {"doodad": ("dfil", "dvar"), "destructible": ("bfil", "bvar"), "unit": ("umdl", None)}
 TILESET_FIELDS = {"doodad": "dtil", "destructible": "btil"}
@@ -158,6 +159,16 @@ class Catalog:
     def trigger_data(self) -> TriggerData:
         return TriggerData.parse(self._read("UI/TriggerData.txt") or b"", self.westring)
 
+    @cached_property
+    def natives(self) -> dict:
+        """The script API of this install: name -> natives.Entry from common.j, Blizzard.j and common.ai."""
+        sources = {}
+        for rel in natives_module.SOURCES:
+            data = self._read(rel)
+            if data is not None:
+                sources[rel.split("/")[-1]] = data.decode("utf-8", "replace")
+        return natives_module.parse(sources)
+
     def _trigger_rows(self, kind: str) -> list[dict]:
         td = self.trigger_data
         if kind == "trigger_function":
@@ -170,6 +181,11 @@ class Catalog:
 
     def _trigger_get(self, kind: str, obj_id: str, missing: ToolError) -> dict:
         td = self.trigger_data
+        if kind == "native":
+            entry = self.natives.get(obj_id)
+            if entry is None:
+                raise missing
+            return {"kind": kind, **entry.to_json()}
         if kind == "trigger_function":
             found = [table[obj_id] for table in td.functions if obj_id in table]
             if not found:
@@ -372,6 +388,8 @@ class Catalog:
             raise ToolError("bad_value", "tileset filters tiles, cliffs, doodads and destructibles only", path="tileset")
         if kind in ("tile", "cliff"):
             return self._search_terrain(kind, query, limit, offset, tileset)
+        if kind == "native":
+            return natives_module.search(self.natives, query)[offset:offset + limit]
         if kind in TRIGGER_KINDS:
             q = query.casefold()
             hits = [r for r in self._trigger_rows(kind) if q in r["id"].casefold() or q in r["name"].casefold()]

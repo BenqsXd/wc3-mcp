@@ -146,3 +146,47 @@ def test_order_strings_a_unit_will_refuse_are_warnings(scripted, catalog):
     assert len(found) == 2
     assert any("'slimemonster' is the ability data's order of ANlm" in m and "'lavamonster'" in m for m in found)
     assert any("'summonlavaspawnnow' matches no ability order" in m for m in found)
+
+
+def test_abilities_sharing_an_order_on_one_unit_are_warned_about(catalog):
+    from wc3mcp.formats import objmods
+
+    def entry(base, new, **values):
+        mods = [objmods.Mod(k.encode(), objmods.INT if isinstance(v, int) else objmods.STRING, v)
+                for k, v in values.items()]
+        return objmods.ObjectEntry(base.encode(), new.encode(), mods)
+
+    units, abilities = objmods.ObjectMods(3, False), objmods.ObjectMods(3, True)
+    units.custom = [entry("Hamg", "H000", uabi="A000,A001,A002")]
+    abilities.custom = [entry("ANcl", "A000", aord="channel"), entry("ANcl", "A001", aord="channel"),
+                        entry("ANcl", "A002", aord="acidbomb")]
+    result = validate({"war3map.w3u": objmods.serialize(units), "war3map.w3a": objmods.serialize(abilities)}, catalog)
+    shared = [w["message"] for w in result["warnings"] if w["check"] == "ability_order"]
+    assert len(shared) == 1 and shared[0].startswith("unit H000: A000, A001 all use the order 'channel'")
+    abilities.custom[1] = entry("ANcl", "A001", aord="howlofterror")   # its own order: no warning
+    fixed = validate({"war3map.w3u": objmods.serialize(units), "war3map.w3a": objmods.serialize(abilities)}, catalog)
+    assert [w for w in fixed["warnings"] if w["check"] == "ability_order"] == []
+
+
+def test_a_wall_of_trees_between_start_locations_is_a_warning(catalog):
+    """A player who cannot walk to the other start is usually decoration gone wrong (a lobby platform is the
+    legitimate case, so it stays a warning)."""
+    from wc3mcp.formats import doo, unitsdoo, w3e
+
+    arc = open_sample(sample_map_ids()[0])
+    files = map_files(arc)
+    terrain = w3e.parse(files["war3map.w3e"])
+    units = unitsdoo.parse(files["war3mapUnits.doo"])
+    starts = [u for u in units.units if u.id == b"sloc"]
+    if len(starts) < 2:
+        pytest.skip("the sample map has one start location")
+    assert [w for w in validate(files, catalog)["warnings"] if w["check"] == "reachable"] == []
+    trees = doo.parse(files["war3map.doo"]) if "war3map.doo" in files else doo.DoodadFile(8, 11)
+    a, b = starts[0], starts[1]
+    ring = [doo.Doodad(b"LTlt", 0, a.x + dx * 64, a.y + dy * 64, 0.0, 0.0, [1.0, 1.0, 1.0], b"LTlt", 2, 255)
+            for dx in range(-12, 13) for dy in range(-12, 13) if max(abs(dx), abs(dy)) in (11, 12)]
+    trees.doodads += ring
+    files["war3map.doo"] = doo.serialize(trees)
+    walled = [w["message"] for w in validate(files, catalog)["warnings"] if w["check"] == "reachable"]
+    cut = {a.owner, b.owner} - {min(a.owner, b.owner)}   # the ring closes one of the two off from the other
+    assert len(walled) == 1 and f"player(s) {sorted(cut)}" in walled[0] and "walkable corners" in walled[0]

@@ -9,7 +9,7 @@ import dataclasses
 import re
 from collections import Counter
 
-from ..formats import doo, imp, objmods, unitsdoo, w3i, wct, wtg
+from ..formats import doo, imp, objmods, unitsdoo, w3e, w3i, wct, wtg
 from ..formats.binary import FormatError
 from ..formats.wts import TriggerStrings
 from ..gamedata.catalog import MODEL_FIELDS
@@ -126,6 +126,8 @@ class _V:
         self.check_command_cards()
         self.check_function_order()
         self.check_order_strings()
+        self.check_ability_orders()
+        self.check_reachable()
         return {"errors": self.errors, "warnings": self.warnings}
 
     def generated(self, t) -> bool:
@@ -345,6 +347,91 @@ class _V:
                 data = orders["data"]["aord"]
                 disagree[data.casefold()] = (oid, self.catalog.name("ability", oid), orders["editor"][0]["order"])
         return known, disagree
+
+    def check_reachable(self):
+        """Ground a player cannot walk to: start locations cut off from each other, or a player's own preplaced unit
+        the player cannot reach. Decoration (a forest, a wall of doodads) is the usual cause."""
+        from . import pathing
+
+        units = self.parse("war3mapUnits.doo", unitsdoo.parse)
+        if units is None:
+            return
+        terrain = self.parse("war3map.w3e", w3e.parse)
+        if terrain is None:
+            return
+        doodads = self.parse("war3map.doo", doo.parse)
+        mods = {kind: self._mods(kind) for kind in ("unit", "doodad", "destructible")}
+        ids = {kind: set(self.catalog.ids(kind)) | set(mods[kind]) for kind in mods}
+
+        def value(kind, oid, field):
+            base, fields, _ = mods[kind].get(oid, (oid, {}, False))
+            return fields[field] if field in fields else self.catalog.field(kind, base, field)
+
+        objects = []
+        for o in doodads.doodads if doodads else ():
+            t = o.id.decode("latin-1")
+            objects.append(("destructible" if t in ids["destructible"] else "doodad", t, o.x, o.y))
+        starts, owned = {}, []
+        for u in units.units:
+            t = u.id.decode("latin-1")
+            if t == "sloc":
+                starts[u.owner] = (u.x, u.y)
+            elif t in ids["unit"]:
+                objects.append(("unit", t, u.x, u.y))
+                if u.owner < 24:
+                    owned.append((u.owner, t, u.x, u.y))
+        if len(starts) < 1:
+            return
+        grid = pathing.walkable(terrain, self.catalog, objects, value)
+        corners = {owner: pathing.corner_of(terrain, x, y) for owner, (x, y) in starts.items()}
+        first = min(corners)
+        seen = pathing.reachable(grid, [corners[first]])
+        cut = [owner for owner, corner in corners.items() if owner != first and corner not in seen]
+        if cut:
+            free = sum(sum(row) for row in grid)
+            self.add(False, "reachable", "war3map.w3e",
+                     f"the start location(s) of player(s) {sorted(cut)} cannot be walked to from player {first}'s "
+                     f"start, which reaches {len(seen)} of {free} walkable corners: cliffs, water or placed objects "
+                     f"close the way — deliberate for a lobby or drop platform, a defect when decoration did it "
+                     f"({pathing.NOTE})")
+        stranded = sorted({(owner, t) for owner, t, x, y in owned
+                           if owner in corners and corners[owner] in seen
+                           and pathing.corner_of(terrain, x, y) not in seen})
+        if stranded:
+            names = ", ".join(f"player {o}'s {t}" for o, t in stranded[:5])
+            self.add(False, "reachable", "war3mapUnits.doo",
+                     f"{len(stranded)} preplaced unit type(s) stand where their own player cannot walk: {names}"
+                     + ("..." if len(stranded) > 5 else ""))
+
+    def check_ability_orders(self):
+        """Two abilities on one unit with the same order string: ordering the unit to cast one is ambiguous, so
+        copies of the same base (Channel, above all) need their own order id."""
+        units, abilities = self._mods("unit"), self._mods("ability")
+        if not units:
+            return
+        # only orders the editor itself lists as issuable: a passive ability's data order (a copy of Attribute Bonus
+        # keeps attributemodskill) is never issued, so sharing one is not a defect
+        orderable = {r["order"].casefold() for rows in self.catalog._order_presets.values() for r in rows}
+
+        def value(kind: str, oid: str, rid: str):
+            base, fields, _ = (units if kind == "unit" else abilities).get(oid, (oid, {}, False))
+            return fields[rid] if rid in fields else self.catalog.field(kind, base, rid)
+
+        for oid in units:
+            carried = [a for field in ("uabi", "uhab") for a in str(value("unit", oid, field) or "").split(",")
+                       if a.strip()]
+            orders: dict[str, list[str]] = {}
+            for ability in dict.fromkeys(carried):   # the same ability twice is a different defect
+                for field in ("aord", "aoro", "aorf"):
+                    order = str(value("ability", ability, field) or "").strip()
+                    if order and order.casefold() in orderable:
+                        orders.setdefault(order.casefold(), []).append(ability)
+            for order, sharing in orders.items():
+                if len(set(sharing)) > 1:
+                    self.add(False, "ability_order", "war3map.w3u",
+                             f"unit {oid}: {', '.join(sorted(set(sharing)))} all use the order {order!r}, so an "
+                             "Issue*Order for one of them can run the other (copies of one base ability need their "
+                             "own order: Channel's Ncl6, or the Order fields aord/aoro/aorf)")
 
     def check_order_strings(self):
         """Order strings a script issues: the ability data and the editor presets disagree for a few abilities, and

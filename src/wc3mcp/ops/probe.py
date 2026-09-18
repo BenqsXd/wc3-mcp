@@ -143,6 +143,7 @@ end
 
 # probe_script: the caller's code runs as Trig_wc3mcpProbe_User while the report file is open; ProbeReport(text)
 # writes text in pieces short enough for Preload (report= then report+= lines, joined again by parse);
+# ProbeExpect(name, condition) records a pass/fail check, so a run answers with a verdict instead of text;
 # ProbeCountEvent(playerunitevent, name) counts that event from then on, ProbeEventCount(name) reads the count;
 # probe_functions (the caller's own functions) come right before Trig_wc3mcpProbe_User
 JASS_USER = """function wc3mcpProbe_Counted takes nothing returns nothing
@@ -178,6 +179,14 @@ function ProbeReport takes string s returns nothing
     endloop
 endfunction
 
+function ProbeExpect takes string name, boolean ok returns nothing
+    if ok then
+        call Preload("check=pass:" + name)
+    else
+        call Preload("check=fail:" + name)
+    endif
+endfunction
+
 {functions}function Trig_{name}_User takes nothing returns nothing
 {body}endfunction
 
@@ -200,6 +209,10 @@ function ProbeReport(s)
     for i = 201, #s, 200 do
         Preload("report+=" .. string.sub(s, i, i + 199))
     end
+end
+
+function ProbeExpect(name, ok)
+    Preload("check=" .. (ok and "pass:" or "fail:") .. tostring(name))
 end
 
 {functions}function Trig_{name}_User()
@@ -285,6 +298,13 @@ def parse(lines: list[str]) -> dict:
             out["reports"].append(value)
         elif key == "report+" and sep and out["reports"]:
             out["reports"][-1] += value
+        elif key == "check" and sep:
+            verdict, _, name = value.partition(":")
+            out.setdefault("checks", {})[name] = verdict == "pass"
         else:
             out[key] = (int(value) if sep and value.lstrip("-").isdigit() else value if sep else True)
+    if "checks" in out:   # ProbeExpect: the run's own verdict, so a caller reads pass/fail instead of text
+        failed = sorted(name for name, ok in out["checks"].items() if not ok)
+        out["checks_failed"] = failed
+        out["checks_passed"] = len(out["checks"]) - len(failed)
     return out

@@ -84,3 +84,25 @@ def test_findings_name_the_trigger_of_an_editor_generated_script():
               "    local group g = CreateGroup()\n    call GroupClear(g)\nendfunction\n")
     [hit] = lint(script)
     assert hit["rule"] == "leak" and hit["trigger"] == "Spawns"
+
+
+def test_a_local_player_block_that_changes_the_game_is_a_desync():
+    script = """
+function RR_Show takes nothing returns nothing
+    if GetLocalPlayer() == Player(0) then
+        call ClearTextMessages()
+        call SetCameraPosition(0, 0)
+        call BlzSetAbilityResearchTooltip('A000', "text", 1)
+    endif
+    if GetLocalPlayer() == Player(0) then
+        call CreateUnit(Player(0), 'hfoo', 0, 0, 270)
+    endif
+    if GetLocalPlayer() == Player(1) then
+        set udg_n = GetRandomInt(1, 5)
+    endif
+endfunction
+"""
+    hits = [h for h in lint(script) if h["rule"] == "desync"]
+    assert len(hits) == 2                                    # the first block only changes what one player sees
+    assert hits[0]["message"].startswith("CreateUnit() runs inside a GetLocalPlayer() block")
+    assert hits[1]["message"].startswith("GetRandomInt() runs inside a GetLocalPlayer() block")

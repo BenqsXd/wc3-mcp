@@ -60,3 +60,20 @@ def test_data_search_and_get(cat):
     with pytest.raises(ToolError) as e:
         cat.get("trigger_function", "NoSuchFunction")
     assert e.value.code == "not_found"
+
+
+def test_script_api_lookup_gives_real_signatures(cat):
+    api = cat.natives
+    assert api["CreateUnit"].signature == ("native CreateUnit takes player id, integer unitid, real x, real y, "
+                                           "real face returns unit")
+    assert api["unit"].signature == "type unit extends widget"
+    assert api["EVENT_PLAYER_UNIT_DEATH"].what == "constant"
+    doc = cat.get("native", "TriggerRegisterAnyUnitEventBJ")
+    assert doc["what"] == "function" and doc["file"] == "Blizzard.j"
+    assert doc["params"] == [{"type": "trigger", "name": "trig"}, {"type": "playerunitevent", "name": "whichEvent"}]
+    names = [r["id"] for r in cat.search("native", "BlzSetEventDamage")]
+    assert names == ["BlzSetEventDamage", "BlzSetEventDamageType"]
+    assert all(r["id"].startswith("EVENT_PLAYER_HERO") for r in cat.search("native", "EVENT_PLAYER_HERO*"))
+    with pytest.raises(ToolError) as e:
+        cat.get("native", "CreateUnitNow")
+    assert e.value.code == "not_found"

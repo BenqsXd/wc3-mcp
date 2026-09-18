@@ -135,3 +135,17 @@ def test_probe_script_can_call_the_maps_own_functions(tmp_path):
         assert script.index("function MapHelper") < script.index("function Trig_wc3mcpProbe_User")
     finally:
         text.close(discard=True)
+
+
+def test_probe_expect_records_a_verdict():
+    """A run answers pass/fail per check instead of text the caller has to read."""
+    jass = probe.script("jass", 10, 'call ProbeExpect("gold rose", GetPlayerState(Player(0), '
+                                    "PLAYER_STATE_RESOURCE_GOLD) > 500)")
+    assert "function ProbeExpect takes string name, boolean ok returns nothing" in jass
+    assert 'call Preload("check=pass:" + name)' in jass and 'call Preload("check=fail:" + name)' in jass
+    lua = probe.script("lua", 5, 'ProbeExpect("hero alive", true)')
+    assert 'Preload("check=" .. (ok and "pass:" or "fail:") .. tostring(name))' in lua
+    report = probe.parse(["probe=ok", "check=pass:gold rose", "check=fail:hero alive", "check=pass:wave spawned"])
+    assert report["checks"] == {"gold rose": True, "hero alive": False, "wave spawned": True}
+    assert report["checks_failed"] == ["hero alive"] and report["checks_passed"] == 2
+    assert "checks" not in probe.parse(["probe=ok"])
