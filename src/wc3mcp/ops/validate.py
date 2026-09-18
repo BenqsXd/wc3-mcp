@@ -124,6 +124,8 @@ class _V:
         self.check_imports()
         self.check_placed()
         self.check_command_cards()
+        self.check_function_order()
+        self.check_order_strings()
         return {"errors": self.errors, "warnings": self.warnings}
 
     def generated(self, t) -> bool:
@@ -302,6 +304,72 @@ class _V:
         wanted = {f for f in MODEL_FIELDS[kind] if f}
         return {oid: (base, {k: v for k, v in fields.items() if k in wanted})
                 for oid, (base, fields, _) in self._mods(kind).items()}
+
+    def _emitted(self) -> list[tuple[str, str]]:
+        """(where, custom script text) in the order the generated script emits them: header, then triggers by tree."""
+        return [("map header", self.ct.header or "")] + [(t.name, s or "") for t, s in self.texts
+                                                         if self.generated(t) and t.custom_text]
+
+    def check_function_order(self):
+        """A trigger can only call functions that an earlier trigger defines: the script emits them in tree order,
+        and re-sending a trigger used to move it to the end of its category."""
+        from ..script.validate import is_vjass   # vJASS reorders libraries itself
+
+        if self.ct is None or self.lua or self.script is None or is_vjass(self.script):
+            return
+        parts = [(where, code_only(text, False)) for where, text in self._emitted()]
+        defined = {}
+        for i, (_where, code) in enumerate(parts):
+            for m in re.finditer(r"(?m)^[ \t]*function\s+(\w+)\b", code):
+                defined.setdefault(m[1], i)
+        for i, (where, code) in enumerate(parts):
+            for name in sorted({n for n in re.findall(r"\b(\w+)\s*\(", code) if defined.get(n, i) > i}):
+                later = parts[defined[name]][0]
+                self.add(True, "function_order", "war3map.wct",
+                         f"{where} calls {name}(), which trigger {later!r} defines further down the trigger tree: the "
+                         f"script emits trigger functions in tree order, so this does not compile — move {later!r} "
+                         f'above {where!r} ({{"op": "trigger", "name": "{later}", "after": ...}} or "index")')
+
+    def _known_orders(self) -> tuple[set[str], dict[str, tuple[str, str, str]]]:
+        """(every order string the game data and the editor know, disagreeing ones -> (ability, name, editor order))"""
+        known, disagree = set(), {}
+        mods = self._mods("ability")
+        for rows in (self.catalog._order_presets.values()):
+            known |= {r["order"].casefold() for r in rows}
+        for oid, (base, fields, _custom) in mods.items():
+            known |= {str(fields[f]).casefold() for f in ("aord", "aoro", "aorf") if fields.get(f)}
+        for oid in self.catalog.ids("ability"):
+            orders = self.catalog.ability_orders(oid)
+            known |= {str(v).casefold() for v in orders["data"].values()}
+            if orders.get("disagree") and oid not in mods:
+                data = orders["data"]["aord"]
+                disagree[data.casefold()] = (oid, self.catalog.name("ability", oid), orders["editor"][0]["order"])
+        return known, disagree
+
+    def check_order_strings(self):
+        """Order strings a script issues: the ability data and the editor presets disagree for a few abilities, and
+        only one of the two works (tested by issuing it); a string neither of them knows is always refused."""
+        if self.ct is None:
+            return
+        issued: dict[str, list[str]] = {}
+        for where, text in self._emitted():
+            for call in re.finditer(r"\bIssue\w*Order\w*\s*\(([^)]*)\)", text):
+                for order in re.findall(r'"([^"\n]+)"', call[1]):
+                    issued.setdefault(order, []).append(where)
+        if not issued:
+            return
+        known, disagree = self._known_orders()
+        for order, wheres in issued.items():
+            hit = disagree.get(order.casefold())
+            if hit:
+                self.add(False, "order_string", "war3map.wct",
+                         f"{wheres[0]}: order {order!r} is the ability data's order of {hit[0]} ({hit[1]}), but the "
+                         f"World Editor uses {hit[2]!r} for it and only one of the two works: check the boolean the "
+                         "Issue*Order call returns, and fall back to the other string")
+            elif order.casefold() not in known:
+                self.add(False, "order_string", "war3map.wct",
+                         f"{wheres[0]}: order {order!r} matches no ability order and no editor order preset, so "
+                         "Issue*Order returns false and the unit does nothing (data_get kind=ability shows orders)")
 
     def check_command_cards(self):
         """Object data pitfalls no single edit shows: command-card buttons on one slot, a copied worker that keeps its

@@ -60,7 +60,13 @@ def test_data_tools():
     hits = payload(call("data_search", {"kind": "unit", "query": "archmage", "balance": None}))["results"]
     assert "Hamg" in [h["id"] for h in hits]
     got = payload(call("data_get", {"kind": "ability", "id": "AHbz", "fields": ["Hbz1"], "balance": None}))
-    assert got["fields"]["Hbz1"]["values"] == ["6", "8", "10"]
+    assert got["fields"]["Hbz1"] == ["6", "8", "10"]          # compact by default: raw code -> values
+    wide = payload(call("data_get", {"kind": "ability", "id": "AHbz", "fields": ["Hbz1"], "balance": None,
+                                     "verbose": True}))
+    assert wide["fields"]["Hbz1"]["values"] == ["6", "8", "10"] and wide["fields"]["Hbz1"]["field"] == "Data"
+    both = payload(call("data_get", {"kind": "ability", "id": ["AHbz", "AHtb"], "fields": ["aord"], "balance": None}))
+    assert [o["id"] for o in both["objects"]] == ["AHbz", "AHtb"]
+    assert both["objects"][1]["orders"]["data"] == {"aord": "thunderbolt"}
     common = payload(call("data_file", {"path": "Scripts/common.j", "length": 200}))
     assert common["path"] == "War3.w3mod:Scripts/common.j" and common["truncated"]
 
@@ -143,7 +149,7 @@ def test_object_data_tools(tmp_path):
     assert created == ["h000"]
     doc = payload(call("objdata_get", {"path": path, "kind": "unit", "id": "h000", "fields": ["uhpm"],
                                        "balance": None}))
-    assert doc["fields"]["uhpm"]["value"] == 555 and doc["name"] == "Tool Guard"
+    assert doc["fields"]["uhpm"] == 555 and doc["modified"] == ["uhpm"] and doc["name"] == "Tool Guard"
     listed = payload(call("objdata_list", {"path": path, "kind": "unit", "custom_only": True, "balance": None}))
     assert [o["id"] for o in listed["objects"]] == ["h000"]
     err = call("objdata_edit", {"path": path, "kind": "unit", "balance": None,

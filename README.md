@@ -68,6 +68,17 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 0.8
+
+- Fewer, smaller calls: `data_get` and `objdata_get` take a **list of ids** and answer compactly (raw code -> value, empty fields left out, about a tenth of the size); `verbose=true` brings back the field metadata.
+- `game_test wait=false` runs the test in the background and returns at once: `game_status` reports the run and its whole result when it ends, so the map can be edited while a long probe runs.
+- `script_validate lint=true` reports the runtime traps pjass cannot see: leaked handles, event data read after a wait, a trigger with an action but no event, endless or operation-limit loops, a handle used after it was destroyed, and a local or parameter named after a JASS type (the cause of a pile of misleading pjass errors).
+- Replacing a trigger keeps its position in its category, so the triggers after it still see its functions; `index` and `after` move one on purpose, and `map_validate` reports a call into a later trigger (`function_order`).
+- `data_get kind=ability` returns an `orders` block with the ability data's order, the World Editor's presets and their targeting, and `disagree: true` for the ~15 abilities where only one of the two works; `map_validate` warns when a script issues one of those or an order string nothing knows (`order_string`).
+- The variable-type error names the editor's own name for a handle type (`rect` for a region, `location` for a point) and what to use instead where the editor has no global (`itempool`, `code`, `boolexpr`).
+- The skill is split into a short core plus `references/*.md` loaded on demand, so a session starts with about 6 KB instead of 34 KB of skill text.
+- The tool log records the result size in bytes and the duration of failed calls too.
+
 ## What's new in 0.7
 
 - Probes observe more: `ProbeCountEvent` / `ProbeEventCount` count player-unit events, `probe_functions` adds your own callback functions, and `probe.messages` includes text shown with `DisplayTextToPlayer`, `DisplayTimedTextToPlayer` and the force variants.

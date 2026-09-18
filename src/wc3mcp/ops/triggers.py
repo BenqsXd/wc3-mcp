@@ -115,12 +115,28 @@ ALLOWED = {
     "category": {"name", "new_name", "parent", "comment"},
     "variable": {"name", "new_name", "type", "array_size", "initial", "category"},
     "trigger": {"name", "new_name", "category", "description", "enabled", "initially_on", "run_on_init", "events",
-                "conditions", "actions", "script"},
+                "conditions", "actions", "script", "after", "index"},
     "delete": {"what", "name"},
     "header": {"script", "comment"},
     "script_replace": {"name", "header", "old", "new"},
 }
 SCRIPT_WARNING = "the map script is not regenerated yet: map_save (or script_build) rebuilds war3map.j or war3map.lua"
+# variable types callers ask for by their JASS or GUI-menu name; the editor's own name is the value
+VARIABLE_ALIAS = {
+    "region": 'the GUI type of a region variable is "rect"',
+    "unitgroup": 'the GUI type of a unit group variable is "group"',
+    "point": 'the GUI type of a point variable is "location"',
+    "itempool": "the editor has no item pool global: keep the handle in a local, or ChooseRandomItemEx picks a random "
+                "item by class and level without a pool",
+    "unitpool": "the editor has no unit pool global: keep the handle in a local",
+    "boolexpr": "the editor has no boolexpr or code global: pass the filter or callback as a local",
+    "code": "the editor has no code global: pass the callback as a local (and code is a JASS type name, so it cannot "
+            "be a variable name either)",
+    "widget": 'widget has no global; store the unit, destructable or item itself',
+}
+VARIABLE_TYPE_HINT = ("data_search kind=trigger_type lists the types; the handle types that work as globals include "
+                      "unit, group, rect, location, item, force, player, trigger, timer, hashtable, fogmodifier, "
+                      "effect, lightning, texttag, quest, sound, destructable, image, camerasetup and handle")
 _HINT = ('ops: {"op": "category", "name": "Spawns"}, {"op": "variable", "name": "Count", "type": "integer"}, '
          '{"op": "trigger", "name": "Spawn", "events": [...], "actions": [...]} or {..., "script": "..."}, '
          '{"op": "delete", "what": "trigger", "name": "Spawn"}, {"op": "header", "script": "..."}, '
@@ -272,6 +288,28 @@ class _Edit:
         element.parent = parent_id
         self._place(moving, parent_id)
 
+    def _reorder(self, element, op: dict, path: str) -> None:
+        """Place a trigger at a position inside its category: index (0-based) or after a sibling (null: first)."""
+        block = [e for e in self.tf.elements if e.parent == element.parent and e is not element]
+        if "index" in op:
+            at = op["index"]
+            if not isinstance(at, int) or isinstance(at, bool) or not 0 <= at <= len(block):
+                raise ToolError("bad_value", f"{path}: index must be 0..{len(block)}, a position in the category",
+                                path=f"{path}.index")
+        elif op["after"] is None:
+            at = 0
+        else:
+            other = self._trigger(op["after"])
+            if other is None or other.parent != element.parent or other is element:
+                raise ToolError("bad_value", f"{path}: after must name another trigger of the same category (or null "
+                                "for the first position)", path=f"{path}.after")
+            at = block.index(other) + 1
+        self.tf.elements.remove(element)
+        if at < len(block):
+            self.tf.elements.insert(self.tf.elements.index(block[at]), element)
+        else:
+            self._place([element], element.parent)
+
     # ops
     def op_category(self, op: dict, path: str) -> None:
         name = op.get("name")
@@ -320,8 +358,10 @@ class _Edit:
         if "type" in op:
             t = self.td.types.get(op["type"]) if isinstance(op["type"], str) else None
             if t is None or not t.global_ok:
-                raise ToolError("bad_value", f"{path}: {op['type']!r} is not a variable type",
-                                hint="data_search kind=trigger_type lists types", path=f"{path}.type")
+                alias = VARIABLE_ALIAS.get(op["type"] if isinstance(op["type"], str) else "")
+                raise ToolError("bad_value", f"{path}: {op['type']!r} is not a variable type" + (
+                    "" if t is None else " the World Editor offers as a global (only as a local in a script)"),
+                    hint=alias or VARIABLE_TYPE_HINT, path=f"{path}.type")
             v.type = t.name
         if "array_size" in op:
             size = op["array_size"]
@@ -373,7 +413,13 @@ class _Edit:
             self.text[t.id] = None
             self.created.append(name)
         elif "category" in op:
-            self._move(t, self._category(op["category"], f"{path}.category").id, path)
+            # a replacement keeps its place in the category (the editor does too): the script emits trigger
+            # functions in tree order, so moving one breaks calls from the triggers that followed it
+            target = self._category(op["category"], f"{path}.category").id
+            if target != t.parent:
+                self._move(t, target, path)
+        if "after" in op or "index" in op:
+            self._reorder(t, op, path)
         if "description" in op:
             if not isinstance(op["description"], str):
                 raise ToolError("bad_value", f"{path}: description must be text", path=f"{path}.description")
