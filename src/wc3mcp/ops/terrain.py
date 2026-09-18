@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw
 from ..errors import ToolError
 from ..formats import blp, doo, unitsdoo, w3e, w3i, w3r, wpm
 from ..formats.binary import FormatError
+from . import heightmap, symmetry, terrainart
 from .elements import _bad, _bool, _int, _num, _out
 from .triggers import _read
 
@@ -39,6 +40,7 @@ BRUSH_KEYS = {
     "raise": {"amount", "falloff"}, "lower": {"amount", "falloff"}, "plateau": {"height"}, "smooth": {"strength"},
     "noise": {"amount", "seed", "falloff"}, "paint": {"tile"}, "cliff": {"level", "cliff"}, "ramp": {"value"},
     "water": {"level"}, "blight": {"value"}, "boundary": {"value"},
+    **terrainart.BRUSH_KEYS, **symmetry.TERRAIN_KEYS, **heightmap.KEYS,   # the landscape brushes
 }
 
 
@@ -262,6 +264,9 @@ class _Brush:
         extra = set(op) - {"op"} - AREA_KEYS - BRUSH_KEYS[kind]
         if extra:
             raise ToolError("bad_op", f"{path}: unknown keys {sorted(extra)} for {kind}", hint=_HINT)
+        # the landscape brushes live in their own modules; they write through the same corner helpers
+        if terrainart.apply(self, op, path) or symmetry.terrain_apply(self, op, path)                 or heightmap.apply(self, op, path):
+            return
         corners, r = self.corners(op, path)
         t = self.t
         if kind in ("raise", "lower", "noise"):

@@ -7,7 +7,7 @@ import re
 from ..errors import ToolError
 from ..formats import doo, unitsdoo, w3e, w3i, w3r
 from ..formats.binary import FormatError
-from . import layout
+from . import layout, symmetry
 from .elements import _bad, _bool, _int, _num, _out
 from .objdata import objdata_get, objdata_list
 from .triggers import SCRIPT_WARNING, _load, _read, script_users
@@ -212,7 +212,7 @@ def placed_list(project, catalog, kind: str | None = None, area: list | None = N
 
 
 # ---- edits -----------------------------------------------------------------------------------------------------
-class _Edit(_Map, layout.LayoutOps):
+class _Edit(_Map, layout.LayoutOps, symmetry.PlacedMirror):
     def __init__(self, project, catalog):
         super().__init__(project, catalog)
         self.region_list = None
@@ -728,7 +728,7 @@ def placed_edit(project, catalog, ops: list, verbose: bool = False) -> dict:
         path = f"ops[{i}]"
         try:
             action = op.get("op") if isinstance(op, dict) else None
-            if action not in ("add", "set", "move", "delete", "scatter", *layout.OP_KEYS):
+            if action not in ("add", "set", "move", "delete", "scatter", *layout.OP_KEYS, *symmetry.PLACED_KEYS):
                 raise ToolError("bad_op", f"{path}: unknown op {action!r}", hint=_HINT)
             if action == "add" and ("rows" in op or "columns" in op):
                 for single, where in _rows(op, path):

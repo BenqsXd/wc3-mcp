@@ -17,6 +17,7 @@ from .mpq.reader import Archive as MpqArchive
 from .desktop import editor as desktop_editor
 from .desktop import game as desktop_game
 from .errors import ToolError
+from . import help as help_pages
 from .gamedata.catalog import COMPACT_NOTE, Catalog
 from .gamedata.catalog import compact as catalog_compact
 from .ops import ai as ai_ops
@@ -24,6 +25,7 @@ from .ops import assets as assets_ops
 from .ops import campaign as campaign_ops
 from .ops import elements as elements_ops
 from .ops import imports as imports_ops
+from .ops import heightmap as heightmap_ops
 from .ops import info as info_ops
 from .ops import layout as layout_ops
 from .ops import newmap as newmap_ops
@@ -47,6 +49,10 @@ Kind = Literal["unit", "item", "ability", "buff", "upgrade", "destructible", "do
                "native"]
 ObjectKind = Literal["unit", "item", "destructible", "doodad", "ability", "buff", "upgrade"]
 MAX_READ = 1024 * 1024
+MAX_BATCH = 20
+# tools that answer with a picture, which a batch result cannot carry
+IMAGE_TOOLS = ("terrain_render", "editor_screenshot", "asset_preview")
+TOOLS: dict[str, object] = {}       # tool name -> the plain function behind it, for wc3_batch
 _projects: dict[str, MapProject] = {}
 _catalogs: dict[tuple, Catalog] = {}
 _storage = None
@@ -59,6 +65,8 @@ def _brief(kwargs: dict) -> str:
 
 def _tool(fn):
     """Register `fn` as a tool; log each call; expose ToolError as structured MCP error text."""
+    TOOLS[fn.__name__] = fn   # the plain function, for wc3_batch
+
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         start = time.perf_counter()
@@ -182,6 +190,59 @@ def _encode(data: bytes, encoding: str, offset: int, length: int) -> dict:
 
 
 @_tool
+def wc3_help(topic: str | None = None) -> dict:
+    """The full reference of one tool: every op shape, field list and pitfall, which the tool descriptions leave out
+    so a session does not pay for all of it up front. Without a topic it lists them. Topics: placed_edit,
+    triggers_edit, terrain_edit, terrain_get, game_test, data_search, map_save, map_validate, asset_edit,
+    campaign_edit, ui_edit."""
+    return help_pages.help_text(topic)
+
+
+@_tool
+def wc3_batch(calls: list[dict], stop_on_error: bool = True) -> dict:
+    """Run several of these tools in one round trip: [{"tool": "objdata_edit", "args": {...}}, {"tool": "script_build",
+    "args": {"path": "..."}}, {"tool": "map_validate", "args": {"path": "..."}}]. Each call answers as it would on its
+    own, under results[i].result, or with its error under results[i].error; stop_on_error=false runs the rest anyway.
+    Use it for the chains that always go together (edit, rebuild, check) instead of one call each. At most 20 calls,
+    no nesting, and the tools that answer with a picture (terrain_render, editor_screenshot, asset_preview) have to be
+    called on their own."""
+    if not isinstance(calls, list) or not calls:
+        raise ToolError("bad_value", "calls is a list of {\"tool\", \"args\"}", path="calls")
+    if len(calls) > MAX_BATCH:
+        raise ToolError("bad_value", f"{len(calls)} calls; the limit is {MAX_BATCH}", path="calls")
+    plan = []
+    for i, call in enumerate(calls):
+        name = call.get("tool") if isinstance(call, dict) else None
+        args = call.get("args", {}) if isinstance(call, dict) else None
+        if name not in TOOLS or name == "wc3_batch":
+            raise ToolError("not_found", f"calls[{i}]: no tool {name!r}" if name != "wc3_batch" else
+                            f"calls[{i}]: a batch cannot hold another batch", path=f"calls[{i}].tool")
+        if name in IMAGE_TOOLS:
+            raise ToolError("bad_value", f"calls[{i}]: {name} answers with a picture, so call it on its own",
+                            path=f"calls[{i}].tool")
+        if not isinstance(args, dict):
+            raise ToolError("bad_value", f"calls[{i}]: args is an object of the tool's parameters",
+                            path=f"calls[{i}].args")
+        plan.append((name, args))
+    results, failed = [], 0
+    for i, (name, args) in enumerate(plan):
+        try:
+            results.append({"tool": name, "ok": True, "result": TOOLS[name](**args)})
+        except ToolError as e:
+            failed += 1
+            results.append({"tool": name, "ok": False, "error": e.to_dict()})
+            if stop_on_error:
+                break
+        except TypeError as e:   # wrong parameters for that tool: the same mistake as a bad_value, not a crash
+            failed += 1
+            results.append({"tool": name, "ok": False,
+                            "error": {"code": "bad_value", "message": f"{name}: {e}"}})
+            if stop_on_error:
+                break
+    return {"count": len(results), "failed": failed, "ran": len(results), "of": len(plan), "results": results}
+
+
+@_tool
 def map_open(path: str, merge_external: bool = False) -> dict:
     """Open a Warcraft III map (.w3x/.w3m archive or map folder) or campaign (.w3n) into a private working copy.
     Re-opening resumes unsaved edits, and so does any tool call after the server restarts (the working copy lives on
@@ -230,15 +291,10 @@ def campaign_get(path: str) -> dict:
 
 @_tool
 def campaign_edit(path: str, ops: list[dict]) -> dict:
-    """All-or-nothing campaign changes. ops on the campaign_get document: {"op": "set", "path": "name", "value":
-    "My Campaign"}, {"op": "set", "path": "minimap", "value": {"preset": "Human"} | {"map": "Ch1.w3x"} |
-    {"file": "war3campImported/map.tga"} | null}, {"op": "set", "path": "loading_screen.background", "value":
-    {"preset": "Orc" or index} | {"file": "war3campImported/intro.webm"} | null} (ambient_sound likewise),
-    loading_screen.cursor / background_version / fog ({"style": "linear", "z_start", "z_end", "density", "color":
-    {r, g, b, a}, ...} or null), {"op": "append", "path": "buttons", "value": {"chapter", "title", "map", "visible",
-    "cinematic"}}, {"op": "set"/"remove", "path": "buttons[0]..."}; maps: {"op": "add_map", "source":
-    "C:/maps/Ch1.w3x", "name"?}, {"op": "replace_map", "name", "source"}, {"op": "remove_map", "name"},
-    {"op": "extract_map", "name", "dest"} (edit it with map_open, put it back with replace_map)."""
+    """Change an open campaign (.w3n) with an all-or-nothing batch applied to the campaign_get document:
+    set/append/remove on its name, minimap, loading screen, fog and buttons, plus add_map, replace_map, remove_map and
+    extract_map for the maps inside it (edit one with map_open, put it back with replace_map).
+    wc3_help("campaign_edit") has the op shapes."""
     return campaign_ops.campaign_edit(_project(path), _catalog("enUS", "Custom_V1", True), ops)
 
 
@@ -280,17 +336,12 @@ def _refresh_minimap(project, catalog, dirty: set, warnings: list) -> str | None
 def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"] | None = None,
              force: bool = False, rebuild_script: Literal["auto", "always", "never"] = "auto",
              validate: bool = True, merge_external: bool = False) -> dict:
-    """Save the working copy. By default backs up the original and replaces it atomically. dest/format write a
-    copy elsewhere (mpq archive or map folder). Refuses if the original changed on disk since opening (source_changed,
-    e.g. after a World Editor save) unless merge_external=true, which first takes every file this working copy has not
-    changed from the map on disk (pathing, shadows and minimap the editor recomputed) and keeps the working copy's own
-    changes, or force=true, which overwrites the map with the working copy. rebuild_script: auto regenerates war3map.j / war3map.lua when triggers, regions, cameras, sounds,
-    placed objects or map info changed (maps with trigger data), always regenerates whenever possible, never leaves
-    the script alone. The minimap war3mapMap.blp is added when missing and redrawn after terrain edits unless the map
-    imports its own. validate runs map_validate first, compiles a regenerated or edited map script (pjass / Lua check,
-    reported in validation.script) and refuses to save on errors of either. The World Editor keeps the map file open
-    while it shows it, so it has to close before a save here (the round trip is in the skill's
-    references/testing.md)."""
+    """Save the working copy: back up the original and replace it atomically, or write a copy elsewhere with
+    dest/format (an mpq archive or a map folder). It regenerates the map script when its sources changed
+    (rebuild_script auto/always/never), redraws the minimap, runs map_validate and compiles the script, and refuses
+    to save on errors. A map file that changed on disk since it was opened (a World Editor save) needs
+    merge_external=true, which keeps this copy's changes and takes everything else from the file.
+    wc3_help("map_save") has the whole round trip with the editor."""
     project = _project(path)
     merged = project.merge_source() if merge_external and project.source_changed() else None
     catalog = _catalog("enUS", script_ops.balance(project), True)
@@ -401,20 +452,12 @@ def map_snapshot(path: str, action: Literal["create", "restore", "list", "diff"]
 @_tool
 def data_search(kind: Kind, query: str = "", limit: int = 50, offset: int = 0, locale: str = "enUS",
                 balance: str | None = "Custom_V1", hd: bool = True, tileset: str | None = None) -> dict:
-    """Search base game data by id, name or editor suffix (object, terrain and sound kinds) or by path substring or
-    glob (model, icon, file; a glob without a layer prefix matches in any layer, e.g. "PathTextures/8x8*"), or by name
-    or signature text (native). model,
-    icon and file results give one entry per file: ref is the path as object data and scripts write it
-    (backslashes, icons as .blp, models as .mdl), layers the storage layers holding it (base, _HD, _DE, ...) and id a
-    storage path for data_file and the asset tools. trigger_function / trigger_type / trigger_preset search GUI
-    trigger functions, variable types and preset values. kind=native searches the script API of the installed build
-    (common.j, Blizzard.j, common.ai): natives, Blizzard.j functions, constants and handle types, each with its
-    signature, so a script never has to guess one; globs work too ("Blz*Frame*"). Tile results carry buildable, walkable and flyable (an
-    unbuildable tile silently stops player build orders). tileset (a letter, e.g. "L", or a name, e.g. "Lordaeron
-    Summer") lists only what that tileset offers for kind=tile, cliff, doodad and destructible; tile and cliff results
-    name their tileset. Doodad and destructible results carry model_ok: false when the installed game cannot load the
-    id's model in HD or in classic graphics (the editor's), and variations_ok then lists the variations that do load.
-    balance selects the gameplay data set: Custom_V1 (current), Custom_V0, Melee_V0, or null for the base files."""
+    """Search the game data of the installed build: objects (unit, item, ability, buff, upgrade, doodad,
+    destructible) by id, name or editor suffix; terrain and sound rows; files (model, icon, file) by path or glob;
+    the World Editor's own tables (trigger_function, trigger_type, trigger_preset); and kind=native, the script API
+    (common.j, Blizzard.j, common.ai) with real signatures. tileset scopes tiles, cliffs, doodads and destructibles
+    to one tileset. balance picks the gameplay data set: Custom_V1 (current), Custom_V0, Melee_V0 or null for the
+    base files. wc3_help("data_search") explains each kind and what its results carry."""
     catalog = _catalog(locale, balance, hd)
     results = catalog.search(kind, query, limit=min(limit, 500), offset=offset, tileset=tileset)
     return {"kind": kind, "query": query, "offset": offset, "count": len(results), "results": results,
@@ -515,12 +558,11 @@ def ui_get(path: str, file: str | None = None) -> dict:
 @_tool
 def ui_edit(path: str, file: str, statements: list[dict] | None = None, text: str | None = None,
             toc: str | None = None) -> dict:
-    """Write a custom UI layout into an open map: an .fdf built from statements (the ui_get shape: {"block": "Frame",
-    "args": ["BACKDROP", "MyPanel"], "statements": [{"key": "Width", "args": [0.2]}, {"key": "SetPoint", "args":
-    ["TOPLEFT", "ConsoleUI", "TOPLEFT", 0.01, -0.01]}]}) or from ready FDF text, imported under war3mapImported and
-    listed in a .toc next to it. Returns the frames it defines, the problems a check found (unknown frame type, an
-    anchor that is not a corner, a SetPoint to a frame the file does not define, a texture the map does not hold) and
-    the script that loads it (BlzLoadTOCFile, then BlzGetFrameByName or BlzCreateFrame)."""
+    """Write a custom UI layout into an open map: an .fdf built from statements (the ui_get shape) or from ready
+    FDF text, imported under war3mapImported and listed in a .toc beside it. The result carries the frames it defines,
+    the problems a check found (unknown frame type, an anchor that is not a corner, a SetPoint to a frame the file
+    never defines, a texture the map does not hold) and the script that loads it (BlzLoadTOCFile, then BlzCreateFrame
+    or BlzGetFrameByName). wc3_help("ui_edit") has the statement shape and the anchors."""
     return ui_ops.ui_edit(_project(path), _catalog("enUS", "Custom_V1", True), file, statements, text, toc)
 
 
@@ -550,24 +592,12 @@ def trigger_get(path: str, name: str | None = None) -> dict:
 
 @_tool
 def triggers_edit(path: str, ops: list[dict] | None = None, validate: bool = False, ops_file: str | None = None) -> dict:
-    """All-or-nothing Trigger Editor changes. ops:
-    {"op": "category", "name", "parent"?, "new_name"?};
-    {"op": "variable", "name", "type", "array_size"?, "initial"?, "category"?, "new_name"?};
-    {"op": "trigger", "name", "category"?, "description"?, "enabled"?, "initially_on"?, "run_on_init"?,
-     "events"/"conditions"/"actions": [{"fn": "KillUnit", "args": [{"call": "GetTriggerUnit"}]}, ...] or
-     "script": "<JASS or Lua>" or "script_file": "C:/local/trigger.j", "new_name"?, "index"? or "after"?};
-    {"op": "delete", "what": "trigger"|"category"|"variable", "name"}; {"op": "header", "script"?, "script_file"?,
-    "comment"?}; {"op": "script_replace", "name" (or "header": true), "old", "new"} replaces one exact piece of a
-    script trigger's text (or the map header) without resending the script; old must occur exactly once.
-    An argument is a literal, {"preset": name}, {"var": name, "index"?} or {"call": name, "args": [...]}; block
-    functions take "if"/"then"/"else" (IfThenElseMultiple), "conditions" (And/OrMultiple) or "actions" (loops).
-    GUI code is checked against TriggerData; data_search kind=trigger_function finds functions. run_on_init is for
-    script triggers; a GUI trigger runs at map start through the event {"fn": "MapInitializationEvent"}.
-    Replacing a trigger keeps its place in the category, because the script emits trigger functions in tree order;
-    index (0-based, inside the category) or after ("<trigger>", or null for first) moves one on purpose.
-    validate=true regenerates the map script and checks it right away (pjass, or the Lua syntax check) instead of
-    waiting for map_save; each error also carries script_line, its line inside the script that was sent. ops_file: a
-    local JSON file holding the ops array instead of ops. The skill's references/triggers.md has the JASS pitfalls."""
+    """Change the Trigger Editor's categories, GUI variables and triggers, all-or-nothing. Ops: category,
+    variable, trigger (GUI events/conditions/actions, or "script"/"script_file" for JASS or Lua), delete, header and
+    script_replace (one exact piece of a script). A trigger keeps its place when it is replaced, because the script
+    emits trigger functions in tree order; "index" or "after" moves one on purpose. validate=true rebuilds the map
+    script and checks it right away, each error with its line inside the script that was sent. ops_file takes the ops
+    array from a local JSON file. wc3_help("triggers_edit") has the op shapes and the argument forms."""
     return triggers_ops.triggers_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file), validate)
 
 
@@ -603,35 +633,14 @@ def placed_list(path: str, kind: Literal["unit", "item", "start_location", "dood
 
 @_tool
 def placed_edit(path: str, ops: list[dict] | None = None, ops_file: str | None = None, verbose: bool = False) -> dict:
-    """All-or-nothing placed object changes. {"op": "add", "kind", "type", "x", "y", ...fields} places an object with
-    editor defaults (facing 270, z on the terrain, units owned by player 0, items neutral passive; start locations need
-    owner, no type). Many adds at once: {"op": "add", "kind": "destructible", <fields shared by all>, "columns":
-    ["type", "x", "y", "variation", "angle"], "rows": [["LTlt", -1833, -3653, 2, 113], ...]}. {"op": "scatter", "kind",
-    "types": {"LTlt": 3, "ATtr": 1} (weights) or [ids], "count", area ("rect": [left, bottom, right, top], or "x"/"y"/
-    "radius"; default the playable area), "exclude": [{"x", "y", "radius"} | {"rect": [...]}], "min_distance"?,
-    "seed"?, "where": "land" (default, no water or boundary) | "water" | "any", ...shared fields} places random
-    objects; doodads and destructibles get a random installed variation and their fixed or a random facing.
-    {"op": "set", "ref", ...fields} changes fields (type too); {"op": "move", "ref", "x", "y"} (moving a start
-    location also moves the player's start in war3map.w3i, reported in synced); {"op": "delete", "ref"} refuses while
-    triggers use its gg_ name. Fields match placed_list: angle, scale (number or [x, y, z]), variation, skin, owner,
-    life (unit %, null default; destructible %), mana, gold, acquisition ("normal", "camp" or a range), hero {level,
-    strength, agility, intelligence}, inventory [{slot 0-5, item}], abilities [{id, autocast, level}], drops {table,
-    sets: [[{item, chance}]]}, random (uDNR/bDNR/iDNR: {level, item_class}, {group, position} or {units: [{type,
-    chance}]}), color, waygate (region name), doodad z and flags. created lists the new refs as ranges in op order
-    ("doodad:422..909"; verbose=true lists every ref). ops_file: a local JSON file holding the ops array instead of
-    ops. Placing a doodad or destructible whose model the installed game cannot load, or whose scale is outside its
-    type's own minimum and maximum, gives a warning.
-    Scenery ops build a layout instead of a heap, all seeded and deterministic, all taking the placement fields of
-    their kind plus "exclude", "where" and "seed": {"op": "forest", "types" (weights), area ("rect", "x"/"y"/"radius"
-    or "path" with "width"), "spacing" (the distance between trees at full density), "density" 0-1, "edge" (how far in
-    from the border the wood thins), "clearings"/"clearing_radius", "on_tiles": ["Lgrs"], "count"}; {"op": "line",
-    "path", "spacing", "offset", "sides": both|left|right|alternate|center, "face": path|out|in|<degrees>, "jitter"}
-    for fences, lamp rows and the props along a road; {"op": "town", "rect", "block": [w, h], "street", "margin",
-    "spacing", "fill" 0-1, "props" (weights), "prop_spacing", "plaza": [l, b, r, t]} puts a row of buildings along
-    every block side facing its street and returns the streets for terrain_edit to pave; {"op": "cluster", "x", "y",
-    "radius", "count", "spacing", "falloff", "scale_range": [small, big]} for rocks and flower beds; {"op": "clear",
-    area, "kinds", "types"} empties an area first. They keep off water, cliffs and the map boundary, and layout_check
-    reports the spacing, the ground and what is still reachable afterwards."""
+    """Place, change and remove units, items, start locations, doodads and destructibles, all-or-nothing.
+    Ops: add (one object, or many through "columns"/"rows"), set, move, delete, scatter (uniform random), and the
+    scenery generators forest, line, town, cluster and clear, which build a layout instead of a heap - seeded,
+    deterministic and off water, cliffs and the boundary - and mirror, which copies objects onto the other side of an
+    axis with their facing turned and, with owner_map, another player's colours. Refs are "<kind>:<editor id>", angles degrees, positions
+    world units; created comes back as ref ranges (verbose=true lists every ref), and ops_file takes the ops array
+    from a local JSON file. wc3_help("placed_edit") has every op, every field and the road recipe; layout_check
+    reports how the result reads."""
     return placed_ops.placed_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file), verbose)
 
 
@@ -652,43 +661,48 @@ def layout_check(path: str, area: list[float] | None = None, kinds: list[str] | 
 def terrain_get(path: str, area: list[float] | None = None,
                 layers: list[Literal["height", "texture", "cliff_level", "water", "flags", "pathing"]] | None = None,
                 step: int = 1) -> dict:
-    """Terrain corners of an open map (one every 128 units) inside area [left, bottom, right, top] (default: the
-    whole map), every step-th corner, as grids of rows running south to north. height is the ground height without
-    cliffs (ground z = height + (cliff_level - 2) * 128), texture the tile id, water the water surface z or null,
-    flags letters r ramp, b blight, w water, x boundary, pathing letters w unwalkable, f unflyable, b unbuildable,
-    B blight. pathing comes from the editor's last save (war3map.wpm), or, after terrain_edit and before the next
-    editor save, is derived from the current tiles, cliffs, water and blight without object footprints
-    (pathing_source says which). An area narrower than the 128-unit corner spacing uses the nearest corner line
-    (window.snapped). Also the tile lists and map bounds. At most 65536 corners per call."""
+    """Terrain corners of an open map, one every 128 units, as grids of rows running south to north inside
+    area [left, bottom, right, top] (default the whole map), every step-th corner. layers: height, texture,
+    cliff_level, water, flags and pathing, which comes from the editor's last save or, after terrain_edit, is derived
+    from the current tiles, cliffs, water and blight (pathing_source says which). A narrow area snaps to the nearest
+    corner line (window.snapped). Also the tile palette and the map bounds; at most 65536 corners per call.
+    wc3_help("terrain_get") explains each layer."""
     return terrain_ops.terrain_get(_project(path), area, layers, step, _catalog("enUS", "Custom_V1", True))
 
 
 @_tool
 def terrain_edit(path: str, ops: list[dict] | None = None, ops_file: str | None = None) -> dict:
-    """All-or-nothing terrain brushes. Every op is {"op": <brush>, <area>, <settings>}, for example {"op": "paint",
-    "tile": "Lgrs", "x": 0, "y": 0, "radius": 384}. Areas (world units): "x"/"y"/"radius" a circle, "rect": [left,
-    bottom, right, top], "path": [[x, y], ...] with "width" a stroke along a line (roads), or no area at all for the
-    whole map. Brushes and their settings: raise / lower {"amount", "falloff": smooth|linear|flat}, plateau {"height"}
-    (default: the centre corner's), smooth {"strength" 0..1}, noise {"amount", "seed", "falloff"}, paint {"tile"}
-    (data_search kind=tile, tileset=<letter>), cliff {"level" 0..15, "cliff": cliff tile id}, water {"level": surface z,
-    or null to remove}, ramp / blight / boundary {"value": true|false}. The result reports the map's tile palette and
-    what the ops added to it (a map holds at most 16 ground tiles), and warns when a batch paints an unbuildable or
-    unwalkable tile over more than a few corners. Only a World Editor save recomputes pathing, shadows and the minimap
-    icons from the new terrain. ops_file: a local JSON file holding the ops array instead of ops."""
+    """Shape and paint terrain with all-or-nothing brushes, each {"op": <brush>, <area>, <settings>}; areas
+    are a circle ("x"/"y"/"radius"), a "rect", a "path" with "width", or nothing at all for the whole map. Brushes:
+    raise, lower, plateau, smooth, noise, paint, cliff, ramp, water, blight, boundary; the landscape brushes river,
+    coast, ridge, erosion, terrace, blend and stamp, which shape ground the way the scenery ops shape objects; mirror,
+    which copies a half or a quadrant onto the other side (terrain and placed objects both have it, so a symmetric map
+    is built once); and heightmap, which reads a picture over an area. The result reports the tile
+    palette and what the ops added to it, and warns when a batch paints an unbuildable or unwalkable tile widely.
+    Only a World Editor save recomputes pathing, shadows and minimap icons from new terrain.
+    wc3_help("terrain_edit") has every brush and its settings, wc3_help("terrain_landscape") the landscape ones."""
     return terrain_ops.terrain_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file))
 
 
 @_tool
 def terrain_render(path: str, scale: int | None = None, objects: bool = True, doodads: bool = True,
-                   pathing: bool = False, write_preview: bool = False) -> Image:
+                   pathing: bool = False, write_preview: bool = False, heightmap: str | None = None,
+                   area: list[float] | None = None) -> Image:
     """Top-down PNG of the map's terrain, north up, scale pixels per tile (default: fits 1024 px): tile colours,
     height shading, darkened cliffs, water, blight and boundary; objects draws regions (cyan), start locations
     (white), units (red) and items (yellow), and with doodads also doodads (magenta), trees (dark green) and other
     destructibles (orange) as small marks, enough to see coverage, gaps and clumps. pathing=true tints ground on
     unbuildable tiles red and on unwalkable tiles black, from the current tiles (no editor save needed).
     write_preview=true also writes this view into the map as war3mapPreview.tga, the picture the map list shows
-    instead of the minimap (the minimap itself, war3mapMap.blp, is map_save's job)."""
+    instead of the minimap (the minimap itself, war3mapMap.blp, is map_save's job).
+    heightmap="height" (or "cliff" or "water") answers with a 16-bit grayscale picture of that layer over area
+    instead of the map view, which terrain_edit's heightmap brush reads back: the result of a heightmap render also
+    says which world units black and white stand for."""
     project = _project(path)
+    if heightmap is not None:
+        terrain, _raw = terrain_ops._load(project)
+        log.info("heightmap %s", heightmap_ops.export_range(terrain, area, heightmap))
+        return Image(data=heightmap_ops.export(terrain, area, scale, heightmap), format="png")
     if write_preview:
         project.write("war3mapPreview.tga", terrain_ops.preview(project, _catalog("enUS", "Custom_V1", True)))
     return Image(data=terrain_ops.terrain_render(project, _catalog("enUS", "Custom_V1", True), scale, objects,
@@ -720,16 +734,12 @@ def script_validate(path: str, lint: bool = False) -> dict:
 
 @_tool
 def map_validate(path: str) -> dict:
-    """Cross-file checks of an open map: script language vs script files, GUI trigger code against TriggerData and
-    variables, trigger names, references to generated objects, TRIGSTR strings, object data base ids and fields,
-    imports, placed objects without a loadable model, and a trigger calling a function that a later trigger defines
-    (function_order, which does not compile). Errors break the map; warnings are defects that shipped maps also carry,
-    a reminder while terrain edits are newer than the derived files only the World Editor recomputes (derived_files),
-    order strings a unit will refuse (order_string), two abilities of one unit sharing an order (ability_order),
-    ground a player cannot walk to (reachable: start locations cut off from each other, or a preplaced unit its own
-    player cannot reach) and the object data pitfalls of a copied object: command_card (two buttons on one position),
-    inherited_builds (a kept ubui build list) and locked_ability (a required research nothing in the map offers).
-    Each warning's message says what to check."""
+    """Cross-file checks of an open map: script language against the script files, GUI trigger code against
+    TriggerData and the map's variables, references to generated objects, TRIGSTR strings, object data, imports,
+    placed objects without a loadable model, trigger function order, order strings, ability order clashes, command
+    card clashes, inherited build lists, locked abilities, and ground a player cannot walk to. Errors break the map;
+    warnings are defects that shipped maps also carry, each message saying what to check.
+    wc3_help("map_validate") lists every check by name."""
     return script_ops.map_validate(_project(path), _catalog("enUS", "Custom_V1", True))
 
 
@@ -760,16 +770,10 @@ def asset_convert(source: dict, dest: dict,
 def asset_edit(source: dict, dest: dict, ops: list[dict],
                format: Literal["blp", "dds", "tga", "png", "jpg", "mdx", "mdl"] | None = None,
                compression: str | None = None, quality: int = 90, mipmaps: bool = True) -> dict:
-    """Edit a texture or a model and write the result (source and dest as in asset_convert). ops apply in order.
-    Texture ops: {"op": "resize", "width", "height"}, {"op": "crop", "left", "top", "right", "bottom"}, {"op":
-    "grayscale"}, {"op": "brightness", "factor"}, {"op": "tint", "color": [r, g, b], "strength"}, {"op": "overlay",
-    "source", "x", "y", "width"?, "height"?, "opacity"?}, {"op": "icon", "kind": "BTN" | "DISBTN" | "PASBTN" |
-    "DISPASBTN"} (64x64 command button styles of the game's icons). Model ops: {"op": "retexture", "texture": index or
-    current path, "path": new path, "replaceable_id"?}, {"op": "scale", "factor"} (geometry, pivots, extents,
-    translations, emitters, cameras, collision), {"op": "rename_sequence", "sequence": index or name, "name"}, {"op":
-    "remove_sequence", "sequence"}, {"op": "team_color", "material": index} (adds the team colour texture: a layer
-    under classic materials, texture slot 4 of Reforged ones), {"op": "add_attachment", "name", "parent"?: node name or
-    object id, "position"?: [x, y, z], "path"?}."""
+    """Edit a texture or a model and write the result (source and dest as in asset_convert). Texture ops:
+    resize, crop, grayscale, brightness, tint, overlay and icon (the game's 64x64 BTN, DISBTN, PASBTN and DISPASBTN
+    styles). Model ops: retexture, scale, rename_sequence, remove_sequence, team_color and add_attachment.
+    wc3_help("asset_edit") has every op with its arguments."""
     return assets_ops.asset_edit(source, dest, ops, _project, _storage_for_assets(), format, compression, quality,
                                  mipmaps)
 
@@ -921,29 +925,13 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
               probe_script: str | None = None, probe_script_file: str | None = None,
               probe_functions: str | None = None, wait: bool = True, screenshots: int = 0,
               screenshot_every: float = 3.0) -> dict:
-    """Run a map in Warcraft III (windowed; the window needs to be in front while loading) and collect what the map
-    reports. The map script writes a result file with PreloadGenClear/PreloadGenStart/Preload("text")/
-    PreloadGenEnd("folder\\\\file.txt"); list those files in results, relative to the CustomMapData folder of
-    Documents\\Warcraft III, and the run ends as soon as all exist. probe=true instead runs a throwaway copy of the map (the open working copy
-    when the map is open) with one added trigger that reports, probe_seconds into the game, the units, heroes, gold and
-    lumber of every playing slot and the text the map shows, in probe.messages. probe_script (or probe_script_file, a
-    local file; either implies probe=true) adds test code in the map's language (JASS or Lua statements, JASS locals
-    first) that runs at that moment and may call the map's own functions, read its udg_ globals and wait
-    (TriggerSleepAction) and move the camera (ProbeCamera(x, y, distance, seconds) looks at a place, waits there and
-    reports it in probe.camera, which pairs with screenshots); ProbeReport(text) comes back in probe.reports,
-    ProbeCountEvent(EVENT_PLAYER_UNIT_DEATH,
-    "deaths") and ProbeEventCount("deaths") count a player-unit event, ProbeExpect("gold rose", cond) records a
-    pass/fail check (probe.checks, checks_failed, checks_passed), and probe_functions adds whole functions
-    (callbacks for the test code's own triggers) before it. wait=false runs it in the background and returns at once:
-    game_status then reports the run and its result when it ends, so the working copy is free meanwhile (a second run
-    while one is going is refused). screenshot=true saves a PNG of the game window at the end; screenshots=N with
-    screenshot_every seconds saves a series while the map runs (paths in screenshots), which is how the scenery gets
-    looked at in the game: move the camera over it with ProbeCamera on the same schedule. A Battle.net login screen ends the
-    run after about 30 s with login_required and leaves the game open: once the user has logged in there, the same call
-    continues in that game (continued_game) instead of launching again. Returns the Preload strings per file, the
-    useful War3Log.txt lines (known-benign shipped-data lines counted in benign_log) and any new crash. The skill's
-    references/testing.md has the pitfalls: the 259-character Preload limit, dialogs pausing a single-player game,
-    loading screens that wait for a key, and how few launches a session should use."""
+    """Run a map in Warcraft III (windowed; the window needs to be in front while loading) and collect what it
+    reports. The map writes result files with PreloadGenEnd and the run ends as soon as every file listed in results
+    exists. probe=true runs a throwaway copy that reports the state at probe_seconds; probe_script, probe_functions
+    and the helpers ProbeReport, ProbeExpect, ProbeCountEvent and ProbeCamera make it a real test. wait=false runs it
+    in the background (game_status reports it and its result); screenshots=N with screenshot_every saves pictures
+    while the map runs. A Battle.net login screen ends the run with login_required and leaves the game open: the same
+    call again continues in that game. wc3_help("game_test") has the probe helpers and the pitfalls."""
     target, extra = path, {}
     if probe_script is not None and probe_script_file is not None:
         raise ToolError("bad_value", "give probe_script or probe_script_file, not both")
