@@ -22,6 +22,7 @@ from .gamedata.catalog import COMPACT_NOTE, Catalog
 from .gamedata.catalog import compact as catalog_compact
 from .ops import ai as ai_ops
 from .ops import assets as assets_ops
+from .ops import audio as audio_ops
 from .ops import balance as balance_ops
 from .ops import campaign as campaign_ops
 from .ops import elements as elements_ops
@@ -34,8 +35,10 @@ from .ops import newmap as newmap_ops
 from .ops import objdata as objdata_ops
 from .ops import placed as placed_ops
 from .ops import probe as probe_ops
+from .ops import recipes as recipe_ops
 from .ops import script as script_ops
 from .ops import terrain as terrain_ops
+from .ops import text as text_ops
 from .ops import triggers as triggers_ops
 from .ops import ui as ui_ops
 from .project.workspace import MapProject, project_id
@@ -510,6 +513,26 @@ def info_edit(path: str, ops: list[dict]) -> dict:
 
 
 @_tool
+def strings_get(path: str, query: str | None = None, limit: int = 200, offset: int = 0,
+                used_by: bool = False) -> dict:
+    """The map's string table (war3map.wts): every piece of text a player reads that is not hardcoded in the script -
+    unit names, tooltips, quest text, the map's own name. query filters by substring; used_by adds the files that
+    point at each entry and marks the ones nothing refers to any more (the editor leaves those behind)."""
+    return text_ops.strings_get(_project(path), query, limit, offset, used_by)
+
+
+@_tool
+def strings_edit(path: str, ops: list[dict]) -> dict:
+    """Change the map's text, all-or-nothing: {"op": "set", "id": 3, "text": "Guard Tower"}, {"op": "add", "text":
+    "New quest"} (answers with the new id), {"op": "remove", "id": 7}, {"op": "replace", "find": "Guard", "with":
+    "Sentry", "regex": false, "ids": [3, 4]} over every entry (one name changed everywhere the map shows it), and
+    {"op": "import", "entries": {"3": "Wachturm"}} for a translated table in one go. Object data, map info and GUI
+    triggers point at these entries, so they all follow; the map script keeps its own copy, so map_save (or
+    script_build) has to regenerate it afterwards."""
+    return text_ops.strings_edit(_project(path), ops)
+
+
+@_tool
 def imports_edit(path: str, ops: list[dict] | None = None) -> dict:
     """List or change imported files of an open map (war3map.imp plus the files themselves). ops:
     {"op": "add", "path": "war3mapImported/icon.blp", "source": "C:/local/icon.blp"} (or "content_base64"),
@@ -616,6 +639,20 @@ def triggers_edit(path: str, ops: list[dict] | None = None, validate: bool = Fal
 
 
 @_tool
+def sound_add(path: str, name: str, source: str | None = None, game_path: str | None = None,
+              kind: Literal["sound", "sound3d", "ambient", "music"] = "sound", label: str | None = None,
+              settings: dict | None = None) -> dict:
+    """Sound and music in one call: import a local audio file (.wav, .mp3, .ogg, .flac) or point at one of the game's
+    own (game_path, from data_search kind=file query=*.mp3), register it in war3map.w3s under name with the settings
+    that kind of sound needs (sound, sound3d, ambient or music), and answer with the script that plays it
+    (gg_snd_<name> once map_save or script_build has regenerated the script). settings overrides any sound field;
+    label inherits a stock sound's settings by its game label (data_search kind=sound)."""
+    project = _project(path)
+    return audio_ops.sound_add(project, _catalog("enUS", "Custom_V1", True), name, source, game_path, kind, label,
+                               settings)
+
+
+@_tool
 def elements_list(path: str, kind: Literal["region", "camera", "sound"]) -> dict:
     """Regions (war3map.w3r), cameras (war3map.w3c) or sounds (war3map.w3s) of an open map with their gg_rct_ /
     gg_cam_ / gg_snd_ script names. Sounds show flags, distances, label and dialogue text resolved from war3map.wts;
@@ -695,14 +732,16 @@ def melee_check(path: str, sample: int = 40) -> dict:
 @_tool
 def terrain_get(path: str, area: list[float] | None = None,
                 layers: list[Literal["height", "texture", "cliff_level", "water", "flags", "pathing"]] | None = None,
-                step: int = 1) -> dict:
+                step: int = 1, format: Literal["grid", "runs", "summary"] = "grid") -> dict:
     """Terrain corners of an open map, one every 128 units, as grids of rows running south to north inside
     area [left, bottom, right, top] (default the whole map), every step-th corner. layers: height, texture,
     cliff_level, water, flags and pathing, which comes from the editor's last save or, after terrain_edit, is derived
     from the current tiles, cliffs, water and blight (pathing_source says which). A narrow area snaps to the nearest
     corner line (window.snapped). Also the tile palette and the map bounds; at most 65536 corners per call.
-    wc3_help("terrain_get") explains each layer."""
-    return terrain_ops.terrain_get(_project(path), area, layers, step, _catalog("enUS", "Custom_V1", True))
+    format="runs" packs each row into [value, count] pairs (terrain repeats, so it is a fraction of the size) and
+    format="summary" answers with the range of the heights and the corner counts per tile and flag instead of the
+    cells. wc3_help("terrain_get") explains each layer."""
+    return terrain_ops.terrain_get(_project(path), area, layers, step, _catalog("enUS", "Custom_V1", True), format)
 
 
 @_tool
@@ -742,6 +781,31 @@ def terrain_render(path: str, scale: int | None = None, objects: bool = True, do
         project.write("war3mapPreview.tga", terrain_ops.preview(project, _catalog("enUS", "Custom_V1", True)))
     return Image(data=terrain_ops.terrain_render(project, _catalog("enUS", "Custom_V1", True), scale, objects,
                                                  objects and doodads, pathing), format="png")
+
+
+@_tool
+def script_recipe(name: str | None = None, params: dict | None = None, path: str | None = None,
+                  trigger: str | None = None, install: bool = False) -> dict:
+    """Tested JASS systems every custom map needs, as the triggers_edit ops that install them: damage_detection (one
+    function every damage event passes through), unit_indexer (a number on every unit plus a hashtable for per-unit
+    data), respawn (units of one owner come back where they died), waves (timed waves walking from a spawn to a
+    target, growing each round), scoreboard (a multiboard per player, refreshed on a timer), hero_tavern (a tavern
+    that sells heroes and places the bought one), quest (an entry in the quest log) and camera (the camera every
+    player starts with). Without a name it lists them with their parameters. install=true (with path) puts the ops
+    into the open map, rebuilds the script and checks it with pjass; otherwise the ops come back for triggers_edit,
+    so they can be edited first."""
+    if name is None:
+        return recipe_ops.recipe_list()
+    doc = recipe_ops.recipe(name, params, trigger)
+    if not install:
+        return {**doc, "note": "pass these ops to triggers_edit, or call again with install=true and a path"}
+    if path is None:
+        raise ToolError("bad_value", "install=true needs the path of an open map", path="path")
+    project = _project(path)
+    catalog = _catalog("enUS", script_ops.balance(project), True)
+    edit = triggers_ops.triggers_edit(project, catalog, doc["ops"], validate=True)
+    return {**doc, "installed": True, "created": edit.get("created", []), "validation": edit.get("validation"),
+            "warnings": edit.get("warnings", [])}
 
 
 @_tool
