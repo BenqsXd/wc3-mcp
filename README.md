@@ -68,6 +68,24 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.0
+
+**Ground, shaped like ground.** `terrain_edit` gained the landscape brushes: `river` (a bed deepest in the middle, water in it, banks painted), `coast` (floods under a waterline, slopes the sea floor, lays a beach band), `ridge`, `erosion` (thermal, so hills stop looking like cones), `terrace`, `blend` (a speckled tile seam) and `stamp` (copy a patch, rotated or mirrored).
+
+**Symmetry.** `mirror` on both `terrain_edit` and `placed_edit`: build one half or quadrant, then reflect or rotate it, facings turned and, with `owner_map`, the copies handed to another player.
+
+**Heightmaps.** A picture over an area goes in (`{"op": "heightmap", ...}`, any Pillow format, any channel, set or add) and `terrain_render heightmap="height"|"cliff"|"water"` writes a 16-bit PNG back out over the same corner window.
+
+**Does it play?** `map_flow` gives walking distances between starts, to mines and expansions, the narrowest choke on each route and the pockets nobody reaches on foot. `melee_check` measures the map the way the 272 melee maps shipped with the game are measured and reports every metric against their p10, median and p90 for the same player count. `balance_report` computes damage per second, effective life and cost efficiency from the object fields and flags a custom object far outside what the stock objects of the same price show.
+
+**Systems and text.** `script_recipe` holds nine tested JASS systems as `triggers_edit` ops (damage detection, unit indexer, respawn, waves, scoreboard, hero tavern, quest, camera, cinematic), each compiled with pjass by the tests. `strings_get` / `strings_edit` read and write the string table, including a `replace` that renames one thing everywhere and an `import` for a translated table. `sound_add` imports audio, registers it in `war3map.w3s` and hands back the script that plays it.
+
+**Cheaper calls.** `wc3_batch` runs up to 20 tools in one round trip. `wc3_help(topic)` holds the op catalogues the tool descriptions used to carry (32.6 KB of descriptions down to 27 KB, with sixteen reference pages a caller asks for when it needs them). `terrain_get format="runs"` packs rows into `[value, count]` pairs and `format="summary"` answers with ranges and counts: a whole map's three layers go from 48 KB to 36 KB or 1 KB.
+
+**Tests in the game.** `ProbeStartAI` gives an empty slot a melee AI, so a run has an opponent, and `ProbeGold` pays for what the test builds.
+
+There are deliberately **no map templates**: the tools are pieces to compose for the map someone actually asked for, and the skill's `references/building-a-map.md` is the order to compose them in.
+
 ## What's new in 0.9
 
 - **Scenery that looks placed.** `placed_edit` gained generator ops that build a layout instead of a heap, with Poisson-disk spacing: `forest` (density from noise, thinning toward the edge and around clearings, kept to the right tiles), `line` (even spacing along a path, with offset, sides and facing), `town` (a row of buildings along every block side facing its street, props between them, streets returned for `terrain_edit` to pave), `cluster` (dense in the middle, objects shrinking to the rim) and `clear` (empty an area first).

@@ -48,3 +48,24 @@ Trigger code is emitted in **trigger-tree order**, so a function can only be cal
 `ui_get` reads the `.fdf` layout files a map holds (and the game's own, so the stock UI can be studied), parsed into frames with their type, name, parent and template. `ui_edit` writes one — from `statements` (the same shape) or from ready FDF text — imports it under `war3mapImported`, lists it in a `.toc` beside it and returns the script that loads it (`BlzLoadTOCFile`, then `BlzGetFrameByName` or `BlzCreateFrame`).
 
 Both check the layout and report: a frame type the game does not know, an anchor that is not one of the nine corners, a `SetPoint` to a frame the file never defines, and a texture that is in neither the map's imports nor the game data. Each of those shows up in the game as a missing or misplaced panel, so the check is worth more than a launch.
+
+## Systems that are the same in every map
+
+`script_recipe` holds them, as `triggers_edit` ops that arrive compiling: `damage_detection` (one function every damage
+event passes through), `unit_indexer` (a number on every unit plus a hashtable for per-unit data), `respawn` (units of
+one owner come back where they died), `waves` (timed waves walking from a spawn to a target, growing each round),
+`scoreboard` (a multiboard per player, refreshed on a timer), `hero_tavern` (a tavern that sells heroes and places the
+bought one at its owner's start), `quest`, `camera` and `cinematic` (camera shots with spoken lines and the waits
+worked out). Call it without a name to list them with their parameters; `install=true` puts the ops into the open map
+and checks the script.
+
+A recipe is a starting point for a generic system, not the map: everything specific to this map is still written by
+hand as a script trigger, and a recipe's script can be edited before it goes in (it comes back in the result).
+Each one declares its state as GUI variables, because a trigger script cannot declare globals of its own.
+
+## Audio
+
+`sound_add` does the three steps at once: import a local .wav/.mp3/.ogg/.flac (or point at one of the game's own with
+`game_path`), register it in war3map.w3s under a name with the settings that kind needs (`sound`, `sound3d`, `ambient`
+or `music`), and hand back the script that plays it. The handle is `gg_snd_<name>` once `map_save` or `script_build`
+has regenerated the script; a 3D sound is heard where it is played, so attach it to a unit or a point.
