@@ -18,9 +18,12 @@ KINDS = {
                 "stop_when_out_of_range": True, "music": False, "eax": "DefaultEAXON",
                 "min_distance": 600.0, "max_distance": 8000.0, "distance_cutoff": 3000.0,
                 "cone_inside": 0.0, "cone_outside": 0.0, "cone_outside_volume": 127},
-    "ambient": {"volume": 90, "pitch": 1.0, "channel": 3, "is_3d": True, "looping": True,
-                "stop_when_out_of_range": True, "music": False, "eax": "DefaultEAXON",
-                "min_distance": 600.0, "max_distance": 6000.0, "distance_cutoff": 3000.0},
+    # what the World Editor writes for most region ambient sounds of the shipped maps (64 of 176; the rest are
+    # quieter local loops: channel 10, volume 30-60, distances 600/2600/2100). One sound may serve many regions:
+    # 148 of those 176 do, and RegisterStackedSound plays it at each of them
+    "ambient": {"volume": 127, "pitch": 1.0, "channel": 0, "is_3d": True, "looping": True,
+                "stop_when_out_of_range": True, "music": False, "eax": "DoodadsEAX",
+                "min_distance": 0.0, "max_distance": 10000.0, "distance_cutoff": 3000.0},
     "music": {"volume": 127, "pitch": 1.0, "channel": 0, "is_3d": False, "looping": True,
               "stop_when_out_of_range": False, "music": True, "eax": "DefaultEAXON"},
 }

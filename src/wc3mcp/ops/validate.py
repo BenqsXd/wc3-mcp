@@ -370,7 +370,7 @@ class _V:
         objects = []
         for o in doodads.doodads if doodads else ():
             t = o.id.decode("latin-1")
-            objects.append(("destructible" if t in ids["destructible"] else "doodad", t, o.x, o.y))
+            objects.append(("destructible" if t in ids["destructible"] else "doodad", t, o.x, o.y, o.angle))
         starts, owned = {}, []
         for u in units.units:
             t = u.id.decode("latin-1")

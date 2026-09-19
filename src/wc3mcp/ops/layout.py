@@ -528,7 +528,7 @@ def layout_check(project, catalog, area=None, kinds=None, min_distance: float | 
         if kind == "start_location":
             starts[o.owner] = (o.x, o.y)
             continue
-        blockers.append((kind if kind != "item" else "item", type_id, o.x, o.y))
+        blockers.append((kind, type_id, o.x, o.y, o.angle))
         if kind in wanted and box[0] <= o.x <= box[2] and box[1] <= o.y <= box[3]:
             rows.append((kind, type_id, o.x, o.y))
     out: dict = {"area": list(box), "count": len(rows), "by_kind": {}, "by_type": {}}
@@ -577,23 +577,40 @@ def _spacing(points, min_distance: float | None) -> dict:
 
 def _ground(scene, terrain, rows, playable) -> dict:
     from ..formats import w3e
+    from .terrain import deep, water_depth
 
-    out = {"on_water": 0, "unwalkable": 0, "outside_playable": 0, "by_tile": {}}
-    for _kind, _type_id, x, y in rows:
+    out = {"on_water": 0, "unwalkable": 0, "outside_playable": 0, "by_tile": {}, "reasons": {}}
+    walk: dict = {}
+    for kind, _type_id, x, y in rows:
         cx = min(max(round((x - terrain.offset_x) / 128), 0), terrain.width - 1)
         cy = min(max(round((y - terrain.offset_y) / 128), 0), terrain.height - 1)
         c = w3e.corner(terrain, cx, cy)
-        if c["water"]:
+        tile = terrain.tiles[c["texture"]].decode("latin-1") if c["texture"] < len(terrain.tiles) else "?"
+        depth = water_depth(terrain, c)
+        near = [w3e.corner(terrain, nx, ny)["layer"] for nx in (cx - 1, cx, cx + 1) for ny in (cy - 1, cy, cy + 1)
+                if 0 <= nx < terrain.width and 0 <= ny < terrain.height]
+        if tile not in walk:
+            walk[tile] = scene.catalog.tile_pathing(tile).get("walkable", True) if tile != "?" else True
+        why = [name for name, hit in (
+            ("deep_water", deep(terrain, depth)), ("shallow_water", depth is not None and not deep(terrain, depth)),
+            ("cliff", not c["ramp"] and any(v != c["layer"] for v in near)), ("boundary", c["boundary"]),
+            ("unwalkable_tile", not walk[tile]),
+            ("outside_playable", bool(playable) and not (playable[0] <= x <= playable[2]
+                                                         and playable[1] <= y <= playable[3]))) if hit]
+        if depth is not None:
             out["on_water"] += 1
         if not scene._ground_ok(x, y, "land"):
             out["unwalkable"] += 1
-        if playable and not (playable[0] <= x <= playable[2] and playable[1] <= y <= playable[3]):
+        if "outside_playable" in why:
             out["outside_playable"] += 1
-        tile = terrain.tiles[c["texture"]].decode("latin-1") if c["texture"] < len(terrain.tiles) else "?"
+        for name in why:
+            out["reasons"].setdefault(kind, {})[name] = out["reasons"].get(kind, {}).get(name, 0) + 1
         out["by_tile"][tile] = out["by_tile"].get(tile, 0) + 1
     out["by_tile"] = dict(sorted(out["by_tile"].items(), key=lambda kv: -kv[1]))
     out["note"] = ("unwalkable counts objects on water, a cliff edge or the map boundary, where the game will not "
-                   "let a unit stand; by_tile shows which ground they ended up on")
+                   "let a unit stand; reasons splits every such object by kind and cause (shallow_water is wadeable, "
+                   "deep_water is not; trees in shallow water on purpose show up there); by_tile shows which ground "
+                   "they ended up on")
     return out
 
 

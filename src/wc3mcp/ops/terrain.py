@@ -20,7 +20,15 @@ LAYERS = ("height", "texture", "cliff_level", "water", "flags", "pathing")
 DEFAULT_LAYERS = ("height", "texture", "cliff_level", "water", "flags")
 MAX_CORNERS = 65536
 RAW_ZERO, RAW_MAX = 0x2000, 0x3FFF  # raw corner height of world height 0, highest raw height
-WATER_OFFSET = -89.6  # the game draws water this far below its level
+WATER_OFFSET = -89.6  # the game draws water this far below its stored level (TerrainArt/Water.slk height -0.7 x 128)
+# tilesets whose water sits at another height (Water.slk "height" x 128): Ashenvale, Underground, Dungeon, Outland
+TILESET_WATER_OFFSET = {"A": -76.8, "G": -76.8, "D": -96.0, "O": -192.0}
+IMPASSABLE_WATER = {"O"}   # Water.slk impassable=1: no ground unit walks in Outland water at any depth
+# Water deeper than this is unwalkable. Measured on the editor-saved maps shipped with the game (war3map.wpm against
+# the corner heights): flat water up to 51.95 deep is always walkable, from 56.4 always unwalkable, and cells in
+# between flip around 52.5-55; a World Editor save read 47.9 walkable and 63.9 unwalkable.
+# ponytail: one number for a fuzzy band; war3map.wpm after an editor save is the exact answer
+DEEP_WATER = 53.0
 VARIATIONS = (0, 4, 8, 12, 16, 17)  # ground variations the editor spreads when painting
 DERIVED_WARNING = ("war3map.wpm (pathing), war3map.shd (shadows) and war3map.mmp (minimap) are recomputed by the World "
                    "Editor only, and placed doodads keep their z: editor_map open + save refreshes them")
@@ -31,6 +39,7 @@ _HINT = ('each op is {"op": <brush>, <area>, <settings>}. Areas: "x"/"y"/"radius
          '[512, 0], [512, 512]], "width": 192}, {"op": "cliff", "x": 0, "y": 0, "radius": 256, "level": 3}, '
          '{"op": "water", "rect": [0, 0, 1024, 1024], "level": -64}')
 PAINT_WARN_CORNERS = 16   # painting fewer corners of an unbuildable tile is detail, not a zone
+QUIET = {"tile_pathing", "derived_files"}   # warnings a caller can switch off per terrain_edit call
 PATHING_EFFECTS = {"buildable": "players cannot build on it (CreateUnit still places structures)",
                    "walkable": "ground units cannot walk on it"}
 DERIVED_PATHING = ("derived from the current tiles, cliffs, water and blight because war3map.wpm predates the last "
@@ -73,6 +82,39 @@ def _height(raw: int) -> float:
     return (raw - RAW_ZERO) / 4
 
 
+def water_offset(t: w3e.Terrain) -> float:
+    """How far below its stored level the game draws this map's water."""
+    return TILESET_WATER_OFFSET.get(t.tileset, WATER_OFFSET)
+
+
+def water_z(t: w3e.Terrain, raw: int) -> float:
+    """The water surface z the game draws for a corner's stored water level."""
+    return _height(raw) + water_offset(t)
+
+
+def water_raw(t: w3e.Terrain, z: float) -> int:
+    """The stored water level that draws the surface at z (quarter units, so -40 reads back as about -40.1)."""
+    return _raw(z - water_offset(t))
+
+
+def ground_z(c: dict) -> float:
+    """A corner's ground z: its height plus its cliff level."""
+    return _height(c["height"]) + (c["layer"] - 2) * 128
+
+
+def water_depth(t: w3e.Terrain, c: dict) -> float | None:
+    """How deep the water over a corner is, or None when the corner is dry."""
+    if not c["water"]:
+        return None
+    depth = water_z(t, c["water_level"]) - ground_z(c)
+    return depth if depth > 0 else None
+
+
+def deep(t: w3e.Terrain, depth: float | None) -> bool:
+    """True when water this deep stops ground units."""
+    return depth is not None and (depth > DEEP_WATER or t.tileset in IMPASSABLE_WATER)
+
+
 def _raw(height: float) -> int:
     return int(min(max(round(height * 4 + RAW_ZERO), 0), RAW_MAX))
 
@@ -94,9 +136,11 @@ def _corner_pathing(t: w3e.Terrain, catalog, cx: int, cy: int, cache: dict) -> s
             if 0 <= nx < t.width and 0 <= ny < t.height]
     if not c["ramp"] and any(w3e.corner(t, nx, ny)["layer"] != c["layer"] for nx, ny in near):
         letters |= {"w", "b"}   # a cliff edge
-    ground = _height(c["height"]) + (c["layer"] - 2) * 128
-    if c["water"] and _height(c["water_level"]) + WATER_OFFSET > ground:
+    depth = water_depth(t, c)
+    if depth is not None:
         letters.add("b")
+        if deep(t, depth):
+            letters.add("w")
     if c["blight"]:
         letters.add("B")
     return "".join(k for k in "wfbB" if k in letters)
@@ -181,7 +225,7 @@ def terrain_get(project, area: list | None = None, layers: list | None = None, s
             if "cliff_level" in line:
                 line["cliff_level"].append(c["layer"])
             if "water" in line:
-                line["water"].append(_out(_height(c["water_level"]) + WATER_OFFSET) if c["water"] else None)
+                line["water"].append(_out(water_z(t, c["water_level"])) if c["water"] else None)
             if "flags" in line:
                 line["flags"].append("".join(k for k, name in (("r", "ramp"), ("b", "blight"), ("w", "water"),
                                                                  ("x", "boundary")) if c[name]))
@@ -252,6 +296,19 @@ class _Brush:
     def __init__(self, t: w3e.Terrain, catalog=None):
         self.t, self.catalog, self.added = t, catalog, {"tiles": [], "cliff_tiles": []}
         self.painted: dict[tuple[int, int], int] = {}   # corner -> tile index painted by this batch
+        self.info: list[dict] = []   # what water ops ended up with: the stored level and the depths it made
+
+    def tell(self, path: str, **fields) -> None:
+        self.info.append({"op": path, **fields})
+
+    def depths(self, corners) -> dict:
+        """The depth range of the wet corners among `corners`, and how many of them no ground unit can cross."""
+        found = [d for d in (water_depth(self.t, w3e.corner(self.t, cx, cy)) for cx, cy, *_ in corners)
+                 if d is not None]
+        if not found:
+            return {"wet_corners": 0}
+        return {"wet_corners": len(found), "depth": {"min": _out(min(found)), "max": _out(max(found))},
+                "deep_corners": sum(deep(self.t, d) for d in found)}
 
     def _window(self, left: float, bottom: float, right: float, top: float):
         t = self.t
@@ -358,9 +415,10 @@ class _Brush:
                 for cx, cy, _ in corners:
                     w3e.set_corner(t, cx, cy, water=False)
             else:
-                raw = _raw(_num(level, f"{path}.level") - WATER_OFFSET)
+                raw = water_raw(t, _num(level, f"{path}.level"))
                 for cx, cy, _ in corners:
                     w3e.set_corner(t, cx, cy, water=True, water_level=raw)
+                self.tell(path, level=_out(water_z(t, raw)), **self.depths(corners))
         else:  # ramp, blight, boundary
             value = self._flag(op, path)
             for cx, cy, _ in corners:
@@ -400,8 +458,11 @@ class _Brush:
         return self.t.cliff_tiles.index(cliff)
 
 
-def terrain_edit(project, catalog, ops: list) -> dict:
+def terrain_edit(project, catalog, ops: list, quiet: list | None = None) -> dict:
     t, before = _load(project)
+    quiet = set(quiet or [])
+    if quiet - QUIET:
+        raise _bad("quiet", f"expected any of {sorted(QUIET)}")
     brush = _Brush(t, catalog)
     for i, op in enumerate(ops):
         path = f"ops[{i}]"
@@ -420,15 +481,20 @@ def terrain_edit(project, catalog, ops: list) -> dict:
     if changed:
         project.write("war3map.w3e", data)
         project.note("terrain_edited")   # map_validate warns until the World Editor recomputes the derived files
-    warnings = [DERIVED_WARNING] if changed else []
+    warnings = [DERIVED_WARNING] if changed and "derived_files" not in quiet else []
     for index, count in sorted(Counter(brush.painted.values()).items()):
         tile = t.tiles[index].decode("latin-1")
         flags = catalog.tile_pathing(tile) if catalog is not None else {}
         effects = [effect for name, effect in PATHING_EFFECTS.items() if not flags.get(name, True)]
-        if count >= PAINT_WARN_CORNERS and effects:
+        if count >= PAINT_WARN_CORNERS and effects and "tile_pathing" not in quiet:
             warnings.append(f"painted {count} corners with {tile} ({catalog.name('tile', tile)}): "
                             + " and ".join(effects))
-    return {"changed": changed, "palette": _palette(t), "palette_added": brush.added, "warnings": warnings}
+    out = {"changed": changed, "palette": _palette(t), "palette_added": brush.added, "warnings": warnings}
+    if brush.info:
+        out["water"] = brush.info
+        out["water_note"] = (f"level is the stored surface z (kept in quarter units, so it can differ from the one asked "
+                             f"for by 0.1); water deeper than {DEEP_WATER:g} stops ground units (deep_corners)")
+    return out
 
 
 # ---- render --------------------------------------------------------------------------------------------------
@@ -454,15 +520,38 @@ def _tile_color(catalog, tile: str, cache: dict) -> tuple[int, int, int]:
     return cache[tile]
 
 
+def render_window(t: w3e.Terrain, area) -> tuple[int, int, int, int]:
+    """The tiles (first column, first row from the south, columns, rows) an area covers, whole tiles only."""
+    w, h = t.width - 1, t.height - 1
+    if area is None:
+        return 0, 0, w, h
+    left, bottom, right, top = _area(area)
+    c0 = min(max(math.floor((left - t.offset_x) / 128), 0), w - 1)
+    r0 = min(max(math.floor((bottom - t.offset_y) / 128), 0), h - 1)
+    c1 = min(max(math.ceil((right - t.offset_x) / 128), c0 + 1), w)
+    r1 = min(max(math.ceil((top - t.offset_y) / 128), r0 + 1), h)
+    return c0, r0, c1 - c0, r1 - r0
+
+
+def render_area(project, area) -> dict:
+    """The world rectangle terrain_render draws for `area`: the tiles it touches, clipped to the map."""
+    t, _ = _load(project)
+    c0, r0, cols, rows = render_window(t, area)
+    return {"drawn": [t.offset_x + c0 * 128, t.offset_y + r0 * 128, t.offset_x + (c0 + cols) * 128,
+                      t.offset_y + (r0 + rows) * 128], "tiles": [cols, rows]}
+
+
 def terrain_render(project, catalog, scale: int | None = None, objects: bool = True, doodads: bool = True,
-                   pathing: bool = False) -> bytes:
+                   pathing: bool = False, area=None) -> bytes:
     """PNG of the map from above, north up: tile colours, height shading, cliffs, water, blight, boundary, and
     optionally regions (cyan), start locations (white), units (red) and items (yellow), with doodads (magenta), trees
     (dark green) and other destructibles (orange) under them. pathing tints ground whose tile is unbuildable red and
-    unwalkable black, from the current tiles."""
+    unwalkable black, from the current tiles, and deep water black. area draws only the tiles that rectangle
+    touches."""
     t, _ = _load(project)
     w, h = t.width - 1, t.height - 1
-    scale = scale or max(1, min(8, 1024 // max(w, h, 1)))
+    c0, r0, cols, rows = render_window(t, area)
+    scale = scale or max(1, min(8 if area is None else 16, 1024 // max(cols, rows, 1)))
     scale = _int(scale, "scale", 1, 16)
     grid = lambda values: np.asarray(values, dtype=np.int32).reshape(t.height, t.width)  # noqa: E731
     heights, tex, cliffs, water = grid(t.heights), grid(t.textures), grid(t.cliffs), grid(t.water)
@@ -482,7 +571,7 @@ def terrain_render(project, catalog, scale: int | None = None, objects: bool = T
     rgb[quad.max(axis=0) != quad.min(axis=0)] *= 0.6
     flag = lambda k: (tex[:-1, :-1] >> (bits + k)) & 1  # noqa: E731
     rgb[flag(1) == 1] = rgb[flag(1) == 1] * 0.5 + np.array([90, 60, 110]) * 0.5
-    depth = ((water[:-1, :-1] & 0x3FFF) - RAW_ZERO) / 4 + WATER_OFFSET - z[:-1, :-1]
+    depth = ((water[:-1, :-1] & 0x3FFF) - RAW_ZERO) / 4 + water_offset(t) - z[:-1, :-1]
     wet = (flag(2) == 1) & (depth > 0)
     rgb[wet] = rgb[wet] * 0.25 + (np.array([40, 90, 160]) * (1 - np.clip(depth[wet], 0, 512) / 1024)[:, None]) * 0.75
     rgb[flag(3) == 1] *= 0.35
@@ -490,14 +579,17 @@ def terrain_render(project, catalog, scale: int | None = None, objects: bool = T
         flags = [catalog.tile_pathing(x.decode("latin-1")) for x in t.tiles] or [{}]
         for name, tint in (("buildable", (220, 30, 30)), ("walkable", (0, 0, 0))):
             bad = np.array([not f.get(name, True) for f in flags])[index]
+            if name == "walkable":   # water too deep to wade counts as unwalkable ground here
+                bad = bad | (wet & ((depth > DEEP_WATER) | (t.tileset in IMPASSABLE_WATER)))
             rgb[bad] = rgb[bad] * 0.4 + np.array(tint) * 0.6
+    rgb = rgb[r0:r0 + rows, c0:c0 + cols]
     image = Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8)[::-1], "RGB")
-    image = image.resize((w * scale, h * scale), Image.NEAREST)
+    image = image.resize((cols * scale, rows * scale), Image.NEAREST)
     if objects:
         draw = ImageDraw.Draw(image)
 
         def px(x: float, y: float) -> tuple[float, float]:
-            return (x - t.offset_x) / 128 * scale, (h - (y - t.offset_y) / 128) * scale
+            return ((x - t.offset_x) / 128 - c0) * scale, (r0 + rows - (y - t.offset_y) / 128) * scale
 
         rdata = _read(project, "war3map.w3r")
         try:

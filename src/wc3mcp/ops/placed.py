@@ -39,6 +39,7 @@ _HINT = ('ops: {"op": "add", "kind": "unit", "type": "hfoo", "x": 0, "y": 0, "ow
          '"item:7"}; placed_list shows refs and fields')
 # minimum and maximum scale fields: the World Editor clamps placed scales to them when it saves
 SCALE_FIELDS = {"doodad": ("dmis", "dmas"), "destructible": ("bmis", "bmas")}
+SCALE_SLACK = 0.01
 SCATTER_KEYS = {"op", "kind", "types", "count", "rect", "x", "y", "radius", "exclude", "min_distance", "seed", "where"}
 
 
@@ -126,13 +127,15 @@ class _Map:
         return w3e.ground_height(self.terrain, x, y) if self.terrain else 0.0
 
     def _ground_ok(self, x: float, y: float, where: str) -> bool:
+        from .terrain import water_depth
+
         t = self.terrain
         if where == "any" or t is None:
             return True
         cx = min(max(round((x - t.offset_x) / 128), 0), t.width - 1)
         cy = min(max(round((y - t.offset_y) / 128), 0), t.height - 1)
         c = w3e.corner(t, cx, cy)
-        wet = c["water"] and (c["water_level"] - c["height"]) / 4 - 89.6 - (c["layer"] - 2) * 128 > 0  # as rendered
+        wet = water_depth(t, c) is not None   # as rendered
         return not c["boundary"] and wet == (where == "water")
 
     # ---- JSON
@@ -511,7 +514,8 @@ class _Edit(_Map, layout.LayoutOps, symmetry.PlacedMirror):
             low, high = (_float_or(doc["fields"].get(f, {}).get("value"), None) for f in SCALE_FIELDS[kind])
             self._scales[t] = (low, high)
         low, high = self._scales[t]
-        if low is None or high is None or all(low - 1e-4 <= s <= high + 1e-4 for s in o.scale):
+        # 0.01 of slack: a type with a fixed scale such as 1.095 is placed at 1.09 or 1.1 by anyone rounding
+        if low is None or high is None or all(low - SCALE_SLACK <= s <= high + SCALE_SLACK for s in o.scale):
             return
         lo, hi = SCALE_FIELDS[kind]
         note = (f"{kind} {t}: scale {'/'.join(f'{s:g}' for s in o.scale)} is outside its range {low:g}..{high:g} "
@@ -674,6 +678,8 @@ class _Edit(_Map, layout.LayoutOps, symmetry.PlacedMirror):
             if data != before:
                 self.project.write(name, data)
                 changed.append(name)
+                if name == DOODADS_FILE:   # the editor's saved pathing still holds the old doodad footprints
+                    self.project.note("objects_edited")
         if changed:
             self.warnings += [SCRIPT_WARNING, DERIVED_WARNING]
         result = {"changed": bool(changed), "files": changed, "created_count": len(self.created),

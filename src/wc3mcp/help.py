@@ -91,7 +91,8 @@ The skill's references/triggers.md has the JASS pitfalls and the lint rules.
 """)
 
 page("terrain_edit", """
-terrain_edit(path, ops | ops_file) - all-or-nothing terrain brushes. Every op is {"op": <brush>, <area>, <settings>}.
+terrain_edit(path, ops | ops_file, quiet) - all-or-nothing terrain brushes. Every op is {"op": <brush>, <area>,
+<settings>}.
 
 AREAS (world units): "x"/"y"/"radius" a circle, "rect": [left, bottom, right, top], "path": [[x, y], ...] with
 "width" a stroke along a line, or no area at all for the whole map.
@@ -104,13 +105,25 @@ SHAPE
   {"op": "cliff", "level": 0-15, "cliff": <cliff tile id>}
   {"op": "ramp"|"blight"|"boundary", "value": true|false}
   {"op": "water", "level": <surface z> | null}
+                                         level is an absolute z (a level-3 mesa's ground is at 128 + height); it is
+                                         stored in quarter units, so -40 reads back as -40.1. Corners whose ground is
+                                         above the level stay dry. The result's water list gives the stored level, the
+                                         depth range and deep_corners per water op
 
 GROUND
   {"op": "paint", "tile": "Lgrs"}        data_search kind=tile, tileset=<letter> finds ids; a map holds 16 tiles
 
 The result reports the tile palette and what the ops added to it, and warns when a batch paints an unbuildable or
-unwalkable tile over more than a few corners. Only a World Editor save recomputes pathing, shadows and minimap icons
-from new terrain; until then terrain_get and terrain_render derive pathing from the tiles, cliffs, water and blight.
+unwalkable tile over more than a few corners (quiet=["tile_pathing"] drops those on a map where nothing is built,
+quiet=["derived_files"] the stale-files reminder). Only a World Editor save recomputes pathing, shadows and minimap
+icons from new terrain; until then terrain_get and terrain_render derive pathing from the tiles, cliffs, water and
+blight.
+
+WATER DEPTH
+  Water up to about 52 deep is wadeable (walkable, unbuildable); deeper than about 53 stops ground units (the editor's
+  own pathing flips between 52 and 56; flat water 47.9 deep read walkable and 63.9 unwalkable after an editor save).
+  Outland water stops them at any depth. Each tileset draws its water at its own offset below the stored level
+  (Ashenvale and Underground 76.8, Dungeon 96, Outland 192, the rest 89.6); level always means the drawn surface.
 """)
 
 page("terrain_landscape", """
@@ -118,11 +131,16 @@ The landscape brushes of terrain_edit, which shape ground the way the placed_edi
 take the same areas, and every one of them is deterministic for a given seed.
 
   {"op": "river", "path": [[x, y], ...], "width", "depth" (default 192), "bed": <tile>, "bank": <tile>,
-   "water": true, "shallows": <extra width at a third of the depth>, "seed"}
-      carves a bed that is deepest in the middle, fills it and paints the bed and the banks.
+   "water": true, "shallows": <extra width at a third of the depth>, "water_level": <surface z>,
+   "walkable": true|false, "seed"}
+      carves a bed that is deepest in the middle, fills it and paints the bed and the banks. The surface is
+      water_level when given; else the level of water already in the river's way (a branch started inside another
+      river or a lake joins it at that level; the result says joined); else a quarter of depth below the lowest ground
+      it crosses. walkable=false keeps a channel at least 69 deep along the middle (a barrier), walkable=true keeps all
+      of it at most 40 deep (a ford). The result's water entry gives the level and the depth range it made.
 
   {"op": "coast", area, "water_level" (default 0), "beach": <tile>, "shallow": <tile>, "slope" (default 256)}
-      floods everything under the water level, slopes the sea floor away from the shore and paints the band above the
+      floods everything whose ground (cliff level included) lies under the water level (a surface z), slopes the sea floor away from the shore and paints the band above the
       waterline with the beach tile.
 
   {"op": "ridge", "path" with "width" or an area, "height", "roughness" 0-1, "seed", "cliff": true|<level>,
@@ -154,7 +172,8 @@ SYMMETRY (the same op on terrain_edit and placed_edit)
 
 page("game_test", """
 game_test(path, timeout, results, close, screenshot, probe, probe_seconds, probe_script, probe_script_file,
-          probe_functions, wait, screenshots, screenshot_every) - run a map in the game and collect what it reports.
+          probe_functions, wait, screenshots, screenshot_every, login, login_wait) - run a map in the game and
+          collect what it reports.
 
 HOW A RUN ENDS
   The map script writes a result file with PreloadGenClear / PreloadGenStart / Preload("text") /
@@ -177,13 +196,30 @@ PROBES (a throwaway copy of the map, so the map itself never gets test triggers)
 BACKGROUND AND PICTURES
   wait=false starts the run and returns at once; game_status then reports it under run, and its whole result under
   run.result when it ends. A second run while one is going is refused (run_active); game_close ends it.
-  screenshot=true saves one PNG at the end; screenshots=N with screenshot_every seconds saves a series while the map
-  runs, which is how scenery gets looked at in the game.
+  screenshot=true saves one PNG at the end; screenshots=N with screenshot_every seconds saves a series that starts
+  the moment the map runs (a probe writes a start marker; map_started_after says when), which is how scenery gets
+  looked at in the game. A frame that could not be taken is listed in screenshots_failed with the reason. The run
+  ends when its results are written, so put ProbeCamera stops before the last ProbeReport.
+
+LOGIN
+  login="auto" (default): a Battle.net login screen that does not sign itself in within 10 s closes the game, starts
+  it once through the Battle.net desktop app (Battle.net.exe --exec="launch W3"; the app signs it in with its own
+  remembered login, nobody types anything), closes that game at its main menu and runs the map again (relaunched:
+  ["after_battlenet_sign_in"], login.battlenet says how it went). When that is not possible - the app is not
+  installed, or it is not logged in itself - the game window flashes with a warning sound and the run waits
+  login_wait seconds (default 120) for the user to log in by hand, then carries on in the same call.
+  "battlenet" only tries the app, "wait" only waits for the user, "stop" ends after 30 s (the old behaviour).
+  Time at a login screen and in the Battle.net sign-in does not count against timeout (login_seconds says how much
+  there was). Nobody signed in: login_required, the game stays open, and the same call again continues in it
+  (continued_game) - left to the user, without another Battle.net sign-in. game_close also stops a run that is in
+  its Battle.net sign-in.
+  A game that reaches its main menu instead of the map (it can drop -loadfile after a login) is started again once
+  (relaunched: ["stuck_at_main_menu"]); twice gives stuck_at: "main_menu".
+  The tools never type credentials and never read them: the Battle.net app route needs the user to be logged in to
+  the app once (with "Keep me logged in").
 
 PITFALLS
-  A Battle.net login screen ends the run after about 30 s with login_required and leaves the game open: once the user
-  has logged in there, the same call continues in that game (continued_game). Every other launch can ask again, so put
-  many checks into one run. An open dialog pauses a single-player game, so report before it opens. The game keeps
+  Every launch can meet a login screen (see LOGIN), so put many checks into one run. An open dialog pauses a single-player game, so report before it opens. The game keeps
   about 259 characters of one Preload string (truncated lists the lines that hit it). A loading screen that waits for
   a key gets a space press (loading_screen_keys).
 """)
@@ -260,7 +296,7 @@ LAYERS
   cliff_level   0-15
   water         the water surface z, or null where the ground is dry
   flags         letters: r ramp, b blight, w water, x boundary
-  pathing       letters: w unwalkable, f unflyable, b unbuildable, B blight
+  pathing       letters: w unwalkable, f unflyable, b unbuildable, B blight (water deeper than about 53: w)
 
 pathing comes from the editor's last save (war3map.wpm), or, after terrain_edit and before the next editor save, is
 derived from the current tiles, cliffs, water and blight without object footprints; pathing_source says which.
@@ -387,14 +423,24 @@ can be checked instead of believed.
 """)
 
 page("map_flow", """
-map_flow(path, area) and melee_check(path, sample) - how a map plays, in walking distances.
+map_flow(path, area, origins, targets) and melee_check(path, sample) - how a map plays, in walking distances.
 
 map_flow, per start location: the distance to its own gold mine and to the nearest expansion (and where that is), the
 walkable corners within 1500 units (room for a base), and how much ground it reaches. Per pair of starts: the walking
 distance between them, the narrowest choke on the way and where that choke is. Then the walkable corners of the map,
 how many of them the starts reach, and the pockets they do not - on a melee map mostly creep camps ringed by trees,
 which open when the trees come down. A choke under about 400 world units is a one-unit pass, 400-900 a lane, above
-1500 open ground.
+1500 open ground. Water deeper than about 53 blocks, like a cliff.
+
+ORIGINS AND TARGETS (the 32-unit cells the game paths on)
+  map_flow(path, origins=[...], targets=[...]) with [x, y] points, region names or "start:N": can a ground unit walk
+  from any origin to each target? A place on a building, a mine or a tree counts from the ground around it; an origin
+  with no walkable ground within 768 units is refused. Per target: reachable, distance, gap (the narrowest free width across the shortest
+  walk) and gap_at, plus a sample of the route. sealed=true when no target is reachable - the proof that a tree wall,
+  a moat or a cliff ring is closed; a leak comes back with the hole it goes through. Terrain comes from war3map.wpm when
+  the editor saved it after the last terrain and doodad edit, else it is derived (tiles, cliffs, water depth, boundary, the area
+  outside the playable area); every placed object's pathing texture is added, turned with the object in quarter turns.
+  A gap of one cell (32) lets small units through; units with a collision size above 16 need wider.
 
 melee_check measures the same map the way the melee maps shipped with this install are measured - mines per player,
 start distance, distance to a player's own mine, creep camps, playable area per player, tile count, doodad and unit

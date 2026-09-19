@@ -7,6 +7,7 @@ writes through the same corner helpers the other brushes use.
 """
 import math
 import random
+from collections import Counter
 
 from ..errors import ToolError
 from ..formats import w3e
@@ -14,7 +15,7 @@ from .elements import _bad, _bool, _int, _num
 
 # op -> the keys it takes besides "op" and the area keys ops/terrain.py already allows
 BRUSH_KEYS = {
-    "river": {"depth", "bed", "bank", "water", "shallows", "seed"},
+    "river": {"depth", "bed", "bank", "water", "shallows", "seed", "water_level", "walkable"},
     "coast": {"water_level", "beach", "shallow", "slope", "seed"},
     "ridge": {"height", "roughness", "seed", "cliff", "cliff_tile"},
     "erosion": {"passes", "strength", "talus"},
@@ -73,13 +74,25 @@ def _tile(brush, op: dict, key: str, path: str) -> str | None:
     return value
 
 
+def _ground(brush, cx: int, cy: int) -> float:
+    """A corner's ground z (height plus cliff level): what a water surface is compared with."""
+    from .terrain import ground_z
+
+    return ground_z(w3e.corner(brush.t, cx, cy))
+
+
+def _set_ground(brush, cx: int, cy: int, z: float) -> None:
+    _set_height(brush, cx, cy, z - (w3e.corner(brush.t, cx, cy)["layer"] - 2) * 128)
+
+
 def _water(brush, cx: int, cy: int, level: float | None) -> None:
-    from .terrain import _raw
+    """Water with its surface at z = level over one corner (None: dry)."""
+    from .terrain import water_raw
 
     if level is None:
         w3e.set_corner(brush.t, cx, cy, water=False)
         return
-    w3e.set_corner(brush.t, cx, cy, water=True, water_level=max(0, _raw(level)))
+    w3e.set_corner(brush.t, cx, cy, water=True, water_level=max(0, water_raw(brush.t, level)))
 
 
 def _distance_to_path(points, x: float, y: float) -> float:
@@ -96,16 +109,9 @@ def _path_points(op: dict, path: str):
 
 
 # ---- brushes ---------------------------------------------------------------------------------------------------
-def _river(brush, op: dict, path: str, corners, reach) -> None:
-    """A bed that is deepest in the middle, water in it, and a dry bank on either side."""
-    if "path" not in op:
-        raise _bad(path, 'river runs along a "path" with a "width"')
-    depth = _num(op.get("depth", 192), f"{path}.depth")
-    shallows = _num(op.get("shallows", 0), f"{path}.shallows")
+def _carve(brush, op: dict, path: str, corners, half: float, depth: float) -> None:
+    """Lower the ground along the path, deepest in the middle, and paint the bed and the banks."""
     bed, bank = _tile(brush, op, "bed", path), _tile(brush, op, "bank", path)
-    wet = _bool(op.get("water", True), f"{path}.water")
-    half = reach                                   # the path brush hands over half the width as its reach
-    surface = min(_height_at(brush, cx, cy) for cx, cy, _d in corners) - depth * 0.25
     for cx, cy, d in corners:
         share = math.cos(min(d / half, 1.0) * math.pi / 2)      # 1 in the middle of the stream, 0 at its edge
         _set_height(brush, cx, cy, _height_at(brush, cx, cy) - depth * share)
@@ -113,11 +119,50 @@ def _river(brush, op: dict, path: str, corners, reach) -> None:
             _paint(brush, cx, cy, bed, path)
         elif bank and share <= 0.35:
             _paint(brush, cx, cy, bank, path)
-        if wet:
-            _water(brush, cx, cy, surface)
+
+
+def _river(brush, op: dict, path: str, corners, reach) -> None:
+    """A bed that is deepest in the middle, water in it, and a dry bank on either side. The surface is water_level
+    when given; else the level of water already in the river's way (so a branch joins its river); else a quarter of
+    depth below the lowest ground the river crosses. walkable=false keeps a channel deeper than ground units wade
+    along the middle, walkable=true keeps all of it shallow enough to wade."""
+    from .terrain import DEEP_WATER, water_depth, water_z
+
+    if "path" not in op:
+        raise _bad(path, 'river runs along a "path" with a "width"')
+    t = brush.t
+    depth = _num(op.get("depth", 192), f"{path}.depth")
+    shallows = _num(op.get("shallows", 0), f"{path}.shallows")
+    wet = _bool(op.get("water", True), f"{path}.water")
+    walkable = None if op.get("walkable") is None else _bool(op["walkable"], f"{path}.walkable")
+    half = reach                                   # the path brush hands over half the width as its reach
+    joined = None
+    if "water_level" in op:
+        surface = _num(op["water_level"], f"{path}.water_level")
+    else:
+        existing = Counter(w3e.corner(t, cx, cy)["water_level"] for cx, cy, _d in corners
+                           if water_depth(t, w3e.corner(t, cx, cy)) is not None)
+        if existing:   # running into standing water: take its level instead of making a step in the surface
+            joined = surface = water_z(t, existing.most_common(1)[0][0])
+        else:
+            surface = min(_ground(brush, cx, cy) for cx, cy, _d in corners) - depth * 0.25
+    _carve(brush, op, path, corners, half, depth)
     if shallows > 0:                              # a wider, gentler band, so the bank is not a step into the water
-        wide = dict(op, width=half * 2 + shallows * 2, depth=depth * 0.35, shallows=0, bed=None, water=False)
-        _river(brush, wide, path, *brush.corners(wide, path))
+        wide = dict(op, width=half * 2 + shallows * 2, bed=None)
+        _carve(brush, wide, path, brush.corners(wide, path)[0], half + shallows, depth * 0.35)
+    if walkable is not None:
+        core = max(half * 0.35, 91.0)   # 91: every point of the path has a corner this close
+        for cx, cy, d in corners:
+            z = _ground(brush, cx, cy)
+            if walkable and surface - z > DEEP_WATER - 13:
+                _set_ground(brush, cx, cy, surface - (DEEP_WATER - 13))
+            elif walkable is False and d <= core and surface - z < DEEP_WATER + 16:
+                _set_ground(brush, cx, cy, surface - (DEEP_WATER + 16))
+    if wet:
+        for cx, cy, _d in corners:
+            _water(brush, cx, cy, surface)
+    brush.tell(path, water_level=round(water_z(t, w3e.corner(t, *corners[0][:2])["water_level"]), 2) if wet else None,
+               **({"joined": round(joined, 2)} if joined is not None else {}), **brush.depths(corners))
 
 
 def _coast(brush, op: dict, path: str, corners, reach) -> None:
@@ -126,17 +171,18 @@ def _coast(brush, op: dict, path: str, corners, reach) -> None:
     slope = _num(op.get("slope", 256), f"{path}.slope")
     beach, shallow = _tile(brush, op, "beach", path), _tile(brush, op, "shallow", path)
     for cx, cy, _d in corners:
-        height = _height_at(brush, cx, cy)
+        height = _ground(brush, cx, cy)
         if height <= level:
             _water(brush, cx, cy, level)
             # the sea floor falls away from the shore instead of standing flat under the water
-            _set_height(brush, cx, cy, height - min(level - height, slope) * 0.5)
+            _set_ground(brush, cx, cy, height - min(level - height, slope) * 0.5)
             if shallow and level - height < slope * 0.5:
                 _paint(brush, cx, cy, shallow, path)
             elif beach and shallow is None:
                 _paint(brush, cx, cy, beach, path)
         elif beach and height - level <= slope:
             _paint(brush, cx, cy, beach, path)
+    brush.tell(path, water_level=level, **brush.depths(corners))
 
 
 def _ridge(brush, op: dict, path: str, corners, reach) -> None:

@@ -17,7 +17,7 @@ The plugin also installs a skill (`wc3-map-making`) that tells Claude how to use
 | **Warcraft III 3.x (Reforged), installed with Battle.net** | Game data, pjass and JassHelper are read from the install. The install is found automatically; otherwise set `WC3MCP_INSTALL`. |
 | **[uv](https://docs.astral.sh/uv/getting-started/installation/)** | Runs the server. On first start it downloads Python 3.13 (if missing) and the Python packages `mcp`, `pywin32`, `numpy` and `pillow`. |
 | **[Claude Code](https://docs.claude.com/en/docs/claude-code)** | Hosts the plugin (any MCP client works with the manual setup below). |
-| A Battle.net login (for `game_test` only) | The game may ask you to log in before it loads a map. Log in yourself with "Keep me logged in"; Claude never enters credentials. |
+| The Battle.net desktop app, logged in (for `game_test` only) | A game started with `-launch` may ask for a Battle.net login before it loads a map. `game_test` then starts the game once through the Battle.net app, which signs it in with the app's own remembered login, and runs the map again. Log in to the app once yourself with "Keep me logged in"; the tools never type, read or store credentials. Without the app, `game_test` flashes the game window and waits for you to log in there. |
 
 Install uv (PowerShell):
 
@@ -67,6 +67,19 @@ All settings are optional environment variables:
 | `WC3MCP_HOME` | `%LOCALAPPDATA%\wc3mcp` (working copies, backups, logs, tool copies) |
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
+
+## What's new in 1.1
+
+- **No more logins by hand for game tests** (usually): when the game shows the Battle.net login screen, `game_test` (`login="auto"`) closes it, starts the game once through the Battle.net desktop app - which signs it in with the app's own remembered login, no credentials involved - and runs the map again. When that is not possible it flashes the game window, plays a warning sound and waits `login_wait` seconds for you, then carries on in the same call. `login="wait"`, `"battlenet"` and `"stop"` pick one behaviour. A game that lands on its main menu instead of the map after a login is started again (`relaunched`).
+- **Deep water is unwalkable** in every walkability the tools compute (terrain pathing, `terrain_render pathing=true`, `map_flow`, `layout_check`, `map_validate reachable`): deeper than about 53, measured against the editor's own pathing on the shipped maps (flat water up to 51.95 deep is always walkable there, from 56.4 never). Water heights are now right on every tileset: Ashenvale, Underground, Dungeon and Outland draw their water at their own offset (Outland water is never walkable).
+- **`map_flow origins/targets`**: can a unit walk from these points, regions or start locations to those, on the game's 32-unit pathing cells, with every placed object's footprint turned the way the editor turns it? `sealed: true` proves a tree wall, a moat or a cliff ring closed; a leak comes back with the gap and where it is.
+- The `river` brush put its water 89.6 too low and ignored cliff levels; it now takes `water_level`, joins standing water at its level, keeps a promise with `walkable: false` (a channel units cannot wade) or `true` (a ford), and reports the depths it made. `coast` had the same bug and is fixed; every water op reports its stored level and depth range.
+- `game_test screenshots=N` works while the map runs (the series used to start on a log line the game writes late, so it was empty in real runs); it starts at the probe's start marker and lists frames it could not take with the reason.
+- `terrain_render area` draws only that part of the map (up to 16 px per tile) and says which rectangle it drew; a heightmap export now returns its `base` and `amount`.
+- `elements_edit`, `info_edit` and `strings_edit` take `ops_file`; `terrain_edit quiet` silences the unbuildable-tile or stale-files warnings on a scenery map.
+- `layout_check` says why objects stand on bad ground, per kind: deep or shallow water, cliff, boundary, unwalkable tile, outside the playable area.
+- `sound_add kind=ambient` uses the settings the World Editor writes for region ambience (`DoodadsEAX`, volume 127, distances 0/10000/3000); one sound may serve many regions, as it does in the shipped maps.
+- `map_snapshot restore` no longer marks every file dirty; `placed_edit` accepts a scale within 0.01 of a fixed-scale type; `data_get kind=ability` names the order string the game accepted for the three abilities checked in the game.
 
 ## What's new in 1.0
 

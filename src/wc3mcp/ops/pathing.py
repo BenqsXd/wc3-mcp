@@ -2,6 +2,7 @@
 reachable. The grid is the terrain corner grid (128 units), so a corner counts as blocked when any part of a footprint
 covers it - a unit needs more room than one pathing cell anyway. Used by map_validate and layout_check.
 """
+import math
 from collections import deque
 
 from ..formats import texture
@@ -38,22 +39,33 @@ def footprint(catalog, kind: str, type_id: str, value, cache: dict) -> tuple[int
     return None if field is None else _blocked_pixels(catalog, str(value(kind, type_id, field) or ""), cache)
 
 
+def footprint_cells(found, kind: str, x: float, y: float, angle: float, terrain):
+    """The 32-unit cells (column, row from the map's south-west corner) a footprint blocks. The texture's top row
+    is north for a doodad facing 270 degrees, and it turns with the doodad in quarter turns (measured against the
+    World Editor's war3map.wpm on the shipped maps); buildings keep theirs unturned."""
+    w, h, blocked = found
+    turn = 0 if kind == "unit" else (round(math.degrees(angle) / 90) * 90 + 90) % 360
+    c, s = round(math.cos(math.radians(turn))), round(math.sin(math.radians(turn)))
+    cx0, cy0 = (x - terrain.offset_x) / CELL, (y - terrain.offset_y) / CELL
+    for px, py in blocked:
+        dx, dy = px - w / 2 + 0.5, h / 2 - 0.5 - py
+        yield math.floor(cx0 + dx * c - dy * s), math.floor(cy0 + dx * s + dy * c)
+
+
 def walkable(terrain, catalog, objects, value=None) -> list[list[bool]]:
-    """Grid[y][x] over the terrain corners: True where a unit can walk. `objects` is (kind, type id, x, y)."""
+    """Grid[y][x] over the terrain corners: True where a unit can walk. `objects` is (kind, type id, x, y[, angle
+    in radians])."""
     cache: dict = {}
     value = value or (lambda kind, oid, field: catalog.field(kind, oid, field))
     grid = [[("w" not in _corner_pathing(terrain, catalog, x, y, cache)) for x in range(terrain.width)]
             for y in range(terrain.height)]
     textures: dict = {}
-    for kind, type_id, x, y in objects:
+    for kind, type_id, x, y, *rest in objects:
         found = footprint(catalog, kind, type_id, value, textures)
         if not found or not found[2]:
             continue
-        w, h, blocked = found
-        for px, py in blocked:   # pixel centres in world units, then the corners they touch
-            wx, wy = x + (px - w / 2 + 0.5) * CELL, y + (py - h / 2 + 0.5) * CELL
-            cx = int(round((wx - terrain.offset_x) / CORNER))
-            cy = int(round((wy - terrain.offset_y) / CORNER))
+        for gx, gy in footprint_cells(found, kind, x, y, rest[0] if rest else 4.712389, terrain):
+            cx, cy = int(round((gx + 0.5) / 4)), int(round((gy + 0.5) / 4))   # the corner the cell touches
             if 0 <= cx < terrain.width and 0 <= cy < terrain.height:
                 grid[cy][cx] = False
     return grid
@@ -88,3 +100,153 @@ def reachable(grid: list[list[bool]], starts, spread: int = 2) -> set[tuple[int,
 
 def world_of(terrain, cx: int, cy: int) -> tuple[float, float]:
     return terrain.offset_x + cx * CORNER, terrain.offset_y + cy * CORNER
+
+
+# ---- the 32-unit cell grid: the resolution the game paths on ---------------------------------------------------
+CELL_NOTE = ("walkability on the game's own 32-unit pathing cells: the terrain (war3map.wpm when the World Editor "
+             "saved it after the last terrain and doodad edit, else derived from tiles, cliffs, water depth and the boundary) "
+             "plus the pathing texture of every placed object, destructibles included; steps are orthogonal, so a "
+             "gap must be at least one whole cell wide (units with a collision size above 16 need wider)")
+
+
+def terrain_cells(terrain, catalog):
+    """numpy bool array [row][column] of 32-unit cells a ground unit may stand on, from the terrain alone: cliff tiles,
+    unwalkable tiles, water deeper than DEEP_WATER (depth interpolated at the cell centre) and the boundary block."""
+    import numpy as np
+
+    from .terrain import DEEP_WATER, IMPASSABLE_WATER, RAW_ZERO, water_offset
+    from ..formats import w3e
+
+    grid = lambda values: np.asarray(values, dtype=np.int32).reshape(terrain.height, terrain.width)  # noqa: E731
+    heights, tex, cliffs, water = grid(terrain.heights), grid(terrain.textures), grid(terrain.cliffs), grid(terrain.water)
+    bits = w3e._TEXTURE_BITS[terrain.version]
+    layer = cliffs & 15
+    flag = lambda k: ((tex >> (bits + k)) & 1).astype(bool)  # noqa: E731
+    ramp, wet_flag, boundary = flag(0), flag(2), flag(3)
+    ground = (heights - RAW_ZERO) / 4 + (layer - 2) * 128
+    surface = ((water & 0x3FFF) - RAW_ZERO) / 4 + water_offset(terrain)
+    tiles = tex & ((1 << bits) - 1)
+    walk = np.array([catalog.tile_pathing(x.decode("latin-1")).get("walkable", True) if catalog else True
+                     for x in terrain.tiles] or [True])
+    h, w = terrain.height - 1, terrain.width - 1
+    j, i = np.mgrid[0:h * 4, 0:w * 4]
+    ty, tx, v, u = j // 4, i // 4, ((j % 4) + 0.5) / 4, ((i % 4) + 0.5) / 4
+
+    def lerp(a):
+        return (a[ty, tx] * (1 - u) * (1 - v) + a[ty, tx + 1] * u * (1 - v) + a[ty + 1, tx] * (1 - u) * v
+                + a[ty + 1, tx + 1] * u * v)
+
+    qy, qx = ty + (j % 4 >= 2), tx + (i % 4 >= 2)      # the corner whose quarter of the tile the cell is in
+    quad = np.stack([layer[:-1, :-1], layer[1:, :-1], layer[:-1, 1:], layer[1:, 1:]])
+    ramps = ramp[:-1, :-1] | ramp[1:, :-1] | ramp[:-1, 1:] | ramp[1:, 1:]
+    cliff = ((quad.max(axis=0) != quad.min(axis=0)) & ~ramps)[ty, tx]
+    depth = lerp(surface) - lerp(ground)
+    deep = wet_flag[qy, qx] & (depth > 0) & ((depth > DEEP_WATER) | (terrain.tileset in IMPASSABLE_WATER))
+    unwalkable_tile = ~walk[np.minimum(tiles[qy, qx], len(walk) - 1)]
+    return ~(cliff | deep | unwalkable_tile | boundary[qy, qx])
+
+
+def _margins(project) -> tuple[int, int, int, int] | None:
+    """The tiles between the map edge and the playable area (left, right, bottom, top), from war3map.w3i."""
+    from ..formats import w3i
+    from .triggers import _read
+
+    try:
+        margins = tuple(w3i.parse(_read(project, "war3map.w3i") or b"").camera_complements)
+    except Exception:   # noqa: BLE001 - no readable map info: no margins
+        return None
+    return margins if len(margins) == 4 and min(margins) >= 0 else None
+
+
+def cells(project, terrain, catalog, objects, value=None) -> tuple[bytearray, int, int, str]:
+    """(free cells as a flat bytearray, row-major from the south-west, columns, rows, where the terrain part came
+    from). `objects` is (kind, type id, x, y) as for walkable()."""
+    from ..formats import wpm
+    from .triggers import _read
+
+    width, height = (terrain.width - 1) * 4, (terrain.height - 1) * 4
+    source = "derived"
+    free = None
+    notes = project.notes()
+    if not notes.get("terrain_edited") and not notes.get("objects_edited"):   # the editor's pathing is still true
+        data = _read(project, "war3map.wpm")
+        try:
+            saved = wpm.parse(data) if data else None
+        except Exception:   # noqa: BLE001 - a damaged pathing map is just not used
+            saved = None
+        if saved is not None and (saved.width, saved.height) == (width, height):
+            free = bytearray(0 if c & 2 else 1 for c in saved.cells)
+            source = "war3map.wpm"
+    if free is None:
+        walk = terrain_cells(terrain, catalog)
+        margins = _margins(project)
+        if margins:   # outside the playable area nothing walks (the editor's pathing map marks it so)
+            left, right, bottom, top = (4 * m for m in margins)
+            walk[:bottom, :] = walk[height - top:, :] = False
+            walk[:, :left] = walk[:, width - right:] = False
+        free = bytearray(walk.astype("uint8").tobytes())
+    value = value or (lambda kind, oid, field: catalog.field(kind, oid, field))
+    textures: dict = {}
+    for kind, type_id, x, y, *rest in objects:
+        found = footprint(catalog, kind, type_id, value, textures)
+        if not found or not found[2]:
+            continue
+        for cx, cy in footprint_cells(found, kind, x, y, rest[0] if rest else 4.712389, terrain):
+            if 0 <= cx < width and 0 <= cy < height:
+                free[cy * width + cx] = 0
+    return free, width, height, source
+
+
+def flood(free: bytearray, width: int, height: int, seeds) -> "array":
+    """Walking distance in cells from any seed cell to every cell (-1 where no walk leads)."""
+    from array import array
+
+    dist = array("i", [-1]) * (width * height)
+    queue = deque()
+    for s in seeds:
+        if 0 <= s < len(free) and free[s] and dist[s] < 0:
+            dist[s] = 0
+            queue.append(s)
+    while queue:
+        s = queue.popleft()
+        d = dist[s] + 1
+        x = s % width
+        for n in ((s - 1) if x > 0 else -1, (s + 1) if x < width - 1 else -1, s - width, s + width):
+            if 0 <= n < len(free) and free[n] and dist[n] < 0:
+                dist[n] = d
+                queue.append(n)
+    return dist
+
+
+def cell_route(dist, width: int, goal: int) -> list[int]:
+    """One shortest walk from the seeds to `goal`, seed first, following the distance field downhill."""
+    if dist[goal] < 0:
+        return []
+    path, here = [goal], goal
+    while dist[here] > 0:
+        x = here % width
+        here = next(n for n in ((here - 1) if x > 0 else -1, (here + 1) if x < width - 1 else -1,
+                                here - width, here + width)
+                    if 0 <= n < len(dist) and dist[n] == dist[here] - 1)
+        path.append(here)
+    return path[::-1]
+
+
+def cell_gap(free: bytearray, width: int, route: list[int]) -> tuple[int, int | None]:
+    """The narrowest free span across the route (cells) and the cell where it is: the gap a walk has to squeeze
+    through."""
+    height = len(free) // width
+    narrowest, at = None, None
+    for k, s in enumerate(route):
+        n = route[min(k + 1, len(route) - 1)] if k + 1 < len(route) else route[max(k - 1, 0)]
+        across = width if abs(n - s) == 1 else 1        # moving east-west: measure north-south, and the other way
+        span = 1
+        for sign in (1, -1):
+            c = s + across * sign
+            while 0 <= c < len(free) and free[c] and (across == width or c // width == s // width) \
+                    and span < height + width:
+                span += 1
+                c += across * sign
+        if narrowest is None or span < narrowest:
+            narrowest, at = span, s
+    return (narrowest or 0), at

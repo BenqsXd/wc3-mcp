@@ -2,10 +2,13 @@
 
 ## Map info
 
-- `info_edit` `set` of a whole list (`forces`, `players`) replaces it, and every element must be complete, including `unknown_flag_bits`. Read the shape from `info_get` first.
+- `info_edit` `set` of a whole list (`forces`, `players`) replaces it, and every element must be complete, including `unknown_flag_bits`. Read the shape from `info_get` first. A path can reach one field inside an element instead (`forces[0].name`, `forces[0].flags.allied`).
+- Accepted in one batch: `description`, `players_recommended`, `flags.use_custom_forces`, `flags.fixed_player_settings_for_custom_forces`, `flags.melee_map`, `flags.use_terrain_fog`, `forces[0].flags.allied_victory` / `share_vision`, a whole `fog` object (`style`, `start_z`, `end_z`, `density`, `color`), `water_tint`, `loading_screen.title` / `subtitle` / `text`.
 - Art fields (for example an ability's research icon `arar`) live in the skin files (`war3mapSkin.w3a`), so `map_save merge_external=true` keeps them with the working copy's changes.
 
 ## objdata_edit
+
+- Icons and models: `data_search kind=icon` / `kind=model` take globs (`*BTN*Scroll*`, `*MassTeleport*`, no layer prefix needed) and return storage paths (`War3.w3mod:ReplaceableTextures/CommandButtons/BTNSkillz.dds`); in object data write `ReplaceableTextures\CommandButtons\BTNSkillz.blp`, which loads in the game. `kind=file` results carry that form as `ref`.
 
 - `create` takes an explicit `id` (`"h000"`) or allocates one like the editor. `set` also works on stock ids (`hgtw`), which makes modified standard objects. `base` may be one of the map's custom objects (`{"op": "create", "id": "u001", "base": "u000", "set": {...}}`): the copy gets its stock base and all its modifications, then `set`.
 - Fields take raw codes, field names or display names. Per-level ability fields take level keys: `{"aran": {"1": 620}}`, `{"acdn": {"1": 20}}`. Other fields take plain values (`"aher": 0`, `"alev": 1`); Channel's animation names `aani` has no levels. A unit's `uabi`, `uhab`, `usei` and an item's `iabi` are comma-separated id strings (`"A003,A004"`).
@@ -49,7 +52,7 @@
 A script that orders a unit to cast needs the order string, and **the ability data and the World Editor disagree for about 15 of the 832 abilities**. Only one of the two works per ability, and neither side is always right.
 
 - `data_get kind=ability` returns an `orders` block: `data` (the ability's own `aord` / `aoro` / `aorf`), `editor` (the editor's presets for it, each with the targeting kind: `immediate`, `point`, `unit`, `item`, `destructible`) and `disagree: true` when they differ. Some abilities name no order of their own and only the editor does (`AHdr` Siphon Mana: `drain`; `ANfa` Frost Arrows: `coldarrowstarg`).
-- Known disagreements: `ANlm` Summon Lava Spawn takes `lavamonster` (editor), not `slimemonster` (data); `AUin` Inferno takes `dreadlordinferno` (editor), not `inferno`; `AHpx` Phoenix takes `summonphoenix` (data), not `phoenix`.
+- Known disagreements, checked in the game (`orders.game` in `data_get`): `ANlm` Summon Lava Spawn takes `lavamonster` (editor), not `slimemonster` (data); `AUin` Inferno takes `dreadlordinferno` (editor), not `inferno`; `AHpx` Phoenix takes `summonphoenix` (data), not `phoenix`.
 - `IssueImmediateOrder`, `IssuePointOrder` and `IssueTargetOrder` return `false` for a string the unit cannot use, and a rejected order leaves `GetUnitCurrentOrder` at 0, so a script can try one string, check the result and fall back to the other.
 - `map_validate` warns (check `order_string`) when a script issues an order that is one of these disagreeing data orders, or one that matches no ability order and no editor preset at all.
 

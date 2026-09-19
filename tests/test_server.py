@@ -227,6 +227,16 @@ def test_map_new_tool(tmp_path):
     assert payload(call("info_get", {"path": path}))["name"] == "Fresh"
     err = call("map_new", {"path": path})
     assert err.isError and json.loads(err.content[0].text.split(": ", 1)[1])["code"] == "exists"
+    ops = tmp_path / "regions.json"
+    ops.write_text(json.dumps([{"op": "upsert", "name": f"R{i}", "left": -64 * i, "bottom": 0, "right": 64,
+                                "top": 64 * (i + 1)} for i in range(3)]))
+    payload(call("elements_edit", {"path": path, "kind": "region", "ops_file": str(ops)}))
+    assert [r["name"] for r in payload(call("elements_list", {"path": path, "kind": "region"}))["items"]] == \
+        ["R0", "R1", "R2"]
+    shown = call("terrain_render", {"path": path, "scale": 2, "area": [-512, -512, 512, 512]})
+    assert shown.content[0].type == "image" and json.loads(shown.content[1].text)["tiles"] == [8, 8]
+    flow = payload(call("map_flow", {"path": path, "origins": ["start:0"], "targets": ["R1", [0, 0]]}))
+    assert [t["target"] for t in flow["targets"]] == ["R1", "(0, 0)"] and flow["cell_units"] == 32
 
 
 @needs_install

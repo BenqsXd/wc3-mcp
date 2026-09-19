@@ -135,7 +135,7 @@ VARIABLE_ALIAS = {
     "widget": 'widget has no global; store the unit, destructable or item itself',
 }
 VARIABLE_TYPE_HINT = ("data_search kind=trigger_type lists the types; the handle types that work as globals include "
-                      "unit, group, rect, location, item, force, player, trigger, timer, hashtable, fogmodifier, "
+                      "unit, group, rect, location, item, force, player, trigger, timer, hashtable, fogmodifier, weathereffect, "
                       "effect, lightning, texttag, quest, sound, destructable, image, camerasetup and handle")
 _HINT = ('ops: {"op": "category", "name": "Spawns"}, {"op": "variable", "name": "Count", "type": "integer"}, '
          '{"op": "trigger", "name": "Spawn", "events": [...], "actions": [...]} or {..., "script": "..."}, '
