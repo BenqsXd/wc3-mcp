@@ -24,6 +24,8 @@ ORDER_TARGETS = {"unitordernotarg": "immediate", "unitorderptarg": "point", "uni
                  "unitorderitarg": "item", "unitorderdtarg": "destructible"}
 ORDER_NOTE = ("the game accepts only one of data and editor when they differ: Issue*Order returns false for a "
               "rejected string, so a script can try one and fall back to the other")
+# order strings the game was seen to accept where data and editor disagree (issued in a probe, GetUnitCurrentOrder)
+GAME_ORDERS = {"ANlm": "lavamonster", "AHpx": "summonphoenix", "AUin": "dreadlordinferno"}
 
 
 COMPACT_NOTE = ("fields are raw code -> value (per-level fields a list), and fields holding nothing are left out; "
@@ -462,6 +464,8 @@ class Catalog:
         # only the main order is compared: the turn on/off strings of an autocast have no preset of their own
         if data.get("aord") and editor and data["aord"].casefold() not in {e["order"].casefold() for e in editor}:
             out.update(disagree=True, note=ORDER_NOTE)
+            if obj_id in GAME_ORDERS:
+                out["game"] = GAME_ORDERS[obj_id]
         return out
 
     def tile_pathing(self, tile: str) -> dict:

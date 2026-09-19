@@ -43,7 +43,7 @@ Read the one you need before working in that area; each is a list of facts estab
 ## Keeping calls cheap
 
 - `data_get` / `objdata_get` take a **list of ids** in one call and answer compactly (raw code -> value, empty fields left out); `fields` narrows further, `verbose=true` brings back names, categories and types when you need them.
-- Write generated batches to a local JSON file and pass `ops_file` instead of `ops` (`placed_edit`, `terrain_edit`, `objdata_edit`, `triggers_edit`); a long trigger script can come from `script_file`.
+- Write generated batches to a local JSON file and pass `ops_file` instead of `ops` (`placed_edit`, `terrain_edit`, `objdata_edit`, `triggers_edit`, `elements_edit`, `info_edit`, `strings_edit`); a long trigger script can come from `script_file`.
 - `placed_edit` compact rows: `{"op": "add", "kind": "destructible", "columns": ["type", "x", "y", "variation", "angle"], "rows": [["LTlt", -1833, -3653, 2, 113], ...]}`. Fields outside `columns` apply to every row.
 - `placed_edit` `scatter` places random objects in one op: `{"op": "scatter", "kind": "destructible", "types": {"LTlt": 3, "ATtr": 1}, "count": 200, "rect": [l, b, r, t], "exclude": [{"x": 0, "y": 0, "radius": 1500}], "min_distance": 96, "seed": 7}`. It stays on land by default, picks only variations whose model is installed, and beats computing coordinates yourself.
 - One `game_test` run can hold many checks; every launch costs a minute or more and can ask for a login.
@@ -52,10 +52,10 @@ Read the one you need before working in that area; each is a list of facts estab
 
 ## Rules
 
-- **Never type credentials.** The game can show a Battle.net login screen at any launch; ask the user to log in (with "Keep me logged in") and to approve any authenticator request. `game_test` returns `login_required: true` and leaves the game open; the same call again continues in it (`continued_game: true`).
+- **Never type, read or store credentials**, and never click through a login screen or the Battle.net app for the user. The game can show a Battle.net login screen at any launch; `game_test` (login="auto") first lets the Battle.net desktop app sign the game in with the app's own remembered login, then flashes the window and waits for the user. Tell the user a login may be needed when you start a run; if the app is not logged in, ask them to log in to the app once (with "Keep me logged in"). `login_required: true` leaves the game open, and the same call again continues in it (`continued_game: true`).
 - The game loads a map only while its window is in front, so leave the game window alone while a run is loading.
 - Take turns with the user in the World Editor and **never discard unsaved work** there; `map_save` refuses while the editor holds the map.
 - Keep a backup (`map_save` makes one) before replacing a user's map, and say which file changed.
 - If `game_test` returns no results and `exited_early`, the map failed to load: take a screenshot (`screenshot=true`) and tell the user.
-- Before a launch, run `script_validate lint=true` and `map_validate`: a rule that fires there is a game run saved.
+- Before a launch, run `script_validate lint=true` and `map_validate`: a rule that fires there is a game run saved. To prove a wall, moat or cliff ring closed (or find its hole), use `map_flow` with `origins` and `targets` before reaching for a game run.
 - **Build the map the user asked for, not a template.** These tools have generators and recipes to compose, and no canned maps; `references/building-a-map.md` is the order to compose them in.

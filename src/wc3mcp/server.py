@@ -472,7 +472,7 @@ def data_search(kind: Kind, query: str = "", limit: int = 50, offset: int = 0, l
 @_tool
 def data_get(kind: Kind, id: str | list[str], fields: list[str] | None = None, verbose: bool = False,
              locale: str = "enUS", balance: str | None = "Custom_V1", hd: bool = True) -> dict:
-    """Base data for one object, or for a list of ids in one call (objects, in the order asked). fields filters by
+    """Base data for one object, or for a list of up to 50 ids in one call (objects, in the order asked). fields filters by
     raw code (e.g. uhpm), field name, or display-name substring. verbose=true adds each field's name, category and
     type around its value, which is about ten times the size. Doodads, destructibles and units also list their model
     files and the ones the installed game cannot load in HD or classic graphics (model.missing). An ability carries
@@ -504,12 +504,12 @@ def info_get(path: str) -> dict:
 
 
 @_tool
-def info_edit(path: str, ops: list[dict]) -> dict:
+def info_edit(path: str, ops: list[dict] | None = None, ops_file: str | None = None) -> dict:
     """Edit map info with a batch of ops applied all-or-nothing to the info_get document, e.g.
     {"op": "set", "path": "players[0].race", "value": "orc"}, {"op": "append", "path": "forces", "value": {...}},
     {"op": "remove", "path": "tech[2]"}. Editing *_ref-backed text updates war3map.wts. Returns warnings, e.g. when the
-    map script needs regenerating in the World Editor."""
-    return info_ops.info_edit(_project(path), ops)
+    map script needs regenerating in the World Editor. ops_file takes the ops array from a local JSON file."""
+    return info_ops.info_edit(_project(path), _ops(ops, ops_file))
 
 
 @_tool
@@ -522,14 +522,15 @@ def strings_get(path: str, query: str | None = None, limit: int = 200, offset: i
 
 
 @_tool
-def strings_edit(path: str, ops: list[dict]) -> dict:
+def strings_edit(path: str, ops: list[dict] | None = None, ops_file: str | None = None) -> dict:
     """Change the map's text, all-or-nothing: {"op": "set", "id": 3, "text": "Guard Tower"}, {"op": "add", "text":
     "New quest"} (answers with the new id), {"op": "remove", "id": 7}, {"op": "replace", "find": "Guard", "with":
     "Sentry", "regex": false, "ids": [3, 4]} over every entry (one name changed everywhere the map shows it), and
     {"op": "import", "entries": {"3": "Wachturm"}} for a translated table in one go. Object data, map info and GUI
     triggers point at these entries, so they all follow; the map script keeps its own copy, so map_save (or
-    script_build) has to regenerate it afterwards. wc3_help("strings_edit") has the op shapes."""
-    return text_ops.strings_edit(_project(path), ops)
+    script_build) has to regenerate it afterwards. ops_file takes the ops array from a local JSON file.
+    wc3_help("strings_edit") has the op shapes."""
+    return text_ops.strings_edit(_project(path), _ops(ops, ops_file))
 
 
 @_tool
@@ -550,7 +551,7 @@ def objdata_list(path: str, kind: ObjectKind, custom_only: bool = False, balance
 @_tool
 def objdata_get(path: str, kind: ObjectKind, id: str | list[str], fields: list[str] | None = None,
                 verbose: bool = False, balance: str | None = "Custom_V1") -> dict:
-    """One object as the Object Editor shows it, or a list of ids in one call (objects): base game values merged with
+    """One object as the Object Editor shows it, or a list of up to 50 ids in one call (objects): base game values merged with
     this map's modifications. modified lists the raw codes the map changes; verbose=true instead gives each field its
     name, type and which levels are modified, at about ten times the size. levels and the per-level lists follow the
     map's own level count (alev, glvl); values the map stores for levels beyond it are listed under unused_levels.
@@ -634,7 +635,11 @@ def triggers_edit(path: str, ops: list[dict] | None = None, validate: bool = Fal
     script_replace (one exact piece of a script). A trigger keeps its place when it is replaced, because the script
     emits trigger functions in tree order; "index" or "after" moves one on purpose. validate=true rebuilds the map
     script and checks it right away, each error with its line inside the script that was sent. ops_file takes the ops
-    array from a local JSON file. wc3_help("triggers_edit") has the op shapes and the argument forms."""
+    array from a local JSON file. Variable types are the editor's own: integer, real, boolean, string and every handle
+    type the Variable Editor offers (unit, group, rect, location, item, force, player, trigger, timer, hashtable,
+    fogmodifier, weathereffect, sound, dialog, leaderboard, multiboard, timerdialog, effect, texttag, quest, ...;
+    data_search kind=trigger_type lists them); itempool, unitpool, boolexpr and code have no global.
+    wc3_help("triggers_edit") has the op shapes and the argument forms."""
     return triggers_ops.triggers_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file), validate)
 
 
@@ -661,12 +666,14 @@ def elements_list(path: str, kind: Literal["region", "camera", "sound"]) -> dict
 
 
 @_tool
-def elements_edit(path: str, kind: Literal["region", "camera", "sound"], ops: list[dict]) -> dict:
+def elements_edit(path: str, kind: Literal["region", "camera", "sound"], ops: list[dict] | None = None,
+                  ops_file: str | None = None) -> dict:
     """All-or-nothing region/camera/sound changes. {"op": "upsert", "name", ...fields} creates (regions need
     left/bottom/right/top, cameras x/y, sounds path) or changes the named element; "new_name" renames it and updates
     GUI trigger references. {"op": "delete", "name"} refuses while triggers, region ambient sounds or waygates use it.
-    Fields match elements_list; weather ids come from data_search kind=weather, sound labels from kind=sound."""
-    return elements_ops.elements_edit(_project(path), _catalog("enUS", "Custom_V1", True), kind, ops)
+    Fields match elements_list; weather ids come from data_search kind=weather, sound labels from kind=sound.
+    ops_file takes the ops array from a local JSON file (dozens of regions stay out of the conversation)."""
+    return elements_ops.elements_edit(_project(path), _catalog("enUS", "Custom_V1", True), kind, _ops(ops, ops_file))
 
 
 @_tool
@@ -709,13 +716,21 @@ def layout_check(path: str, area: list[float] | None = None, kinds: list[str] | 
 
 
 @_tool
-def map_flow(path: str, area: list[float] | None = None) -> dict:
+def map_flow(path: str, area: list[float] | None = None, origins: list | None = None,
+             targets: list | None = None) -> dict:
     """How a map plays, in walking distances rather than straight lines: per start location the way to its own gold
     mine and to the nearest expansion, the walkable room around it, and how much ground it reaches; per pair of
     starts the distance between them and the narrowest choke on the way, with where that choke is; plus the walkable
     share of the map and the pockets no start can reach on foot (on a melee map most of those are creep camps ringed
-    by trees). Numbers are world units over the pathing grid, terrain plus every placed object's footprint.
-    wc3_help("map_flow") explains the numbers, melee_check included."""
+    by trees). Numbers are world units over the pathing grid, terrain plus every placed object's footprint; water
+    deeper than about 53 blocks. origins and targets (each a list of [x, y] points, region names or "start:N") answer
+    a different question on the game's own 32-unit cells: can a unit walk from any origin to each target, how far,
+    and through what narrowest gap - sealed=true proves a wall or moat closed, and a leak comes back with the gap and
+    where it is. wc3_help("map_flow") explains the numbers, melee_check included."""
+    if (origins is None) != (targets is None):
+        raise ToolError("bad_value", "give origins and targets together", path="origins" if origins is None else "targets")
+    if origins is not None:
+        return flow_ops.connect(_project(path), _catalog("enUS", "Custom_V1", True), origins, targets)
     return flow_ops.flow_report(_project(path), _catalog("enUS", "Custom_V1", True), area)
 
 
@@ -746,7 +761,8 @@ def terrain_get(path: str, area: list[float] | None = None,
 
 
 @_tool
-def terrain_edit(path: str, ops: list[dict] | None = None, ops_file: str | None = None) -> dict:
+def terrain_edit(path: str, ops: list[dict] | None = None, ops_file: str | None = None,
+                 quiet: list[Literal["tile_pathing", "derived_files"]] | None = None) -> dict:
     """Shape and paint terrain with all-or-nothing brushes, each {"op": <brush>, <area>, <settings>}; areas
     are a circle ("x"/"y"/"radius"), a "rect", a "path" with "width", or nothing at all for the whole map. Brushes:
     raise, lower, plateau, smooth, noise, paint, cliff, ramp, water, blight, boundary; the landscape brushes river,
@@ -754,9 +770,12 @@ def terrain_edit(path: str, ops: list[dict] | None = None, ops_file: str | None 
     which copies a half or a quadrant onto the other side (terrain and placed objects both have it, so a symmetric map
     is built once); and heightmap, which reads a picture over an area. The result reports the tile
     palette and what the ops added to it, and warns when a batch paints an unbuildable or unwalkable tile widely.
-    Only a World Editor save recomputes pathing, shadows and minimap icons from new terrain.
-    wc3_help("terrain_edit") has every brush and its settings, wc3_help("terrain_landscape") the landscape ones."""
-    return terrain_ops.terrain_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file))
+    Only a World Editor save recomputes pathing, shadows and minimap icons from new terrain. Water ops answer
+    under water with the stored level and the depth range they made (deeper than about 53 stops ground units).
+    quiet drops warnings a scenery map does not need: tile_pathing (unbuildable tiles painted widely) and
+    derived_files. wc3_help("terrain_edit") has every brush and its settings, wc3_help("terrain_landscape") the
+    landscape ones."""
+    return terrain_ops.terrain_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file), quiet)
 
 
 @_tool
@@ -772,16 +791,18 @@ def terrain_render(path: str, scale: int | None = None, objects: bool = True, do
     instead of the minimap (the minimap itself, war3mapMap.blp, is map_save's job).
     heightmap="height" (or "cliff" or "water") answers with a 16-bit grayscale picture of that layer over area
     instead of the map view, which terrain_edit's heightmap brush reads back: the result of a heightmap render also
-    says which world units black and white stand for."""
+    says which world units black and white stand for. area [left, bottom, right, top] draws only that part of the
+    map (whole tiles; up to 16 pixels per tile), and the text after the picture names the rectangle drawn."""
     project = _project(path)
     if heightmap is not None:
         terrain, _raw = terrain_ops._load(project)
-        log.info("heightmap %s", heightmap_ops.export_range(terrain, area, heightmap))
-        return Image(data=heightmap_ops.export(terrain, area, scale, heightmap), format="png")
+        return [Image(data=heightmap_ops.export(terrain, area, scale, heightmap), format="png"),
+                heightmap_ops.export_range(terrain, area, heightmap)]
     if write_preview:
         project.write("war3mapPreview.tga", terrain_ops.preview(project, _catalog("enUS", "Custom_V1", True)))
-    return Image(data=terrain_ops.terrain_render(project, _catalog("enUS", "Custom_V1", True), scale, objects,
-                                                 objects and doodads, pathing), format="png")
+    return [Image(data=terrain_ops.terrain_render(project, _catalog("enUS", "Custom_V1", True), scale, objects,
+                                                  objects and doodads, pathing, area), format="png"),
+            terrain_ops.render_area(project, area)]
 
 
 @_tool
@@ -961,6 +982,7 @@ def editor_map(action: Literal["open", "save", "close", "reload", "compile", "qu
         shown = _projects.get(_key(saved.get("map") or ""))
         if saved.get("saved") and shown is not None:   # the editor recomputed pathing, shadows and the minimap
             shown.note("terrain_edited", False)
+            shown.note("objects_edited", False)
         return saved
     if action == "save_campaign":
         return editor.save_campaign()
@@ -1024,14 +1046,20 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
               screenshot: bool = False, probe: bool = False, probe_seconds: float = 10,
               probe_script: str | None = None, probe_script_file: str | None = None,
               probe_functions: str | None = None, wait: bool = True, screenshots: int = 0,
-              screenshot_every: float = 3.0) -> dict:
+              screenshot_every: float = 3.0, login: Literal["auto", "battlenet", "wait", "stop"] = "auto",
+              login_wait: float = 120) -> dict:
     """Run a map in Warcraft III (windowed; the window needs to be in front while loading) and collect what it
     reports. The map writes result files with PreloadGenEnd and the run ends as soon as every file listed in results
     exists. probe=true runs a throwaway copy that reports the state at probe_seconds; probe_script, probe_functions
     and the helpers ProbeReport, ProbeExpect, ProbeCountEvent and ProbeCamera make it a real test. wait=false runs it
     in the background (game_status reports it and its result); screenshots=N with screenshot_every saves pictures
-    while the map runs. A Battle.net login screen ends the run with login_required and leaves the game open: the same
-    call again continues in that game. wc3_help("game_test") has the probe helpers and the pitfalls."""
+    from the moment the map runs. A Battle.net login screen: login="auto" (default) closes the game, starts it once
+    through the Battle.net desktop app - which signs it in with the app's own remembered login, no credentials
+    involved - and runs the map again; when that cannot work it flashes the game window for the user and waits
+    login_wait seconds for them to log in. "battlenet" only tries the app, "wait" only waits for the user, "stop" ends
+    after 30 s. A run left at login_required keeps the game open and the same call continues in it; a game stuck at
+    its main menu after a login is started again (relaunched). wc3_help("game_test") has the probe helpers and the
+    pitfalls."""
     target, extra = path, {}
     if probe_script is not None and probe_script_file is not None:
         raise ToolError("bad_value", "give probe_script or probe_script_file, not both")
@@ -1050,7 +1078,8 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
         extra["probe_map"] = target
     result = desktop_game.GAME.test(target, timeout=timeout, results=results, close=close, screenshot=screenshot,
                                     wait=wait, meta={"probe": probe, "extra": extra}, shots=screenshots,
-                                    shot_every=screenshot_every)
+                                    shot_every=screenshot_every, login=login, login_wait=login_wait,
+                                    started_file=probe_ops.STARTED if probe else None)
     return {**(_finish_test(result, probe) if wait else result), **extra}
 
 
@@ -1075,7 +1104,7 @@ def _finish_test(result: dict, probe: bool) -> dict:
     if probe:
         lines = result["results"].pop(probe_ops.REPORT, None)
         result["probe"] = probe_ops.parse(lines) if lines is not None else None
-        if lines is None and not result.get("login_required"):
+        if lines is None and not result.get("login_required") and not result.get("stuck_at"):
             result["hint"] = ("the probed copy never reported: the game did not reach the map, it ended before "
                               f"probe_seconds, or {desktop_game.PAUSE_NOTE}")
     return result

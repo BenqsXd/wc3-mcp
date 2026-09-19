@@ -190,6 +190,8 @@ class MapProject:
         fresh.m.update(dirty=self.m["dirty"], deleted=self.m["deleted"], notes=dict(self.m.get("notes", {})))
         if "WAR3MAP.WPM" in {n.upper() for n in taken} and "WAR3MAP.W3E" not in mine:
             fresh.m["notes"]["terrain_edited"] = False   # an editor save recomputed pathing for this terrain
+        if "WAR3MAP.WPM" in {n.upper() for n in taken} and "WAR3MAP.DOO" not in mine:
+            fresh.m["notes"]["objects_edited"] = False   # ... and for these doodads
         fresh._flush()
         shutil.rmtree(self.work)
         os.replace(fresh_work, self.work)
@@ -314,7 +316,8 @@ class MapProject:
             raise ToolError("bad_action", f"unknown snapshot action {action!r}", hint="create, restore, list or diff")
         if not snap.is_dir():
             raise ToolError("no_such_snapshot", f"snapshot {label!r} does not exist", hint="map_snapshot action=list")
-        snap_files = json.loads((snap / "manifest.json").read_text("utf-8"))["files"]
+        snap_m = json.loads((snap / "manifest.json").read_text("utf-8"))
+        snap_files = snap_m["files"]
         if action == "diff":
             cur = self.m["files"]
 
@@ -328,9 +331,14 @@ class MapProject:
         shutil.rmtree(self.work / "files")
         shutil.copytree(snap / "files", self.work / "files")
         self.m["files"] = snap_files
-        self.m["dirty"], self.m["deleted"] = sorted(e["name"] for e in snap_files.values()), []
+        self.m["notes"] = dict(snap_m.get("notes", {}))   # they describe the restored files (stale pathing, ...)
+        if snap_m.get("fingerprint") == self.m["fingerprint"]:
+            # the snapshot knew what differed from this same map file: its own lists stay true
+            self.m["dirty"], self.m["deleted"] = list(snap_m.get("dirty", [])), list(snap_m.get("deleted", []))
+        else:   # the map was saved since: every file may differ from it now
+            self.m["dirty"], self.m["deleted"] = sorted(e["name"] for e in snap_files.values()), []
         self._flush()
-        return {"restored": label}
+        return {"restored": label, "dirty": sorted(self.m["dirty"]), "deleted": sorted(self.m["deleted"])}
 
     def close(self, discard: bool = False) -> dict:
         if (self.m["dirty"] or self.m["deleted"]) and not discard:

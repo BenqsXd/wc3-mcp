@@ -12,6 +12,7 @@ from .triggers import triggers_edit
 
 NAME = "wc3mcpProbe"
 REPORT = "wc3mcp\\probe.txt"
+STARTED = "wc3mcp\\started.txt"   # written the moment the map runs: game_test starts its screenshot series there
 MAX_MESSAGES = 50
 # JASS maps: the probe copy routes BJDebugMsg and the text display functions through these, which keep the text for
 # the report
@@ -91,7 +92,16 @@ function Trig_{name}_Actions takes nothing returns nothing
     set g = null
 endfunction
 
+function Trig_{name}_Started takes nothing returns nothing
+    call PreloadGenClear()
+    call PreloadGenStart()
+    call Preload("started")
+    call PreloadGenEnd("{started}")
+    call DestroyTimer(GetExpiredTimer())
+endfunction
+
 function InitTrig_{name} takes nothing returns nothing
+    call TimerStart(CreateTimer(), 0.0, false, function Trig_{name}_Started)
     set gg_trg_{name} = CreateTrigger(  )
     call TriggerRegisterTimerEvent(gg_trg_{name}, {seconds}, false)
     call TriggerAddAction(gg_trg_{name}, function Trig_{name}_Actions)
@@ -124,6 +134,7 @@ function Trig_{name}_Actions()
 end
 
 function InitTrig_{name}()
+    -- the force variants call these two, so wrapping them as well would keep every force message twice
     for _, name in ipairs({{"BJDebugMsg", "DisplayTextToPlayer", "DisplayTimedTextToPlayer"}}) do
         local shown = _G[name]
         _G[name] = function(...)
@@ -134,6 +145,13 @@ function InitTrig_{name}()
             return shown(...)
         end
     end
+    TimerStart(CreateTimer(), 0.0, false, function()
+        PreloadGenClear()
+        PreloadGenStart()
+        Preload("started")
+        PreloadGenEnd("{started}")
+        DestroyTimer(GetExpiredTimer())
+    end)
     gg_trg_{name} = CreateTrigger()
     TriggerRegisterTimerEvent(gg_trg_{name}, {seconds}, false)
     TriggerAddAction(gg_trg_{name}, Trig_{name}_Actions)
@@ -271,7 +289,7 @@ def script(language: str, seconds: float, user: str | None = None, functions: st
         user = ""
     call = ("" if user is None else f"    Trig_{NAME}_User()\n" if lua else f"    call Trig_{NAME}_User()\n")
     text = template.format(name=NAME, seconds=f"{float(seconds):.2f}", report=REPORT.replace("\\", "\\\\"),
-                           limit=MAX_MESSAGES, call_user=call)
+                           started=STARTED.replace("\\", "\\\\"), limit=MAX_MESSAGES, call_user=call)
     if user is None:
         return text
     body = "".join(f"    {line}\n" if line.strip() else "\n" for line in user.splitlines())
