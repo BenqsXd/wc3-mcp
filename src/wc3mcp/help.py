@@ -202,21 +202,26 @@ BACKGROUND AND PICTURES
   ends when its results are written, so put ProbeCamera stops before the last ProbeReport.
 
 LOGIN
-  login="auto" (default): a Battle.net login screen that does not sign itself in within 10 s closes the game, starts
-  it once through the Battle.net desktop app (Battle.net.exe --exec="launch W3"; the app signs it in with its own
-  remembered login, nobody types anything), closes that game at its main menu and runs the map again (relaunched:
-  ["after_battlenet_sign_in"], login.battlenet says how it went). When that is not possible - the app is not
-  installed, or it is not logged in itself - the game window flashes with a warning sound and the run waits
-  login_wait seconds (default 120) for the user to log in by hand, then carries on in the same call.
-  "battlenet" only tries the app, "wait" only waits for the user, "stop" ends after 30 s (the old behaviour).
-  Time at a login screen and in the Battle.net sign-in does not count against timeout (login_seconds says how much
-  there was). Nobody signed in: login_required, the game stays open, and the same call again continues in it
-  (continued_game) - left to the user, without another Battle.net sign-in. game_close also stops a run that is in
-  its Battle.net sign-in.
-  A game that reaches its main menu instead of the map (it can drop -loadfile after a login) is started again once
-  (relaunched: ["stuck_at_main_menu"]); twice gives stuck_at: "main_menu".
-  The tools never type credentials and never read them: the Battle.net app route needs the user to be logged in to
-  the app once (with "Keep me logged in").
+  A game started directly ("Warcraft III.exe -launch -loadfile ...") has no Battle.net session and shows the login
+  panel; "Keep me logged in" there lasts about an hour, and signing the Battle.net app in does not help a direct
+  launch. The app starts the game as "-launch -uid w3" and hands it its own session, so a run started through the
+  app never meets the panel.
+  login="auto" (default) and "battlenet" therefore start the game through the app: the map is copied to the server's
+  own launch folder, that path is stored in the app's launch options for Warcraft III (Battle.net.config,
+  Games.w3.AdditionalLaunchArguments), and the app is asked to launch W3. The app reads those options when it
+  starts, so the first run that stores them restarts the app (login.battlenet.restarted; any options that were there
+  are kept in battlenet-previous-launch-arguments.txt in the server's folder). Later runs need no restart, because
+  the stored path never changes. launched_by says which route a run took.
+  The user has to be logged in to the Battle.net app once, with "Keep me logged in". If the app is logged out the
+  game shows the panel anyway: then the game window flashes with a warning sound and the run waits login_wait
+  seconds (default 120) for the user, and reports login_required if nobody signs in.
+  "wait" and "stop" start the game directly: "wait" flashes the window and waits, "stop" ends after 30 s.
+  Time at a login screen does not count against timeout (login_seconds says how much there was). A run left at
+  login_required keeps the game open, and the same call again continues in it (continued_game).
+  A game that reaches its main menu instead of the map is started again once (relaunched: ["stuck_at_main_menu"]);
+  twice gives stuck_at: "main_menu".
+  The tools never type, read or store credentials. The launch copy is deleted when the run closes the game, so a
+  Play in the Battle.net app opens the menu and not the tested map (windowed, from the stored options).
 
 PITFALLS
   Every launch can meet a login screen (see LOGIN), so put many checks into one run. An open dialog pauses a single-player game, so report before it opens. The game keeps
@@ -417,9 +422,39 @@ balance_report(path, kind, ids, compare, balance) - what the map's own objects a
   kind="ability"  the per-level curve: cooldown, mana, range, duration, area, damage, damage per mana, damage per
                   second of cooldown
 
+A unit whose udty is "hero" also gets a hero block: its attributes at level 1 and at MaxHeroLevel, and the life,
+mana, armour, attack damage bonus and damage per second they make of the unit's fields through the gameplay
+constants (constants_get). Those numbers replace the plain ones in the row, because every hero's own fields say life
+100, mana 0 and damage 2, and the row is compared with the stock heroes instead of the stock units.
+
 ids defaults to what the map created or modified (objdata_list). compare=true adds the stock objects closest in price
 and food, and flags a ratio far outside theirs. The result carries the formulas and the fields it read, so a number
 can be checked instead of believed.
+""")
+
+page("constants_edit", """
+constants_get(path, keys, modified_only) and constants_edit(path, set, reset) - gameplay constants, the World
+Editor's Gameplay Constants. The game reads Units/MiscGame.txt and Units/MiscData.txt; a map overrides single keys
+in war3mapMisc.txt, which an editor save keeps as it is.
+
+  constants_get()                       every constant with its value, the game's default, whether the map changes it
+                                        and the file it comes from; modified_only=true just the map's own
+  constants_edit(set={"MaxHeroLevel": 25, "MaxUnitLevel": 25, "HeroAbilityLevelSkip": 1})
+  constants_edit(reset=["MaxHeroLevel"])   back to the game's own value; the last key removes war3mapMisc.txt
+
+A misspelt key is refused (the game would ignore it silently; map_validate warns with check "constant" for one a
+file written by hand carries), and so is text where the game keeps a number, because the game would read 0.
+
+WORTH KNOWING
+  MaxHeroLevel 10, MaxUnitLevel 20            the level caps; a hero needs 3 x 7 + 4 = 25 ability ranks to spend a
+                                              point at every level of a 25 cap
+  HeroAbilityLevelSkip 2                      hero levels between ability ranks, unless the ability sets alsk
+  NeedHeroXP 200, NeedHeroXPFormulaA/B/C      the experience curve (200, 500, 900, 1400, 2000, ... by default)
+  HeroFactorXP 80,70,60,50,0                  the creep experience a hero still gets from level 5 on
+  StrHitPointBonus 25, IntManaBonus 15        what an attribute point is worth: life and mana come from these, not
+  StrAttackBonus 1, AgiDefenseBonus 0.30      from uhpm/umpm (balance_report kind="unit" computes it for a hero)
+  AgiAttackSpeedBonus 0.02, AgiDefenseBase -2
+  HeroMaxReviveCostGold/Time, ReviveLevelFactor   what reviving a hero costs
 """)
 
 page("map_flow", """

@@ -14,6 +14,8 @@
 - Fields take raw codes, field names or display names. Per-level ability fields take level keys: `{"aran": {"1": 620}}`, `{"acdn": {"1": 20}}`. Other fields take plain values (`"aher": 0`, `"alev": 1`); Channel's animation names `aani` has no levels. A unit's `uabi`, `uhab`, `usei` and an item's `iabi` are comma-separated id strings (`"A003,A004"`).
 - Field values are range-checked against the editor metadata (`ussc must be between 0.1 and 20`, `ulev must be between 1 and 100`), which catches bad values before any save.
 - `objdata_get` sizes `levels` and per-level lists by the map's own `alev` (abilities) or `glvl` (upgrades); values stored for levels beyond it are listed under `unused_levels` and do not exist in the game.
+- **Raising `alev` past the base ability's own level count** leaves the base with nothing to read in the new ranks, so `objdata_edit` repeats the last value of every per-level field into them, as the World Editor does, and lists what it filled in under `extended_levels`. Author the ranks that should differ; the rest already carry the rank-3 (or whatever the base ends at) value.
+- Values may be given as numeric strings (`"0"`, `"600.5"`), which is what `data_get` hands back, and `null` clears a field or one level of it (`{"aubx": null}`), leaving the base object's own value.
 - `objdata_get` checks the model the object really uses: when the map changes `umdl` (or `dfil`/`bfil` and the variation count), `model.files` and `model.missing` follow the map's value (`source: "map"`), and imported models count as present.
 - Art fields accept empty strings: `ushb` (building shadow) and `uubs` (ground texture) set to `""` remove them.
 - `data_get` and `objdata_get` take a **list of ids** and answer compactly (raw code -> value); `verbose=true` brings back each field's name, category and type.
@@ -37,6 +39,23 @@
 - Free heroes: `ugol` 0, `ulum` 0, `ufoo` 0 on the hero copy.
 - A shop sells the items in its `usei`: a copy of `nmgv` (Magic Vault) with `uabi` `"Aneu,Avul,Apit"` sold items to a hero, and `IssueNeutralImmediateOrderById` bought one and charged the gold.
 - A hero's `uhab` takes at most 5 abilities (`maxVal` 5): with 11, `SelectHeroSkill` learned the 1st and 4th but not the 9th.
+
+## Gameplay constants
+
+- `constants_get` / `constants_edit` read and write the Gameplay Constants (`war3mapMisc.txt` over the game's `Units/MiscGame.txt` and `Units/MiscData.txt`); an editor save keeps the file. A misspelt key is refused, and `map_validate` warns (check `constant`) about one already in a map.
+- A level cap of 25: `{"MaxHeroLevel": 25, "MaxUnitLevel": 25, "HeroAbilityLevelSkip": 1}`. Verified in the game: `AddHeroXP(h, 40000, false)` took a fresh hero to level 25 and `SetHeroLevel(h, 25, false)` gave exactly 25 skill points.
+- The experience curve is `NeedHeroXP` 200 with `NeedHeroXPFormulaA/B/C` (1/100/0), which gives 200, 500, 900, 1400, 2000, ... `HeroFactorXP` `80,70,60,50,0` is why a hero gets no creep experience from level 5 on.
+- Attributes are worth what these say: `StrHitPointBonus` 25, `IntManaBonus` 15, `StrAttackBonus` 1, `AgiDefenseBase` -2 with `AgiDefenseBonus` 0.30, `AgiAttackSpeedBonus` 0.02. `balance_report kind="unit"` computes a hero's real life, mana, armour and damage from them at level 1 and at the cap.
+
+## Custom heroes
+
+- **Hero stats do not live in the unit fields.** Every stock hero has `uhpm` 100, `umpm` 0, `ua1b` 0, `ua1d` 2, `umpr` 0.01: life comes from strength, mana from intelligence, damage from the primary attribute (`upra`). Tune `ustr`/`ustp`, `uagi`/`uagp`, `uint`/`uinp`, `ua1s`, `ua1c`, `udef`, `umvs`. Measured at level 25: strength 104 gave 2700 life, intelligence 96 gave 1440 mana.
+- **Rank gating:** `alev` ranks, `arlv` the hero level the first rank needs, `alsk` the levels between ranks (0 falls back to `HeroAbilityLevelSkip`). Three basics with `alev` 7 / `arlv` 1 / `alsk` 1 and one ultimate with `alev` 4 / `arlv` 6 / `alsk` 4 let a level-25 hero spend all 25 points (3 x 7 + 4 = 25).
+- **Hero glow on a creep model:** a unit built from a hero base but wearing a creep model has no glow disc. Copy `Asph` (Sphere) with `atat` = `Abilities\Spells\Other\HeroGlow\HeroGlow.mdl`, `atac` 1, `ata0` `origin`, icons, tooltips and missile art cleared, and put that copy in the unit's **`uabi`** (not `uhab`): `uabi` = `"AInv,A099"`. One copy serves every hero; the Blood Mage (`Hblm`, `uabi` `AInv,Asph`) is the stock precedent.
+- **Ability bases that need repairs when copied into a hero ability:** `aher` is 0 on `Afae`, `Aslo`, `Ablo`, `ACcy` and `ACrj` - set it to 1. `Ablo` also carries `areq` `Rost` with `arqa` 2, which greys the button out: clear both. Autocast bases (`Afae`, `Aslo`, `Ablo`, `ANfa`) keep `aoro`/`aorf`/`auar`; clearing those three makes a plain unit-target ability. Prefer the variant without a tech requirement: `ACcy` over `Acyc`, `ACrj` over `Arej`.
+- **Summon abilities** take the unit id per rank (Feral Spirit `Osf1`, Serpent Ward and Water Elemental `Hwe1`/`Hwe2`, Force of Nature `Efnu`, Tornado `Ntou`, Locust Swarm `Ulsu`), and Reforged wants `ausk` (Unit Skin List) set to the same ids. Force of Nature (`AEfn`) eats trees, so it opens holes in a tree wall that is the map's terrain - Serpent Ward does not.
+- **A creep model carries its stock attack style:** every forest troll (`nftr`, `nftb`, `nftk`, `nftt`) is a ranged axe thrower, so a melee passive such as Cleaving Attack needs a melee model (`nfra`, `nsqe`, `nmyr`, `nstl`, `nomg`, `nmrm`; `ngna`, `nhrw`, `nssp` are ranged). `usnd` carries the voice and death cry (`Murloc`, `Wendigo`, `Furbolg`, `GnollArcher`, `NagaMyrmidon`, `Satyr`, `Harpy`, `Spider`, `Ogre`).
+- An editor save moves names and tooltips into `war3map.wts` as `TRIGSTR_` references and splits art fields into `war3mapSkin.w3a` / `war3mapSkin.w3u`; ids and values survive (`map_save merge_external=true`).
 
 ## Items and abilities
 
@@ -68,6 +87,10 @@ attack ((base + dice * (sides + 1) / 2) / cooldown), the effective life its armo
 the per-level curve with damage per mana and per second of cooldown. Every row carries the stock objects closest in
 price and food, and a flag when a ratio is far outside theirs - which is how a tier-1 unit that out-damages a Knight
 for half the gold gets caught without a game run. The result names the formulas and the fields it read.
+
+A unit with `udty` `hero` is read as a hero instead: life, mana, armour, attack bonus and damage per second computed
+from `ustr`/`uagi`/`uint` and the gameplay constants, at level 1 and at `MaxHeroLevel`, under `hero`, and compared
+with the stock heroes. Reading a hero's plain fields says life 100 and damage 2 for every hero there is.
 
 ## The string table
 

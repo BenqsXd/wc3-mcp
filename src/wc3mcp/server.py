@@ -25,6 +25,7 @@ from .ops import assets as assets_ops
 from .ops import audio as audio_ops
 from .ops import balance as balance_ops
 from .ops import campaign as campaign_ops
+from .ops import constants as constants_ops
 from .ops import elements as elements_ops
 from .ops import imports as imports_ops
 from .ops import flow as flow_ops
@@ -199,7 +200,7 @@ def wc3_help(topic: str | None = None) -> dict:
     """The full reference of one tool: every op shape, field list and pitfall, which the tool descriptions leave out
     so a session does not pay for all of it up front. Without a topic it lists them. Topics: placed_edit,
     triggers_edit, terrain_edit, terrain_get, game_test, data_search, map_save, map_validate, asset_edit,
-    campaign_edit, ui_edit."""
+    campaign_edit, ui_edit, constants_edit."""
     return help_pages.help_text(topic)
 
 
@@ -493,6 +494,26 @@ def data_file(path: str, encoding: Literal["text", "base64", "hex"] = "text", of
     if data is None:
         raise ToolError("not_found", f"no game data file {path!r}", hint="data_search kind=file finds paths")
     return {"path": full, **_encode(data, encoding, offset, length)}
+
+
+@_tool
+def constants_get(path: str, keys: list[str] | None = None, modified_only: bool = False) -> dict:
+    """Gameplay constants of an open map (the World Editor's Gameplay Constants, stored as war3mapMisc.txt): the
+    game's own values from Units/MiscGame.txt and Units/MiscData.txt with the map's own ones over them. Each entry
+    carries value, modified, the game's default and the file it comes from. Without keys it lists every constant
+    there is (MaxHeroLevel, NeedHeroXP, HeroAbilityLevelSkip, revive costs, illusion and aura rules, ...);
+    modified_only shows just what the map changes."""
+    return constants_ops.constants_get(_project(path), _catalog("enUS", None, False), keys, modified_only)
+
+
+@_tool
+def constants_edit(path: str, set: dict | None = None, reset: list[str] | None = None) -> dict:
+    """Set or reset gameplay constants of an open map, e.g. {"MaxHeroLevel": 25, "MaxUnitLevel": 25,
+    "HeroAbilityLevelSkip": 1, "NeedHeroXPFormulaA": 1}. Unknown keys are refused (constants_get lists them) and a
+    value that is not a number where the game keeps one is refused too, because the game would read it as 0. reset
+    takes keys back to the game's own value; war3map.j does not change, and an editor save keeps the file.
+    wc3_help("constants_edit") lists the keys worth knowing."""
+    return constants_ops.constants_edit(_project(path), _catalog("enUS", None, False), set, reset)
 
 
 @_tool
@@ -1053,13 +1074,14 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
     exists. probe=true runs a throwaway copy that reports the state at probe_seconds; probe_script, probe_functions
     and the helpers ProbeReport, ProbeExpect, ProbeCountEvent and ProbeCamera make it a real test. wait=false runs it
     in the background (game_status reports it and its result); screenshots=N with screenshot_every saves pictures
-    from the moment the map runs. A Battle.net login screen: login="auto" (default) closes the game, starts it once
-    through the Battle.net desktop app - which signs it in with the app's own remembered login, no credentials
-    involved - and runs the map again; when that cannot work it flashes the game window for the user and waits
-    login_wait seconds for them to log in. "battlenet" only tries the app, "wait" only waits for the user, "stop" ends
-    after 30 s. A run left at login_required keeps the game open and the same call continues in it; a game stuck at
-    its main menu after a login is started again (relaunched). wc3_help("game_test") has the probe helpers and the
-    pitfalls."""
+    from the moment the map runs. Logins: login="auto" (default) starts the game through the Battle.net desktop app,
+    which hands it the app's own session, so no login screen appears and no credentials are involved anywhere (the
+    app needs to be logged in once, with "Keep me logged in"). "battlenet" is the same but fails when the app is
+    missing; "wait" and "stop" start the game directly, which asks for a login unless the game still has a session -
+    "wait" flashes the window for the user and waits login_wait seconds, "stop" ends after 30 s. A run left at
+    login_required keeps the game open and the same call continues in it; a game stuck at its main menu is started
+    again (relaunched). The app route launches a copy of the map from the server's own folder and stores that path
+    in the app's launch options for Warcraft III. wc3_help("game_test") has the probe helpers and the pitfalls."""
     target, extra = path, {}
     if probe_script is not None and probe_script_file is not None:
         raise ToolError("bad_value", "give probe_script or probe_script_file, not both")

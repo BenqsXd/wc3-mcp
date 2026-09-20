@@ -250,6 +250,8 @@ def _convert(meta, value, path: str) -> tuple[int, object]:
         return vt, value
     if isinstance(value, bool):
         value = int(value)
+    if isinstance(value, str) and _number(value) is not None:
+        value = _number(value)   # data_get hands per-level values back as text: take them as the numbers they are
     if vt == INT and isinstance(value, float) and value.is_integer():
         value = int(value)
     if (vt == INT and not isinstance(value, int)) or (vt != INT and not isinstance(value, (int, float))):
@@ -305,15 +307,88 @@ def _set(files, kind: str, custom: bool, base: bytes, new: bytes, meta, level: i
         Mod(rid, vt, value, level, meta.data if levels else 0, objmods.ZERO_ID if custom else base))
 
 
-def _set_many(files, catalog, kind: str, custom: bool, base: bytes, new: bytes, values, strings, path: str) -> None:
+def _level_count(files, catalog, kind: str, custom: bool, base: bytes, new: bytes) -> int:
+    """How many levels the object has in the game: the map's own alev/glvl, else the base object's."""
+    field = LEVEL_FIELDS.get(kind)
+    if field is None:
+        return 0
+    rid = field.encode("latin-1")
+    for om in files:
+        for mod in _entry_in(om, custom, base, new).mods:
+            if mod.id == rid and mod.level == 0:
+                return max(1, int(mod.value))
+    return max(1, int(_number(catalog.field(kind, base.decode("latin-1"), field)) or 1))
+
+
+def _extend_levels(files, catalog, kind: str, custom: bool, base: bytes, new: bytes, before: int, strings,
+                   path: str) -> dict | None:
+    """More levels than the base object has: the World Editor repeats the last value of every per-level field into
+    the new ranks, and the game reads nothing there otherwise, so do the same."""
+    top = _level_count(files, catalog, kind, custom, base, new)
+    if top <= before:
+        return None
+    doc = catalog.get(kind, base.decode("latin-1"), None)
+    metas = {f.id: f for f in catalog.fields(kind)}
+    mods = _merged([(om, custom, _entry_in(om, custom, base, new)) for om in files])
+    written = []
+    for rawcode, entry in doc["fields"].items():
+        meta = metas.get(rawcode)
+        if "values" not in entry or meta is None or meta.repeat <= 0:
+            continue
+        defined = [level for (rid, level) in mods if rid == rawcode and 1 <= level <= before]
+        last = max(defined) if defined else min(before, len(entry["values"]))
+        if last < 1:
+            continue
+        mod = mods.get((rawcode, last))
+        if mod is not None:
+            vt, value = mod.var_type, mod.value
+        else:
+            raw = _typed(entry["type"], entry["values"][last - 1])
+            if raw is None or raw == "":
+                continue
+            try:
+                vt, value = _convert(meta, raw, path)
+            except ToolError:
+                continue   # a base value outside the field's own range: leave that field to the caller
+        for level in range(before + 1, top + 1):
+            if (rawcode, level) not in mods:
+                _set(files, kind, custom, base, new, meta, level, vt, value, strings)
+        written.append(rawcode)
+    if not written:
+        return None
+    return {"id": (new if custom else base).decode("latin-1"), "levels": f"{before + 1}..{top}",
+            "fields": sorted(written)}
+
+
+def _clear(files, custom: bool, base: bytes, new: bytes, meta, level: int) -> None:
+    """Drop the map's own value for a field, so the object uses the base object's again (null, as `reset` does)."""
+    rid = meta.id.encode("latin-1")
+    for om in files:
+        entry = _entry_in(om, custom, base, new)
+        entry.mods = [m for m in entry.mods if not (m.id == rid and (level is None or m.level == level))]
+
+
+def _set_many(files, catalog, kind: str, custom: bool, base: bytes, new: bytes, values, strings, path: str) -> list:
+    """Applies one op's field values. Returns what growing a level count (alev, glvl) extended, if anything."""
     if not isinstance(values, dict):
         raise ToolError("bad_op", f"{path}: set must be an object of field: value", hint=_HINT)
+    levels_before = _level_count(files, catalog, kind, custom, base, new)
     for key, value in values.items():
         fpath = f"{path}.set.{key}"
         meta = _field(catalog, kind, base.decode("latin-1"), key, fpath)
+        if value is None:   # clear the whole field, levels included: the base object's own value applies again
+            _clear(files, custom, base, new, meta, None)
+            continue
         for level, v in _level_values(meta, value, fpath):
+            if v is None:
+                _clear(files, custom, base, new, meta, level if meta.repeat > 0 else 0)
+                continue
             vt, converted = _convert(meta, v, fpath)
             _set(files, kind, custom, base, new, meta, level, vt, converted, strings)
+    if LEVEL_FIELDS.get(kind) in values:
+        grown = _extend_levels(files, catalog, kind, custom, base, new, levels_before, strings, path)
+        return [grown] if grown else []
+    return []
 
 
 def _locate(files, base_ids: set[str], kind: str, obj_id, path: str) -> tuple[bool, bytes, bytes]:
@@ -344,7 +419,7 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
     wts_before = strings.serialize()
     base_ids = set(catalog.ids(kind))
     taken = base_ids | {_key(e, True) for om in files for e in om.custom}
-    created = []
+    created, extended = [], []
     for i, op in enumerate(ops):
         path = f"ops[{i}]"
         try:
@@ -377,12 +452,12 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
                     for source in (e for o, e in copied if o is om):
                         entry.mods += [dataclasses.replace(m, value=strings.resolve(m.value)) if m.var_type == STRING
                                        else dataclasses.replace(m) for m in source.mods]
-                _set_many(files, catalog, kind, True, base_b, new_b, op.get("set", {}), strings, path)
+                extended += _set_many(files, catalog, kind, True, base_b, new_b, op.get("set", {}), strings, path)
             elif action == "set":
                 custom, base_b, new_b = _locate(files, base_ids, kind, op.get("id"), path)
                 for om in files:
                     _entry_in(om, custom, base_b, new_b)
-                _set_many(files, catalog, kind, custom, base_b, new_b, op.get("set"), strings, path)
+                extended += _set_many(files, catalog, kind, custom, base_b, new_b, op.get("set"), strings, path)
             elif action == "reset":
                 custom, base_b, new_b = _locate(files, base_ids, kind, op.get("id"), path)
                 keys = op.get("fields")
@@ -418,7 +493,13 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
     if wts_after != wts_before:
         project.write(strings_file(project), wts_after)
         changed = True
-    return {"changed": changed, "created": created, "warnings": []}
+    out = {"changed": changed, "created": created, "warnings": []}
+    if extended:
+        out["extended_levels"] = extended
+        out["extended_levels_note"] = ("these objects got more levels than their base object has, so the last value "
+                                       "of every per-level field was repeated into the new ranks (what the World "
+                                       "Editor does); set the ranks that should differ")
+    return out
 
 
 # ---- diff ------------------------------------------------------------------------------------------------------

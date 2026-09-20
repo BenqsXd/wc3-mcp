@@ -22,7 +22,7 @@ EXPECTED = {"map_new", "map_open", "map_close", "map_save", "map_status", "map_f
             "game_test", "game_status", "game_close", "elements_list", "elements_edit", "placed_list",
             "placed_edit", "terrain_get", "terrain_edit", "terrain_render", "campaign_new", "campaign_get",
             "campaign_edit", "ai_get", "ai_edit", "ai_export", "asset_info", "asset_convert", "asset_edit",
-            "asset_preview"}
+            "asset_preview", "constants_get", "constants_edit"}
 
 
 def call(name: str, args: dict):
@@ -502,3 +502,18 @@ def test_help_pages_hold_what_the_descriptions_left_out():
         # a page named after a tool is pointed at from that tool; a topic page (terrain_landscape) from its tool too
         holder = name if name in tools else "terrain_edit"
         assert f'wc3_help("{name}")' in tools[holder].description, name
+
+
+def test_gameplay_constants_through_the_tools(tmp_path):
+    path = str(tmp_path / "Constants.w3x")
+    payload(call("map_new", {"path": path, "width": 32, "height": 32, "players": 2}))
+    try:
+        cap = payload(call("constants_get", {"path": path, "keys": ["MaxHeroLevel"]}))["constants"][0]
+        assert cap["value"] == "10" and cap["modified"] is False
+        written = payload(call("constants_edit", {"path": path, "set": {"MaxHeroLevel": 25}}))
+        assert written["changed"] and written["constants"][0]["value"] == "25"
+        assert payload(call("constants_get", {"path": path, "modified_only": True}))["count"] == 1
+        bad = call("constants_edit", {"path": path, "set": {"MaxHerosLevel": 25}})
+        assert bad.isError and "MaxHerosLevel" in bad.content[0].text
+    finally:
+        call("map_close", {"path": path})

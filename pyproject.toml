@@ -1,6 +1,6 @@
 [project]
 name = "wc3mcp"
-version = "1.1.0"
+version = "1.2.0"
 description = "MCP server for making Warcraft III maps and operating the World Editor"
 license = "MIT"
 license-files = ["LICENSE"]

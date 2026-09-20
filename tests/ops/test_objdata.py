@@ -218,3 +218,43 @@ def test_objdata_diff_against_the_map_on_disk_and_a_snapshot(plain_project, cata
     life = next(f for f in changed["fields"] if f["field"] == "uhpm")
     assert (life["before"], life["after"]) == (700, 900) and "Hit Points" in life["name"]
     assert MapProject is not None
+
+
+def test_more_ranks_repeat_the_last_value_of_every_per_level_field(project, catalog):
+    """A 3-level ability copied with alev 7 keeps three values per field in the game data; the editor repeats the
+    last one, and so does the tool (improvement 9a)."""
+    result = objdata_edit(project, catalog, "ability", [{"op": "create", "id": "A099", "base": "AHbz",
+                                                         "set": {"alev": 7, "aran": {"1": 620}}}])
+    grown = result["extended_levels"][0]
+    assert grown["id"] == "A099" and grown["levels"] == "4..7" and "acdn" in grown["fields"]
+    doc = objdata_get(project, catalog, "ability", "A099")
+    assert doc["levels"] == 7
+    for rawcode in ("acdn", "amcs", "aare"):
+        values = doc["fields"][rawcode]["values"]
+        assert values[3:] == [values[2]] * 4 and None not in values
+    assert doc["fields"]["aran"]["values"][0] == 620   # the caller's own value stays
+
+
+def test_a_value_read_back_as_text_can_be_written_again(project, catalog):
+    objdata_edit(project, catalog, "ability", [{"op": "create", "id": "A098", "base": "AHbz",
+                                                "set": {"acas": {"1": "0"}, "aran": {"1": "600.5"}, "alev": "3"}}])
+    doc = objdata_get(project, catalog, "ability", "A098")
+    assert doc["fields"]["acas"]["values"][0] == 0 and doc["fields"]["aran"]["values"][0] == 600.5
+    assert doc["levels"] == 3
+    with pytest.raises(ToolError) as e:
+        objdata_edit(project, catalog, "ability", [{"op": "set", "id": "A098", "set": {"aran": {"1": "far"}}}])
+    assert e.value.code == "bad_value" and "expects a number" in e.value.message
+
+
+def test_null_clears_a_field_and_one_of_its_levels(project, catalog):
+    objdata_edit(project, catalog, "unit", [{"op": "create", "id": "h099", "base": "hfoo",
+                                             "set": {"uhpm": 500, "ubpx": 2}}])
+    assert objdata_get(project, catalog, "unit", "h099")["fields"]["ubpx"]["modified"] is True
+    objdata_edit(project, catalog, "unit", [{"op": "set", "id": "h099", "set": {"ubpx": None}}])
+    doc = objdata_get(project, catalog, "unit", "h099")
+    assert doc["fields"]["ubpx"]["modified"] is False and doc["fields"]["uhpm"]["value"] == 500
+    objdata_edit(project, catalog, "ability", [{"op": "create", "id": "A097", "base": "AHbz",
+                                               "set": {"aran": {"1": 100, "2": 200}}}])
+    objdata_edit(project, catalog, "ability", [{"op": "set", "id": "A097", "set": {"aran": {"2": None}}}])
+    doc = objdata_get(project, catalog, "ability", "A097")
+    assert doc["fields"]["aran"]["modified"] == [1] and doc["fields"]["aran"]["values"][0] == 100

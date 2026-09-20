@@ -122,6 +122,7 @@ class _V:
         self.check_triggers()
         self.check_objects()
         self.check_imports()
+        self.check_constants()
         self.check_placed()
         self.check_command_cards()
         self.check_function_order()
@@ -288,6 +289,20 @@ class _V:
             if not (self.has_file(e.path) or self.has_file("war3mapImported\\" + e.path)):
                 self.add(False, "import", "war3map.imp", f"imported file {e.path!r} (flag {e.flag}) is not in the map")
 
+
+    def check_constants(self):
+        """war3mapMisc.txt is read key by key, so a misspelt key is simply ignored by the game."""
+        from . import constants as constants_ops
+
+        data = self.get(constants_ops.MAP_FILE)
+        if data is None:
+            return
+        known = constants_ops.defaults(self.catalog)
+        for key in constants_ops._parse(data.decode("utf-8", "replace")):
+            if key not in known:
+                self.add(False, "constant", constants_ops.MAP_FILE,
+                         f"{key} is not a gameplay constant the game defines, so it has no effect "
+                         f"(constants_get lists them)")
 
     def _mods(self, kind: str) -> dict[str, tuple[str, dict[str, object], bool]]:
         """Object id -> (base id, the first-level values the map sets, custom) for the map's objects of a kind."""

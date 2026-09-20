@@ -7,6 +7,7 @@ Every number says which fields it came from, so a reader can check it instead of
 import statistics
 
 from ..errors import ToolError
+from . import constants as constants_ops
 from .objdata import objdata_get, objdata_list
 
 # attack fields, per weapon index: cooldown, base damage, dice, sides, range, targets, weapon type
@@ -26,6 +27,9 @@ ABILITY_FIELDS = {"acdn": "cooldown", "amcs": "mana cost", "aran": "cast range",
 STOCK_UNITS = ("hfoo", "hkni", "hrif", "hmpr", "hsor", "ofoo", "ogru", "orai", "otau", "ohun", "uzom", "ucry",
                "uabo", "ufro", "eary", "esen", "edry", "edoc", "ebal", "hpea", "opeo", "uaco", "ewsp")
 STOCK_ITEMS = ("rst1", "rag1", "rin1", "ratc", "rde2", "prvt", "rlif", "penr", "rwiz", "gcel", "ciri", "ckng")
+# a hero is only comparable with heroes: its unit fields say life 100 and damage 2 whatever it is worth
+STOCK_HEROES = ("Hamg", "Hmkg", "Hpal", "Hblm", "Obla", "Ofar", "Otch", "Oshd", "Udea", "Udre", "Ulic", "Ucrl",
+                "Ekee", "Emoo", "Ewar", "Edem")
 
 
 def _number(value, default: float = 0.0) -> float:
@@ -70,8 +74,37 @@ def _attack(fields: dict, index: int) -> dict | None:
             "targets": targets, "weapon": weapon}
 
 
-def _unit(fields: dict) -> dict:
-    """Damage per second, effective hit points and the cost ratios of one unit."""
+def _attributes(fields: dict, level: int) -> dict:
+    """A hero's three attributes at a level: the starting value plus the per-level gain."""
+    return {name: _number(fields.get(start)) + _number(fields.get(gain)) * (level - 1)
+            for name, start, gain in (("strength", "ustr", "ustp"), ("agility", "uagi", "uagp"),
+                                      ("intelligence", "uint", "uinp"))}
+
+
+def _hero(fields: dict, misc: dict, level: int) -> dict:
+    """What a hero actually has at a level. Its unit fields say life 100 and damage 2: the attributes carry the rest,
+    through the gameplay constants (StrHitPointBonus and friends), so reading the fields alone is misleading."""
+    attributes = _attributes(fields, level)
+    primary = {"STR": "strength", "AGI": "agility", "INT": "intelligence"}.get(str(fields.get("upra") or "").upper())
+    bonus = attributes.get(primary, 0.0) * _number(misc.get("StrAttackBonus"), 1.0)
+    life = _number(fields.get(LIFE)) + attributes["strength"] * _number(misc.get("StrHitPointBonus"), 25.0)
+    mana = _number(fields.get(MANA)) + attributes["intelligence"] * _number(misc.get("IntManaBonus"), 15.0)
+    armour = (_number(fields.get(DEFENCE)) + _number(misc.get("AgiDefenseBase"), -2.0)
+              + attributes["agility"] * _number(misc.get("AgiDefenseBonus"), 0.3))
+    speed = 1 + attributes["agility"] * _number(misc.get("AgiAttackSpeedBonus"), 0.02)
+    out = {"level": level, "attributes": {k: round(v, 1) for k, v in attributes.items()},
+           "primary_attribute": primary, "attack_damage_bonus": round(bonus, 1),
+           "life": round(life), "mana": round(mana), "armour": round(armour, 1),
+           "attack_speed_factor": round(speed, 2)}
+    attack = _attack(fields, 1)
+    if attack:
+        out["damage_per_second"] = round((attack["average_damage"] + bonus) / attack["cooldown"] * speed, 2)
+    return out
+
+
+def _unit(fields: dict, misc: dict | None = None, top_level: int = 10) -> dict:
+    """Damage per second, effective hit points and the cost ratios of one unit. A hero also gets what its attributes
+    and the gameplay constants make of those numbers, at level 1 and at the level cap."""
     enabled = int(_number(fields.get(ATTACKS_ENABLED), 0))
     attacks = {}
     for index in (1, 2):
@@ -98,6 +131,24 @@ def _unit(fields: dict) -> dict:
         # one number to sort by: damage and staying power together, per 100 gold
         out["worth"] = round((dps * effective) ** 0.5 / worth * 100, 2)
     out["read"] = "ua1c/ua1b/ua1d/ua1s (and ua2*), uaen, uhpm, udef, umpm, ugol, ulum, ufoo, umvs, usid, ubld"
+    if misc is not None and str(fields.get("udty") or "").lower() == "hero":
+        levels = [_hero(fields, misc, 1)] + ([_hero(fields, misc, top_level)] if top_level > 1 else [])
+        out["hero"] = {"level_cap": top_level, "levels": levels,
+                       "read": "udty, upra, ustr/ustp, uagi/uagp, uint/uinp and the gameplay constants "
+                               "StrHitPointBonus, IntManaBonus, AgiDefenseBase/Bonus, AgiAttackSpeedBonus, "
+                               "StrAttackBonus (constants_get)"}
+        # the unit fields of every hero read life 100, damage 2 and mana 0: compare the attribute numbers instead
+        out["life"], out["mana"] = levels[0]["life"], levels[0]["mana"]
+        out["armour"] = levels[0]["armour"]
+        if "damage_per_second" in levels[0]:
+            out["damage_per_second"] = levels[0]["damage_per_second"]
+        reduction = ARMOUR_STEP * out["armour"] / (1 + ARMOUR_STEP * out["armour"]) if out["armour"] >= 0 \
+            else ARMOUR_STEP * out["armour"]
+        out["effective_life"] = round(out["life"] / (1 - reduction) if reduction < 1 else out["life"])
+        if worth > 0:   # the ratios follow the hero's real numbers, not the 100 life every hero has on paper
+            out["damage_per_gold"] = round(out["damage_per_second"] / worth * 100, 2)
+            out["life_per_gold"] = round(out["effective_life"] / worth * 100, 2)
+            out["worth"] = round((out["damage_per_second"] * out["effective_life"]) ** 0.5 / worth * 100, 2)
     return out
 
 
@@ -143,14 +194,14 @@ def _ability(fields: dict, levels: int) -> dict:
     return {"levels": rows, "read": "acdn, amcs, aran, adur, ahdu, aare and the first data field that holds damage"}
 
 
-def _stock(project, catalog, kind: str, ids) -> list[dict]:
+def _stock(project, catalog, kind: str, ids, misc: dict | None = None, top_level: int = 10) -> list[dict]:
     out = []
     for stock in ids:
         try:
             fields, doc = _fields(project, catalog, kind, stock)
         except ToolError:
             continue
-        row = _unit(fields) if kind == "unit" else _item(fields, catalog, project)
+        row = _unit(fields, misc, top_level) if kind == "unit" else _item(fields, catalog, project)
         out.append({"id": stock, "name": doc.get("name", stock), **row})
     return out
 
@@ -203,23 +254,32 @@ def balance_report(project, catalog, kind: str = "unit", ids: list[str] | None =
                                                           "(objdata_edit creates one, or pass ids)"}
     if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
         raise ToolError("bad_value", "ids is a list of object ids", path="ids")
-    stock = _stock(project, catalog, kind, STOCK_UNITS if kind == "unit" else STOCK_ITEMS) \
-        if compare and kind != "ability" else []
+    misc = constants_ops.values(project, catalog) if kind == "unit" else {}
+    cap = max(1, int(_number(misc.get("MaxHeroLevel"), 10)))
+    stock, hero_stock = [], []
+    if compare and kind == "unit":
+        stock = _stock(project, catalog, kind, STOCK_UNITS, misc, cap)
+    elif compare and kind == "item":
+        stock = _stock(project, catalog, kind, STOCK_ITEMS)
     rows = []
     for obj_id in ids[:50]:
         fields, doc = _fields(project, catalog, kind, obj_id)
         if kind == "unit":
-            row = {"id": obj_id, "name": doc.get("name", obj_id), "base": doc.get("base"), **_unit(fields)}
+            row = {"id": obj_id, "name": doc.get("name", obj_id), "base": doc.get("base"),
+                   **_unit(fields, misc, cap)}
+            if "hero" in row and compare and not hero_stock:   # heroes belong beside heroes, not beside Peasants
+                hero_stock = _stock(project, catalog, kind, STOCK_HEROES, misc, cap)
         elif kind == "item":
             row = {"id": obj_id, "name": doc.get("name", obj_id), "base": doc.get("base"),
                    **_item(fields, catalog, project)}
         else:
             row = {"id": obj_id, "name": doc.get("name", obj_id), "base": doc.get("base"),
                    **_ability(fields, int(doc.get("levels", 1)))}
-        if stock:
-            near = _closest(row, stock, kind)
+        against = hero_stock if kind == "unit" and "hero" in row else stock
+        if against:
+            near = _closest(row, against, kind)
             row["closest_stock"] = [{k: v for k, v in s.items() if k in
-                                     ("id", "name", "gold", "food", "damage_per_second", "effective_life",
+                                     ("id", "name", "gold", "food", "damage_per_second", "effective_life", "mana",
                                       "damage_per_gold", "life_per_gold", "bonus_per_100_gold")} for s in near]
             flags = _flag(row, near, kind)
             if flags:

@@ -17,7 +17,7 @@ The plugin also installs a skill (`wc3-map-making`) that tells Claude how to use
 | **Warcraft III 3.x (Reforged), installed with Battle.net** | Game data, pjass and JassHelper are read from the install. The install is found automatically; otherwise set `WC3MCP_INSTALL`. |
 | **[uv](https://docs.astral.sh/uv/getting-started/installation/)** | Runs the server. On first start it downloads Python 3.13 (if missing) and the Python packages `mcp`, `pywin32`, `numpy` and `pillow`. |
 | **[Claude Code](https://docs.claude.com/en/docs/claude-code)** | Hosts the plugin (any MCP client works with the manual setup below). |
-| The Battle.net desktop app, logged in (for `game_test` only) | A game started with `-launch` may ask for a Battle.net login before it loads a map. `game_test` then starts the game once through the Battle.net app, which signs it in with the app's own remembered login, and runs the map again. Log in to the app once yourself with "Keep me logged in"; the tools never type, read or store credentials. Without the app, `game_test` flashes the game window and waits for you to log in there. |
+| The Battle.net desktop app, logged in (for `game_test` only) | A game started on its own has no Battle.net session and asks for a login. `game_test` therefore lets the app start the game, the way its Play button does, and the app hands the game its own session. Log in to the app once yourself with "Keep me logged in"; the tools never type, read or store credentials. The first run stores the map's path in the app's launch options for Warcraft III and restarts the app once; without the app, `game_test` flashes the game window and waits for you to log in there. |
 
 Install uv (PowerShell):
 
@@ -67,6 +67,14 @@ All settings are optional environment variables:
 | `WC3MCP_HOME` | `%LOCALAPPDATA%\wc3mcp` (working copies, backups, logs, tool copies) |
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
+
+## What's new in 1.2
+
+- **Game tests no longer ask for a Battle.net login.** The game started on its own (`Warcraft III.exe -launch -loadfile ...`) has no session, and signing the Battle.net app in does not give it one - which is why 1.1's sign-in did not help. `game_test` (`login="auto"`) now has the **app itself start the game**, the way its Play button does (`-launch -uid w3`), and the app hands the game its own session: no login screen, and no password read, typed or stored anywhere. The map is copied to one fixed path inside the server's folder and that path is stored in the app's launch options for Warcraft III, so only the first run has to restart the app; the copy is removed when the run closes the game. Verified live: from `--exec=launch W3` to the map's loading screen in 13 s, `login.screen_seen: false`. The app has to be logged in once, with "Keep me logged in".
+- **`constants_get` / `constants_edit`**: the World Editor's Gameplay Constants (`war3mapMisc.txt`) as a typed tool - the hero level cap, the experience formula, `HeroAbilityLevelSkip`, revive costs, illusion and aura rules. Every key the game defines with its default and where it comes from; a misspelt key is refused instead of silently ignored, and `map_validate` warns about one already in a map.
+- **More ability ranks now carry values.** Raising `alev` above the base ability's own level count used to leave every per-level field at the base's ranks; `objdata_edit` repeats the last value into the new ranks, as the World Editor does, and reports what it filled in (`extended_levels`).
+- `objdata_edit` accepts the numeric strings `data_get` hands back (`"0"`, `"600.5"`), and `null` clears a field or one of its levels - there was no way to unset `aubx` before.
+- **`balance_report` reads a hero as a hero**: life, mana, armour and damage computed from `ustr`/`uagi`/`uint` and the gameplay constants at level 1 and at the level cap, and compared with the stock heroes instead of Peasants (every hero's unit fields say life 100, mana 0, damage 2).
 
 ## What's new in 1.1
 

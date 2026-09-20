@@ -4,6 +4,7 @@ import pytest
 
 from corpus import _storage, ladder_maps, open_sample
 from wc3mcp.desktop import game
+from wc3mcp.errors import ToolError
 
 PRELOAD = ('function PreloadFiles takes nothing returns nothing\n\n\tcall PreloadStart()\n'
            '\tcall Preload( "wc3mcp-probe-ok" )\n\tcall Preload( "second line" )\n\tcall PreloadEnd( 0.0 )\n\nendfunction\n')
@@ -165,7 +166,7 @@ def test_screen_state_reads_login_and_waiting_loading_screens():
 
 
 def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False, runner=None, map_bytes=b"",
-              launches=None, wait=True, login="stop", warm_up=None, alerts=None, raised=None, **options):
+              launches=None, wait=True, login="stop", app=None, alerts=None, raised=None, **options):
     clock = {"now": 1000.0}
     fake_time = type("T", (), {"time": staticmethod(lambda: clock["now"]),
                                "sleep": staticmethod(lambda s: clock.__setitem__("now", clock["now"] + s))})
@@ -186,8 +187,17 @@ def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False, runne
     closed, keys, shown = [], [], iter(states)
     monkeypatch.setattr(game.Game, "_close", lambda self, p: closed.append(p) or True)
     monkeypatch.setattr(game, "screen_state", lambda image: next(shown, None))
-    monkeypatch.setattr(game, "battlenet_exe", lambda: tmp_path / "Battle.net.exe" if warm_up else None)
-    monkeypatch.setattr(game.Game, "_warm_up", warm_up if callable(warm_up) else lambda self: warm_up)
+    monkeypatch.setattr(game.battlenet, "exe", lambda: tmp_path / "Battle.net.exe" if app else None)
+    monkeypatch.setattr(game.battlenet, "forget_map", lambda: None)
+
+    def launch_app(self, found, target):
+        if callable(app):
+            return app(self)
+        if launches is not None:
+            launches.append((str(target),))
+        return (process, dict(app)) if app and app.get("ok") else (None, dict(app or {}))
+
+    monkeypatch.setattr(game.Game, "_launch_app", launch_app)
     monkeypatch.setattr(game, "_alert", lambda window: alerts.append(window) if alerts is not None else None)
 
     def press(h, actions):
@@ -267,24 +277,39 @@ def test_screen_state_reads_the_main_menu():
     assert game.screen_state(_screen("login")) == "login" and game.screen_state(_screen("game")) is None
 
 
-def test_auto_login_signs_in_through_the_battlenet_app_and_runs_again(monkeypatch, tmp_path):
+def test_auto_starts_the_game_through_the_battlenet_app_and_meets_no_login(monkeypatch, tmp_path):
     launches = []
-    result, _, _ = _fake_run(monkeypatch, tmp_path, ["login"] * 4 + [None, "press_key"], write_result_after_key=True,
-                             launches=launches, login="auto", warm_up={"ok": True, "seconds": 40.0})
-    assert result["results"] == {r"t\r.txt": ["ok"]} and len(launches) == 2
-    assert result["relaunched"] == ["after_battlenet_sign_in"] and result["login"]["battlenet"]["ok"]
-    assert "login_required" not in result
+    result, _, _ = _fake_run(monkeypatch, tmp_path, [None, "press_key"], write_result_after_key=True,
+                             launches=launches, login="auto", app={"ok": True, "seconds": 12.0, "restarted": True})
+    assert result["results"] == {r"t\r.txt": ["ok"]} and len(launches) == 1
+    assert result["launched_by"] == "battlenet_app" and result["login"]["battlenet"]["restarted"]
+    assert "login_required" not in result and result["login"]["screen_seen"] is False
 
 
-def test_auto_login_without_the_app_asks_the_user_and_waits(monkeypatch, tmp_path):
+def test_an_app_that_cannot_start_the_game_falls_back_to_a_direct_launch(monkeypatch, tmp_path):
+    launches = []
+    result, _, _ = _fake_run(monkeypatch, tmp_path, [None, "press_key"], write_result_after_key=True,
+                             launches=launches, login="auto", app={"ok": False, "reason": "still updating"})
+    assert result["launched_by"] == "directly" and len(launches) == 2   # the app's try, then the direct launch
+    assert result["login"]["battlenet"]["reason"] == "still updating" and result["results"]
+
+
+def test_a_login_screen_on_the_app_route_asks_the_user_to_log_in_to_the_app(monkeypatch, tmp_path):
     alerts = []
-    result, _, closed = _fake_run(monkeypatch, tmp_path, ["login"] * 200, login="auto", alerts=alerts, login_wait=60)
+    result, _, closed = _fake_run(monkeypatch, tmp_path, ["login"] * 200, login="auto", alerts=alerts, login_wait=60,
+                                  app={"ok": True})
     assert result["login_required"] and alerts == [7] and result["login"]["asked_user"] and not closed
-    assert 60 <= result["seconds"] < 90 and "Battle.net app" in result["hint"]
+    assert 60 <= result["seconds"] < 90 and "Battle.net app once" in result["hint"]
     alerts.clear()
     result, _, _ = _fake_run(monkeypatch, tmp_path, ["login"] * 5 + [None, "press_key"], write_result_after_key=True,
                              login="wait", alerts=alerts)
     assert result["results"] and alerts and "login_required" not in result and result["login"]["screen_seen"]
+
+
+def test_login_battlenet_without_the_app_is_refused(monkeypatch, tmp_path):
+    with pytest.raises(ToolError) as e:
+        _fake_run(monkeypatch, tmp_path, [None] * 5, login="battlenet")
+    assert e.value.code == "not_found" and "WC3MCP_BATTLENET" in e.value.hint
 
 
 def test_a_game_stuck_at_the_main_menu_is_started_again(monkeypatch, tmp_path):
@@ -316,12 +341,11 @@ def test_the_screenshot_series_starts_when_the_map_runs(monkeypatch, tmp_path):
 
 
 def test_a_continued_game_is_left_to_the_user_and_a_timeout_on_the_login_keeps_it(monkeypatch, tmp_path):
-    runner, launches, warmed = game.Game(), [], []
-    monkeypatch.setattr(game.Game, "_warm_up", lambda self: warmed.append(1) or {"ok": False})
+    runner, launches = game.Game(), []
     first, _, closed = _fake_run(monkeypatch, tmp_path, ["login"] * 20, runner=runner, launches=launches)   # stop
     assert first["login_required"] and not closed
     again, _, closed = _fake_run(monkeypatch, tmp_path, ["login"] * 100, runner=runner, launches=launches,
-                                 login="auto", warm_up={"ok": True})
+                                 login="auto", app={"ok": True})
     assert again["continued_game"] and again["login_required"] and len(launches) == 1 and not closed
     timed, _, closed = _fake_run(monkeypatch, tmp_path, ["login"] * 400, login="wait", login_wait=1000)
     assert timed["login_required"] and not closed and timed["login_seconds"] > 0
@@ -334,14 +358,12 @@ def test_a_relaunch_brings_the_new_game_to_the_front_again(monkeypatch, tmp_path
     assert result["relaunched"] == ["stuck_at_main_menu"] and len(raised) > 10   # no marker: it keeps raising
 
 
-def test_game_close_stops_a_run_in_its_battlenet_sign_in(monkeypatch, tmp_path):
+def test_game_close_stops_a_run_waiting_for_the_battlenet_app(monkeypatch, tmp_path):
     runner = game.Game()
 
-    def warm(self):
-        self.close()   # the user gives up while the Battle.net app is signing in
-        return {"ok": False, "reason": "cancelled"}
+    def waiting_app(self):
+        self.close()   # the user gives up while the app is starting the game
+        return None, {"ok": False, "reason": "cancelled"}
 
-    launches = []
-    result, _, _ = _fake_run(monkeypatch, tmp_path, ["login"] * 10, runner=runner, launches=launches, login="auto",
-                             warm_up=warm)
-    assert len(launches) == 1 and result["cancelled"] and "relaunched" not in result
+    result, _, _ = _fake_run(monkeypatch, tmp_path, ["login"] * 10, runner=runner, login="auto", app=waiting_app)
+    assert result["cancelled"] and "relaunched" not in result and result["login"]["battlenet"]["ok"] is False

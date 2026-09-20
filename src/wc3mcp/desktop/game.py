@@ -12,7 +12,7 @@ import win32gui
 
 from .. import config
 from ..errors import ToolError
-from . import win
+from . import battlenet, win
 
 EXE_NAME = "Warcraft III.exe"
 PRELOAD = re.compile(r'call Preload\( "(.*)" \)')
@@ -29,14 +29,14 @@ PRELOAD_LIMIT = 255
 LOGIN_WAIT = 30
 LOGIN_SETTLE = 10        # seconds of login panel before anything is done about it: a remembered login signs in first
 USER_LOGIN_WAIT = 120    # how long a run waits for the user to log in by hand (login="wait", or auto after Battle.net)
-# what a Battle.net login screen gets: "auto" signs the game in through the Battle.net app (no credentials anywhere)
-# and, if that cannot, asks the user and waits; "battlenet" only the app; "wait" only the user; "stop" ends the run
-# after LOGIN_WAIT with login_required (the game stays open for the same call to continue)
+# how the game is started, which decides whether it meets the Battle.net login panel at all: "auto" (default) and
+# "battlenet" start it through the Battle.net desktop app, which hands it the app's own session (see battlenet.py);
+# "wait" and "stop" start it directly, which means a login panel unless the game still has a session of its own -
+# "wait" then asks the user and waits, "stop" ends the run with login_required (the game stays open for the same
+# call to continue in). "auto" falls back to the "wait" behaviour when the app is not installed or cannot start it.
 LOGIN_MODES = ("auto", "battlenet", "wait", "stop")
 MENU_WAIT = 20           # seconds at the main menu after a -loadfile launch before the run starts the game again
 MAX_RELAUNCHES = 2
-WARM_UP_TIMEOUT = 150    # the Battle.net app may start (and update) itself first
-WARM_UP_SETTLE = 6       # seconds at the main menu, so the signed-in game has stored its session
 PAUSE_NOTE = ("an open dialog (DialogDisplay) pauses a single-player game until it is clicked, so timers and "
               "probe_seconds wait for it (screenshot=true shows it)")
 
@@ -55,15 +55,26 @@ def _alert(window: int) -> None:
         pass
 
 
-def _end_process(pid: int) -> None:
-    """Close a game this server did not launch itself but asked the Battle.net app to start (the warm-up)."""
-    for h in win.windows(pid):
-        win.close(h)
-    deadline = time.time() + 20
-    while time.time() < deadline and win.running(pid):
-        time.sleep(1)
-    if win.running(pid):
-        subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, check=False)
+class _AppGame:
+    """A game the Battle.net app started for a run: the part of subprocess.Popen the run loop and _close() use, so
+    a game started through the app is handled like one this server started itself."""
+
+    def __init__(self, pid: int):
+        self.pid = pid
+
+    def poll(self) -> int | None:
+        return None if win.running(self.pid) else 0
+
+    def wait(self, timeout: float | None = None) -> int:
+        deadline = time.time() + (timeout if timeout is not None else 3600)
+        while time.time() < deadline:
+            if not win.running(self.pid):
+                return 0
+            time.sleep(0.5)
+        raise subprocess.TimeoutExpired(EXE_NAME, timeout or 0)
+
+    def kill(self) -> None:
+        subprocess.run(["taskkill", "/PID", str(self.pid), "/F"], capture_output=True, check=False)
 
 
 def parse_preload(text: str) -> list[str]:
@@ -123,18 +134,6 @@ def screen_state(image) -> str | None:
     return None
 
 
-def battlenet_exe() -> Path | None:
-    """The Battle.net desktop app, which signs the game in with its own remembered login."""
-    import os
-
-    for candidate in (os.environ.get("WC3MCP_BATTLENET"),
-                      os.path.expandvars(r"%ProgramFiles(x86)%\Battle.net\Battle.net.exe"),
-                      os.path.expandvars(r"%ProgramFiles%\Battle.net\Battle.net.exe")):
-        if candidate and Path(candidate).is_file():
-            return Path(candidate)
-    return None
-
-
 def truncated_lines(found: dict[str, list[str]]) -> dict[str, list[int]]:
     """Indexes of result lines long enough that the game has probably cut them off, per result file."""
     rows = {name: [i for i, line in enumerate(lines) if len(line) >= PRELOAD_LIMIT] for name, lines in found.items()}
@@ -169,7 +168,6 @@ class Game:
         # a run started with wait=False: the thread running it, its progress and, once it ends, its result
         self.run: dict | None = None
         self.cancelled = False           # game_close asked the running test to stop
-        self.warm_pid: int | None = None  # the game the Battle.net app started for a sign-in, while it runs
 
     @staticmethod
     def exe() -> Path:
@@ -260,6 +258,23 @@ class Game:
         self.launched[process.pid] = process
         return process
 
+    def _launch_app(self, app: Path, target: Path):
+        """Start the map through the Battle.net app, which hands the game the app's own session, so the run never
+        meets the login panel. Returns (the game, what the app did); the game is None when none started."""
+        try:
+            copy = battlenet.copy_map(target)
+        except OSError as e:
+            raise ToolError("file_in_use", f"the map the Battle.net app launches could not be written: {e}",
+                            hint="a game from an earlier run still holds it: game_close, then this call again")
+        info = battlenet.configure(app, copy)
+        pid, started = battlenet.launch(app, EXE_NAME)
+        info.update(started)
+        if pid is None:
+            return None, info
+        process = _AppGame(pid)
+        self.launched[pid] = process
+        return process, info
+
     def _test(self, job: dict, target: Path, timeout: float, results: list[str] | None, close: bool,
               screenshot: bool, shots: int = 0, shot_every: float = 3.0, login: str = "auto",
               login_wait: float = USER_LOGIN_WAIT, started_file: str | None = None) -> dict:
@@ -274,21 +289,30 @@ class Game:
         crashes = self._crash_folders()
         previous = win32gui.GetForegroundWindow()
         started = time.time()
+        app = battlenet.exe() if login in ("auto", "battlenet") and not attached else None
+        if login == "battlenet" and app is None and not attached:
+            raise ToolError("not_found", "no Battle.net app found, so the game cannot be started through it",
+                            hint="install it, or set WC3MCP_BATTLENET to its Battle.net.exe, or use login='wait' "
+                                 "(the game then asks the user to log in)")
+        through_app, launch_info = False, None
         if attached:   # the same test again after the user logged in: continue in that game, no new launch
             process, launched_at = waiting[0], waiting[1]
         else:
             for path in [*wanted.values(), *([marker] if marker else [])]:
                 path.unlink(missing_ok=True)  # never read a stale result from an earlier run
-            process, launched_at = self._launch(target), started
+            process, launched_at = None, started
+            if app is not None:   # the app hands the game its session: no login panel (battlenet.py)
+                process, launch_info = self._launch_app(app, target)
+                through_app = process is not None
+            if process is None:
+                process = self._launch(target)
         found: dict[str, list[str]] = {}
         focused_at, raised, keys = 0.0, 0, 0
         checked_at, state = 0.0, None
         login_since, menu_since, map_since = None, None, None
-        outcome, relaunches, warm_up, asked_user, login_seen = None, [], None, False, False
+        outcome, relaunches, asked_user, login_seen = None, [], False, False
         shot_at, series, missed = 0.0, [], []
-        grace = 0.0   # time spent on logins and the Battle.net sign-in: it does not count against the timeout
-        # a game the user is already logging into (the same call again) is left to them
-        can_warm_up = login in ("auto", "battlenet") and not attached and battlenet_exe() is not None
+        grace = 0.0   # time spent on login screens: it does not count against the timeout
         while process.poll() is None and not self.cancelled:
             now = time.time()
             if now - started >= timeout + grace + (now - login_since if login_since else 0):
@@ -321,22 +345,14 @@ class Game:
                 menu_since = (menu_since or now) if state == "menu" else None
                 login_seen = login_seen or state == "login"
                 if login_since:
+                    # through the app this means the app itself is logged out, directly it means the game has no
+                    # session of its own: either way only the user can sign in here, and no password is ever typed
                     waited = now - login_since
-                    if can_warm_up and warm_up is None and waited >= LOGIN_SETTLE:
-                        # a remembered login would have signed in by now: let the Battle.net app sign the game in,
-                        # then start this run again - the game keeps that sign-in for the launches after it
-                        self._close(process)
-                        warm_up = self._warm_up()
-                        grace += time.time() - login_since
-                        login_since = None
-                        if self.cancelled:
-                            break
-                        restart = "after_battlenet_sign_in"
-                    elif login == "stop" or (login == "battlenet" and (warm_up is not None or not can_warm_up)):
+                    if login == "stop":
                         if waited >= LOGIN_WAIT:
                             outcome = "login_required"
                             break
-                    elif waited >= LOGIN_SETTLE:   # wait, or auto with no Battle.net sign-in left to try
+                    elif waited >= LOGIN_SETTLE:
                         if not asked_user:
                             _alert(window)
                             asked_user = True
@@ -355,7 +371,8 @@ class Game:
                     self._close(process)
                 if marker is not None:
                     marker.unlink(missing_ok=True)
-                process, launched_at = self._launch(target), time.time()
+                again = self._launch_app(app, target)[0] if through_app and app is not None else None
+                process, launched_at = again or self._launch(target), time.time()
                 login_since = menu_since = map_since = None
                 state, checked_at, focused_at = None, 0.0, 0.0
                 relaunches.append(restart)
@@ -414,22 +431,30 @@ class Game:
                 + ("" if map_since is not None else ". The map never started, so there are none"))
         if attached:
             result["continued_game"] = True
-        if warm_up is None and login_seen and login in ("auto", "battlenet") and not can_warm_up:
-            warm_up = {"ok": False, "reason": "no Battle.net app found (WC3MCP_BATTLENET names its Battle.net.exe if it "
-                                              "lives elsewhere)"}
-        if warm_up is not None or asked_user or login_seen:
+        if not attached:
+            result["launched_by"] = "battlenet_app" if through_app else "directly"
+        if launch_info is not None or asked_user or login_seen:
             result["login"] = {"mode": login, "screen_seen": login_seen,
-                               **({"battlenet": warm_up} if warm_up is not None else {}),
+                               **({"battlenet": launch_info} if launch_info is not None else {}),
                                **({"asked_user": True} if asked_user else {})}
         if relaunches:
             result["relaunched"] = relaunches
         if outcome == "login_required":
             self.waiting = (process, launched_at, digest, sorted(wanted))
             result["login_required"] = True
-            result["hint"] = ("the game shows the Battle.net login screen and nobody signed in within the wait: ask the "
-                              "user to log in there (with 'Keep me logged in'), or to open the Battle.net app and log "
-                              "in to it once so login=auto can sign the game in by itself; then call game_test again "
-                              "with the same arguments: it continues in that game instead of launching a new one")
+            result["hint"] = (("the game started through the Battle.net app still shows its login screen, so the app "
+                               "itself is logged out: ask the user to log in to the Battle.net app once (with 'Keep "
+                               "me logged in'); runs after that need no login at all"
+                               if through_app else
+                               "the Battle.net app could not start the game (login.battlenet says why), so it was "
+                               "started directly and asks for a login: ask the user to log in to the app and to let "
+                               "it finish any update"
+                               if launch_info is not None else
+                               "the game was started directly, which asks for a login unless it still has a session: "
+                               "ask the user to log in there, or use login='auto' so the Battle.net app starts the "
+                               "game and hands it its own session")
+                              + ". Then call game_test again with the same arguments: it continues in the game left "
+                                "open instead of launching a new one")
         elif outcome == "stuck_at_menu":
             result["stuck_at"] = "main_menu"
             result["hint"] = ("the game stayed at its main menu instead of loading the map, also after starting it "
@@ -443,6 +468,7 @@ class Game:
         if close and outcome != "login_required":
             result["closed_by"] = self._close(process)
             result["closed"] = True
+            battlenet.forget_map()   # a Play in the Battle.net app then opens the menu, not this run's map
         else:
             result["closed"] = process.poll() is not None
         if focused_at and previous and win32gui.IsWindow(previous):
@@ -450,53 +476,6 @@ class Game:
         result["focus"] = (f"the game window was brought to the front {raised} time(s) while loading" if raised
                            else "no game window appeared to bring to the front")
         return result
-
-    def _warm_up(self) -> dict:
-        """Start the game once through the Battle.net desktop app, which signs it in with the app's own remembered
-        login (no password typed anywhere), wait for its main menu and close it again: the -launch runs after it
-        find the game signed in. Never touches credentials."""
-        app = battlenet_exe()
-        if app is None:
-            return {"ok": False, "reason": "the Battle.net app is not installed (WC3MCP_BATTLENET names its "
-                                           "Battle.net.exe if it lives elsewhere)"}
-        before = set(win.processes(EXE_NAME))
-        start = time.time()
-        subprocess.Popen([str(app), "--exec=launch W3"])
-        pid, menu_at, login_at, reason = None, None, None, None
-        while time.time() - start < WARM_UP_TIMEOUT and not self.cancelled:
-            time.sleep(2)
-            fresh = [p for p in win.processes(EXE_NAME) if p not in before]
-            if not fresh:
-                continue
-            pid = self.warm_pid = fresh[0]
-            window = next(iter(win.windows(pid)), None)
-            if not window:
-                continue
-            win.activate(window)
-            time.sleep(0.3)
-            if win32gui.GetForegroundWindow() != window:
-                continue
-            try:
-                state = screen_state(win.client_image(window))
-            except (win32gui.error, OSError):
-                state = None
-            now = time.time()
-            menu_at = (menu_at or now) if state == "menu" else None
-            login_at = (login_at or now) if state == "login" else None
-            if menu_at and now - menu_at >= WARM_UP_SETTLE:
-                break
-            if login_at and now - login_at >= LOGIN_WAIT:
-                reason = ("the game started from the Battle.net app shows the login screen too: the app itself is "
-                          "not logged in - ask the user to open the Battle.net app and log in with 'Keep me logged in'")
-                break
-        ok = bool(menu_at and time.time() - menu_at >= WARM_UP_SETTLE)
-        if pid is not None:
-            _end_process(pid)
-            self.warm_pid = None
-        if not ok and reason is None:
-            reason = (f"the Battle.net app did not bring the game to its main menu within {WARM_UP_TIMEOUT:g} s: it "
-                      "may be updating, or waiting for its own login - ask the user to open it and log in once")
-        return {"ok": ok, "seconds": round(time.time() - start, 1), **({"reason": reason} if not ok else {})}
 
     def _close(self, process: subprocess.Popen) -> str:
         """End a game this server launched: "exited" (it had), "closed" (it quit when its window was closed) or
@@ -545,11 +524,10 @@ class Game:
                 "missing_files": missing_files[:50]}
 
     def close(self) -> dict:
-        self.cancelled = True   # a run in its Battle.net sign-in must not start the game again afterwards
+        self.cancelled = True   # a run waiting for the Battle.net app must not start the game again afterwards
         closed = [pid for pid, p in list(self.launched.items()) if self._close(p)]
-        if self.warm_pid is not None:
-            _end_process(self.warm_pid)
-            closed.append(self.warm_pid)
+        self.waiting = None
+        battlenet.forget_map()
         job = self.run
         if job is not None and job["thread"] is not None and job["thread"].is_alive():
             job["thread"].join(30)   # closing the game ends its loop; then the run can report what it collected

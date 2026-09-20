@@ -75,3 +75,25 @@ def test_balance_report_refuses_what_it_cannot_read(project, catalog):
         balance_report(project, catalog, "unit", ["zzzz"])
     assert e.value.code == "not_found"
     assert balance_report(project, catalog, "item")["objects"] == []           # nothing custom yet: no invented rows
+
+
+def test_a_hero_is_read_through_its_attributes_and_set_beside_heroes(project, catalog):
+    """Every hero's unit fields say life 100, mana 0 and damage 2: the attributes and the gameplay constants carry
+    the rest, so a report that reads the fields alone compares heroes with Peasants (improvement 9a)."""
+    from wc3mcp.ops.constants import constants_edit
+
+    objdata_edit(project, catalog, "unit", [{"op": "create", "base": "Hpal", "id": "H001",
+                                             "set": {"ustr": 40, "ustp": 4, "uagi": 15, "uint": 20, "ugol": 425}}])
+    constants_edit(project, catalog, {"MaxHeroLevel": 25})
+    row = next(r for r in balance_report(project, catalog, "unit", ["H001"])["objects"] if r["id"] == "H001")
+    assert row["hero"]["level_cap"] == 25 and len(row["hero"]["levels"]) == 2
+    first, top = row["hero"]["levels"]
+    assert first["life"] == 100 + 40 * 25 and first["mana"] == 20 * 15   # StrHitPointBonus, IntManaBonus
+    assert first["primary_attribute"] == "strength" and first["attack_damage_bonus"] == 40
+    assert top["attributes"]["strength"] == 40 + 24 * 4 and top["life"] == 100 + 136 * 25
+    assert row["life"] == first["life"] and row["damage_per_second"] == first["damage_per_second"]
+    assert {s["id"] for s in row["closest_stock"]} <= {"Hamg", "Hmkg", "Hpal", "Hblm", "Obla", "Ofar", "Otch",
+                                                       "Oshd", "Udea", "Udre", "Ulic", "Ucrl", "Ekee", "Emoo",
+                                                       "Ewar", "Edem"}
+    plain = next(r for r in balance_report(project, catalog, "unit", ["hfoo"])["objects"] if r["id"] == "hfoo")
+    assert "hero" not in plain and plain["life"] == 420
