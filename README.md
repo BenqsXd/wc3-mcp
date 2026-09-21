@@ -68,6 +68,20 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.3
+
+- **Cliff steps settle themselves.** The World Editor keeps neighbouring corners (diagonals included) at most 2 cliff
+  levels apart and rewrites anything steeper when it loads a map. `terrain_edit` now does it first: an op's own
+  corners keep the level asked for, the ground around them steps, and the result reports `cliffs` per op. A carved
+  corridor keeps its full width, a 2-tile doorway stays open, and what the tools read is what the editor keeps.
+  Terrain written by an older version is lowered to valid steps on the next edit, with a warning.
+- **Profile sections match ids whatever their case**, so `Ycgd`'s model (section `[YCgd]`) is found and `model_ok`
+  tells the truth.
+- **`constants_get`** takes `query` (over keys and the editor's display names) and returns keys it does not know
+  under `unknown` beside the ones it answered.
+- **A library custom script** gets an `InitTrig` that only creates the trigger, instead of registering a function
+  that takes parameters (which fails pjass).
+
 ## What's new in 1.2
 
 - **Game tests no longer ask for a Battle.net login.** The game started on its own (`Warcraft III.exe -launch -loadfile ...`) has no session, and signing the Battle.net app in does not give it one - which is why 1.1's sign-in did not help. `game_test` (`login="auto"`) now has the **app itself start the game**, the way its Play button does (`-launch -uid w3`), and the app hands the game its own session: no login screen, and no password read, typed or stored anywhere. The map is copied to one fixed path inside the server's folder and that path is stored in the app's launch options for Warcraft III, so only the first run has to restart the app; the copy is removed when the run closes the game. Verified live: from `--exec=launch W3` to the map's loading screen in 13 s, `login.screen_seen: false`. The app has to be logged in once, with "Keep me logged in".

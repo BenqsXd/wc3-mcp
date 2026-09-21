@@ -38,6 +38,18 @@ def defaults(catalog) -> dict[str, tuple[str, str]]:
     return out
 
 
+def names(catalog) -> dict[str, str]:
+    """Key -> the World Editor's display name (Units/MiscMetaData.slk, field -> displayName)."""
+    path = catalog.storage.resolve("Units/MiscMetaData.slk")
+    data = catalog.storage.read(path) if path else None
+    if not data:
+        return {}
+    from ..gamedata.slk import parse_slk
+
+    return {row["field"]: catalog.westring(row.get("displayName", ""))
+            for row in parse_slk(data).rows.values() if row.get("field")}
+
+
 def _map_values(project) -> dict[str, str]:
     try:
         data = project.read(MAP_FILE)
@@ -57,19 +69,27 @@ def values(project, catalog) -> dict[str, str]:
     return {**{key: value for key, (value, _) in defaults(catalog).items()}, **_map_values(project)}
 
 
-def constants_get(project, catalog, keys: list[str] | None = None, modified_only: bool = False) -> dict:
+def constants_get(project, catalog, keys: list[str] | None = None, modified_only: bool = False,
+                  query: str | None = None) -> dict:
     """The constants of the map: the game's own values with the map's own ones (war3mapMisc.txt) over them."""
-    base, mine = defaults(catalog), _map_values(project)
+    base, mine, shown = defaults(catalog), _map_values(project), names(catalog)
+    unknown: list[str] = []
     if keys is not None:
         unknown = [k for k in keys if k not in base and k not in mine]
-        if unknown:
+        keys = [k for k in keys if k not in unknown]
+        if not keys:   # nothing left to answer, so the misspelling is the whole answer
             raise ToolError("unknown_constant", f"no gameplay constant {', '.join(unknown[:5])}",
-                            hint="constants_get without keys lists every constant the game defines")
+                            hint='constants_get query="..." searches keys and display names')
     wanted = keys if keys is not None else sorted(set(base) | set(mine))
+    if query:
+        q = query.casefold()
+        wanted = [k for k in wanted if q in k.casefold() or q in shown.get(k, "").casefold()]
     out = []
     for key in wanted:
         value, source = base.get(key, (None, None))
         row = {"key": key, "value": mine.get(key, value), "modified": key in mine}
+        if shown.get(key):
+            row["name"] = shown[key]
         if key in mine and value is not None:
             row["default"] = value
         if source:
@@ -79,7 +99,8 @@ def constants_get(project, catalog, keys: list[str] | None = None, modified_only
         if modified_only and not row["modified"]:
             continue
         out.append(row)
-    return {"count": len(out), "file": MAP_FILE, "has_file": bool(mine), "constants": out}
+    return {"count": len(out), "file": MAP_FILE, "has_file": bool(mine), "constants": out,
+            **({"unknown": unknown} if unknown else {})}
 
 
 def constants_edit(project, catalog, values: dict | None = None, reset: list[str] | None = None) -> dict:

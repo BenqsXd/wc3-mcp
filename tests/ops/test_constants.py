@@ -50,6 +50,18 @@ def test_setting_the_level_cap_writes_the_map_file_and_resetting_removes_it(proj
     assert constants_get(project, catalog, modified_only=True)["constants"] == []
 
 
+def test_constants_get_answers_the_keys_it_found_and_names_the_rest(project, catalog):
+    doc = constants_get(project, catalog, ["PawnItemRate", "SellItemRate", "ItemSellRate"])
+    assert [c["key"] for c in doc["constants"]] == ["PawnItemRate"]
+    assert doc["unknown"] == ["SellItemRate", "ItemSellRate"]
+
+
+def test_constants_get_searches_keys_and_names(project, catalog):
+    keys = {c["key"] for c in constants_get(project, catalog, query="pawn")["constants"]}
+    assert {"PawnItemRate", "PawnItemRange"} <= keys
+    assert any(c.get("name") for c in constants_get(project, catalog, query="MaxHeroLevel")["constants"])
+
+
 def test_a_misspelt_or_unusable_value_is_refused(project, catalog):
     with pytest.raises(ToolError) as e:
         constants_edit(project, catalog, {"MaxHerosLevel": 25})

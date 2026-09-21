@@ -4,7 +4,7 @@ from corpus import HAVE_INSTALL, _storage, ladder_maps, open_sample
 from wc3mcp.errors import ToolError
 from wc3mcp.formats import wct, wtg
 from wc3mcp.gamedata.catalog import Catalog
-from wc3mcp.ops.triggers import SCRIPT_WARNING, trigger_get, triggers_edit, triggers_tree
+from wc3mcp.ops.triggers import SCRIPT_WARNING, trigger_get, triggers_edit, triggers_tree, wrap_script
 from wc3mcp.project.workspace import MapProject
 
 WARCHASERS = "casc:Maps/Scenario/(4)WarChasers.w3m"
@@ -263,3 +263,21 @@ def test_a_handle_variable_type_the_editor_has_no_global_for_is_named(melee, cat
     with pytest.raises(ToolError) as e:
         triggers_edit(melee, catalog, [{"op": "variable", "name": "Nope", "type": "spaceship"}])
     assert "data_search kind=trigger_type" in e.value.hint
+
+
+from wc3mcp.ops.triggers import wrap_script  # noqa: E402
+
+
+def test_a_library_trigger_gets_an_init_that_registers_nothing():
+    """A script of helper functions that all take parameters: registering one fails pjass."""
+    text = "function Lib_Add takes integer a, integer b returns integer\n    return a + b\nendfunction\n"
+    script, note, _ = wrap_script("Lib", text, lua=False)
+    assert "TriggerAddAction" not in script and "function InitTrig_Lib takes nothing returns nothing" in script
+    assert "registers nothing" in note
+
+
+def test_the_first_parameterless_function_is_the_action_when_no_trig_actions_exists():
+    text = ("function Helper takes unit u returns nothing\nendfunction\n"
+            "function Run takes nothing returns nothing\nendfunction\n")
+    script, note, _ = wrap_script("T", text, lua=False)
+    assert "call TriggerAddAction( gg_trg_T, function Run )" in script and "Run" in note

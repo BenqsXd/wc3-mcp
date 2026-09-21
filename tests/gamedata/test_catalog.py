@@ -163,3 +163,9 @@ def test_compact_passes_documents_without_field_metadata_through(cat):
                          ("icon", "War3.w3mod:ReplaceableTextures/CommandButtons/BTNFootman.dds")):
         doc = cat.get(kind, obj_id)
         assert compact(doc) == doc, kind
+
+
+def test_a_skin_section_spelled_in_another_case_still_gives_the_model(cat):
+    """Doodads.slk has Ycgd, DoodadSkins.txt names the section [YCgd]; the game matches either."""
+    model = cat.model("doodad", "Ycgd")
+    assert model and "GeneralDecals" in model[0]

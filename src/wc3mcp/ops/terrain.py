@@ -290,6 +290,78 @@ def _distance_to_segment(px: float, py: float, ax: float, ay: float, bx: float, 
     return math.dist((px, py), (ax + along * dx, ay + along * dy))
 
 
+MAX_STEP = 2   # the World Editor keeps neighbouring corners (diagonals too) at most two cliff levels apart
+CLIFFS_NOTE = ("the World Editor keeps neighbouring corners at most 2 cliff levels apart (it rewrites steeper steps "
+               "when it loads a map), so each op's own corners keep the level asked for and blended counts the "
+               "corners around them that moved to make the slope; a carved area is walkable to its edge")
+
+
+def cliff_levels(t: w3e.Terrain):
+    """The cliff level of every corner as an int array [row][column], rows south to north."""
+    return (np.asarray(t.cliffs, dtype=np.int32) & 15).reshape(t.height, t.width)
+
+
+def _set_levels(t: w3e.Terrain, levels) -> None:
+    cliffs = np.asarray(t.cliffs, dtype=np.int32).reshape(t.height, t.width)
+    t.cliffs = ((cliffs & ~15) | levels).ravel().tolist()
+
+
+def _neighbours(levels):
+    """The eight neighbour arrays of every corner (edge corners repeat themselves)."""
+    h, w = levels.shape
+    p = np.pad(levels, 1, mode="edge")
+    return [p[1 + dy:1 + dy + h, 1 + dx:1 + dx + w] for dy in (-1, 0, 1) for dx in (-1, 0, 1) if dx or dy]
+
+
+def steep_pairs(levels) -> int:
+    """How many neighbouring corners (diagonals included) are more than MAX_STEP levels apart."""
+    return int(sum((np.abs(levels - n) > MAX_STEP).sum() for n in _neighbours(levels)) // 2)
+
+
+def _rings(seed, limit: int):
+    """Corner steps (a diagonal counts one) from the True corners of `seed`; limit + 1 beyond limit."""
+    dist = np.where(seed, 0, limit + 1)
+    grown = seed.copy()
+    for ring in range(1, limit + 1):
+        grown = np.logical_or.reduce([grown, *_neighbours(grown)])
+        dist[grown & (dist > ring)] = ring
+    return dist
+
+
+def settle_cliffs(t: w3e.Terrain, fixed) -> int:
+    """Move the corners outside `fixed` (bool [row][column]) just far enough that no two neighbours are more than
+    MAX_STEP levels apart; the corners in `fixed` keep theirs. Returns how many corners moved."""
+    levels = cliff_levels(t)
+    low, high = np.zeros_like(levels), np.full_like(levels, 15)
+    limit = 15 // MAX_STEP + 1
+    for level in np.unique(levels[fixed]):
+        dist = _rings(fixed & (levels == level), limit)
+        low = np.maximum(low, level - MAX_STEP * dist)
+        high = np.minimum(high, level + MAX_STEP * dist)
+    settled = np.where(fixed, levels, np.minimum(np.maximum(levels, low), high))
+    moved = int((settled != levels).sum())
+    if moved:
+        _set_levels(t, settled)
+    return moved
+
+
+def _lower_steep(t: w3e.Terrain) -> int:
+    """A step steeper than MAX_STEP that no op of this batch made (a map edited by an older version): lower the high
+    side until none is left. ponytail: the editor itself also raises the low side; this only has to make the map
+    valid and deterministic, so it only lowers."""
+    levels, moved = cliff_levels(t), 0
+    while True:
+        floor = np.minimum.reduce(_neighbours(levels)) + MAX_STEP
+        high = levels > floor
+        if not high.any():
+            break
+        moved += int(high.sum())
+        levels = np.where(high, floor, levels)
+    if moved:
+        _set_levels(t, levels)
+    return moved
+
+
 class _Brush:
     """Brush operations on a parsed terrain; raise ToolError("bad_value") on bad input."""
 
@@ -297,6 +369,7 @@ class _Brush:
         self.t, self.catalog, self.added = t, catalog, {"tiles": [], "cliff_tiles": []}
         self.painted: dict[tuple[int, int], int] = {}   # corner -> tile index painted by this batch
         self.info: list[dict] = []   # what water ops ended up with: the stored level and the depths it made
+        self.area: list[tuple[int, int]] = []   # a cliff op's own corners: terrain_edit keeps them at their level
 
     def tell(self, path: str, **fields) -> None:
         self.info.append({"op": path, **fields})
@@ -409,6 +482,7 @@ class _Brush:
                 fields["cliff_texture"] = self._cliff_index(op["cliff"], f"{path}.cliff")
             for cx, cy, _ in corners:
                 w3e.set_corner(t, cx, cy, **fields)
+            self.area = [(cx, cy) for cx, cy, _ in corners]   # terrain_edit keeps these at the level asked for
         elif kind == "water":
             level = op.get("level")
             if level is None:
@@ -464,18 +538,27 @@ def terrain_edit(project, catalog, ops: list, quiet: list | None = None) -> dict
     if quiet - QUIET:
         raise _bad("quiet", f"expected any of {sorted(QUIET)}")
     brush = _Brush(t, catalog)
+    cliffs: list[dict] = []
     for i, op in enumerate(ops):
         path = f"ops[{i}]"
         try:
             if not isinstance(op, dict) or op.get("op") not in BRUSH_KEYS:
                 raise ToolError("bad_op", f"{path}: unknown op {op.get('op') if isinstance(op, dict) else op!r}",
                                 hint=_HINT)
+            levels_before = cliff_levels(t)
+            brush.area = []
             brush.apply(op, path)
+            fixed = cliff_levels(t) != levels_before
+            for cx, cy in brush.area:
+                fixed[cy, cx] = True
+            if fixed.any():
+                cliffs.append({"op": path, "corners": int(fixed.sum()), "blended": settle_cliffs(t, fixed)})
         except ToolError as e:
             e.details.setdefault("op_index", i)
             if e.code == "bad_value" and not e.hint:
                 e.hint = _HINT
             raise
+    legacy = _lower_steep(t) if steep_pairs(cliff_levels(t)) else 0
     data = w3e.serialize(t)
     changed = data != before
     if changed:
@@ -489,7 +572,13 @@ def terrain_edit(project, catalog, ops: list, quiet: list | None = None) -> dict
         if count >= PAINT_WARN_CORNERS and effects and "tile_pathing" not in quiet:
             warnings.append(f"painted {count} corners with {tile} ({catalog.name('tile', tile)}): "
                             + " and ".join(effects))
+    if legacy:
+        warnings.append(f"{legacy} corners were more than 2 cliff levels above a neighbour (terrain written by an "
+                        "older version of these tools); they were lowered to 2-level steps, which the World Editor "
+                        "would have forced anyway: check terrain_render around the cliffs")
     out = {"changed": changed, "palette": _palette(t), "palette_added": brush.added, "warnings": warnings}
+    if cliffs:
+        out["cliffs"], out["cliffs_note"] = cliffs, CLIFFS_NOTE
     if brush.info:
         out["water"] = brush.info
         out["water_note"] = (f"level is the stored surface z (kept in quarter units, so it can differ from the one asked "

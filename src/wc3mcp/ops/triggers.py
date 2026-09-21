@@ -182,8 +182,18 @@ def wrap_script(name: str, text: str, lua: bool) -> tuple[str, str | None, int]:
                 f"function {actions} takes nothing returns nothing\n{body}endfunction\n")
         note, above = f"wrapped the script in {actions} and added InitTrig_{ident}", 1
     else:
-        actions = actions if actions in functions else functions[0]
-        note = f"added InitTrig_{ident}, which registers {actions}"
+        free = (re.findall(r"^\s*function\s+([A-Za-z_][\w.]*)\s*\(\s*\)", text, re.M) if lua else
+                re.findall(r"^\s*function\s+([A-Za-z_]\w*)\s+takes\s+nothing\b", text, re.M))
+        if actions not in free:   # registering a function that takes parameters fails pjass
+            actions = free[0] if free else None
+        note = (f"added InitTrig_{ident}, which registers {actions}" if actions else
+                f"added InitTrig_{ident}, which registers nothing: the script defines no function that takes "
+                f"nothing (a library), so define Trig_{ident}_Actions to run code")
+    if actions is None:
+        init = (f"\nfunction InitTrig_{ident}()\n    gg_trg_{ident} = CreateTrigger()\nend\n") if lua else (
+            f"\nfunction InitTrig_{ident} takes nothing returns nothing\n"
+            f"    set gg_trg_{ident} = CreateTrigger(  )\nendfunction\n")
+        return text.rstrip("\n") + "\n" + init, note, above
     init = (f"\nfunction InitTrig_{ident}()\n    gg_trg_{ident} = CreateTrigger()\n"
             f"    TriggerAddAction(gg_trg_{ident}, {actions})\nend\n") if lua else (
         f"\nfunction InitTrig_{ident} takes nothing returns nothing\n    set gg_trg_{ident} = CreateTrigger(  )\n"

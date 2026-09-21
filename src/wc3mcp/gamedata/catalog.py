@@ -122,6 +122,7 @@ class Catalog:
         self.variant = "hd" if hd else "sd"
         self._tables: dict[str, Table] = {}
         self._profiles: dict[str, dict] = {}
+        self._profiles_lower: dict[str, dict] = {}
         self._fields: dict[str, list[FieldMeta]] = {}
 
     # raw data
@@ -143,6 +144,8 @@ class Catalog:
                 if data:
                     parse_profile(data, into=merged)
             self._profiles[kind] = merged
+            # the game finds sections whatever their case ([YCgd] holds Ycgd's model); an exact match still wins
+            self._profiles_lower[kind] = {k.lower(): v for k, v in reversed(list(merged.items()))}
         return self._profiles[kind]
 
     @cached_property
@@ -254,7 +257,7 @@ class Catalog:
     # values
     def _raw(self, kind: str, obj_id: str, source: str, key: str) -> str | None:
         if source == "Profile":
-            section = self.profile(kind).get(obj_id, {})
+            section = self.profile(kind).get(obj_id) or self._profiles_lower[kind].get(obj_id.lower(), {})
             k = key.lower()
             return section.get(f"{k}:{self.variant}", section.get(k))
         row = self.table(OBJECT_KINDS[kind].slks[source]).rows.get(obj_id)

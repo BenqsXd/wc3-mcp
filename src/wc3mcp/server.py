@@ -497,13 +497,15 @@ def data_file(path: str, encoding: Literal["text", "base64", "hex"] = "text", of
 
 
 @_tool
-def constants_get(path: str, keys: list[str] | None = None, modified_only: bool = False) -> dict:
+def constants_get(path: str, keys: list[str] | None = None, modified_only: bool = False,
+                  query: str | None = None) -> dict:
     """Gameplay constants of an open map (the World Editor's Gameplay Constants, stored as war3mapMisc.txt): the
     game's own values from Units/MiscGame.txt and Units/MiscData.txt with the map's own ones over them. Each entry
     carries value, modified, the game's default and the file it comes from. Without keys it lists every constant
     there is (MaxHeroLevel, NeedHeroXP, HeroAbilityLevelSkip, revive costs, illusion and aura rules, ...);
-    modified_only shows just what the map changes."""
-    return constants_ops.constants_get(_project(path), _catalog("enUS", None, False), keys, modified_only)
+    modified_only shows just what the map changes, query searches keys and display names. Keys that are not
+    constants come back under unknown next to the ones that are."""
+    return constants_ops.constants_get(_project(path), _catalog("enUS", None, False), keys, modified_only, query)
 
 
 @_tool
@@ -791,6 +793,8 @@ def terrain_edit(path: str, ops: list[dict] | None = None, ops_file: str | None 
     which copies a half or a quadrant onto the other side (terrain and placed objects both have it, so a symmetric map
     is built once); and heightmap, which reads a picture over an area. The result reports the tile
     palette and what the ops added to it, and warns when a batch paints an unbuildable or unwalkable tile widely.
+    Cliff levels of neighbouring corners stay at most 2 apart, as the World Editor requires: an op's own corners
+    keep their level and the ground around them steps (cliffs in the result).
     Only a World Editor save recomputes pathing, shadows and minimap icons from new terrain. Water ops answer
     under water with the stored level and the depth range they made (deeper than about 53 stops ground units).
     quiet drops warnings a scenery map does not need: tile_pathing (unbuildable tiles painted widely) and
