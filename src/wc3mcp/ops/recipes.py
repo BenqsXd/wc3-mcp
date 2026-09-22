@@ -58,28 +58,32 @@ def _text(value, path: str) -> str:
 # ---- the recipes -----------------------------------------------------------------------------------------------
 def _damage_detection(p: dict, name: str) -> dict:
     """One place every damage event passes through, which is what a custom spell or armour system needs."""
-    script = f"""function {name}_Event takes nothing returns nothing
+    script = f"""function {name}_Event takes nothing returns boolean
     local unit source = GetEventDamageSource()
     local unit target = GetTriggerUnit()
     local real amount = GetEventDamage()
-    // your rules go here: BlzSetEventDamage(amount * 0.5) halves this hit,
-    // BlzSetEventDamage(0.0) prevents it, and udg_{name}_Last keeps the last amount for other triggers
+    // runs as a condition, inside the UnitDamageTarget call that caused it: it sees globals the dealer set
+    // around that call (an action would run on a new thread, after the dealer reset them)
+    // BlzSetEventDamage(amount * 0.5) halves this hit, BlzSetEventDamage(0.0) prevents it
     set udg_{name}_Last = amount
     set source = null
     set target = null
+    return false
 endfunction
 
 function Trig_{name}_Actions takes nothing returns nothing
     local trigger t = CreateTrigger()
     call TriggerRegisterAnyUnitEventBJ(t, EVENT_PLAYER_UNIT_DAMAGED)
-    call TriggerAddAction(t, function {name}_Event)
+    call TriggerAddCondition(t, Condition(function {name}_Event))
     set t = null
 endfunction
 """
     return {"variables": [{"op": "variable", "name": f"{name}_Last", "type": "real", "category": CATEGORY}],
             "script": script, "run_on_init": True,
             "uses": ["EVENT_PLAYER_UNIT_DAMAGED", "GetEventDamageSource", "BlzSetEventDamage"],
-            "notes": "every hit in the game runs this function, so keep it short; BlzSetEventDamage changes the hit"}
+            "notes": "every hit in the game runs this function inside the damage call, so keep it short; "
+                     "BlzSetEventDamage changes the hit; scripted damage that must land exactly: ATTACK_TYPE_CHAOS "
+                     "+ DAMAGE_TYPE_UNIVERSAL and your own multiplier here"}
 
 
 def _unit_indexer(p: dict, name: str) -> dict:

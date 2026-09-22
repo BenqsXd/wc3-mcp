@@ -69,3 +69,11 @@ def test_a_recipe_refuses_what_it_cannot_build():
     with pytest.raises(ToolError) as e:
         recipe("camera", {}, trigger="9lives")
     assert e.value.code == "bad_value"
+
+
+def test_damage_detection_runs_inside_the_damage_call():
+    from wc3mcp.ops.recipes import _damage_detection
+
+    script = _damage_detection({}, "DamageDetection")["script"]
+    assert "TriggerAddCondition(t, Condition(function DamageDetection_Event))" in script
+    assert "function DamageDetection_Event takes nothing returns boolean" in script and "return false" in script
