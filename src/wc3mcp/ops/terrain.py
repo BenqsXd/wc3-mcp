@@ -370,6 +370,7 @@ class _Brush:
         self.painted: dict[tuple[int, int], int] = {}   # corner -> tile index painted by this batch
         self.info: list[dict] = []   # what water ops ended up with: the stored level and the depths it made
         self.area: list[tuple[int, int]] = []   # a cliff op's own corners: terrain_edit keeps them at their level
+        self.snapped: list[str] = []   # ops whose area held no corner and used the nearest corner line instead
 
     def tell(self, path: str, **fields) -> None:
         self.info.append({"op": path, **fields})
@@ -426,9 +427,31 @@ class _Brush:
             scale, what = r, f"circle at ({x}, {y}) radius {r}"
         else:
             out, scale, what = [(cx, cy, 0.0) for cx, cy in self._window(*_bounds(t))], 1.0, "whole map"
+        if not out and what != "whole map":
+            out = self._nearest(op, path)
+            if out:
+                self.snapped.append(path)
         if not out:
             raise _bad(path, f"the {what} covers no terrain corner; the map spans {_bounds(t)}")
         return out, scale
+
+    def _nearest(self, op: dict, path: str):
+        """The corners an area narrower than the corner spacing lies between: the nearest corner line of a path or
+        a rect, the nearest corner of a circle (terrain_get snaps the same way)."""
+        t = self.t
+        if "rect" in op:
+            left, bottom, right, top = _area(op["rect"])
+            mid_x = min(max(round(((left + right) / 2 - t.offset_x) / 128), 0), t.width - 1)
+            mid_y = min(max(round(((bottom + top) / 2 - t.offset_y) / 128), 0), t.height - 1)
+            cols = range(math.ceil((left - t.offset_x) / 128), math.floor((right - t.offset_x) / 128) + 1) or [mid_x]
+            rows = range(math.ceil((bottom - t.offset_y) / 128), math.floor((top - t.offset_y) / 128) + 1) or [mid_y]
+            return [(cx, cy, 0.0) for cy in rows for cx in cols if 0 <= cx < t.width and 0 <= cy < t.height]
+        widened = dict(op)
+        if "path" in op:
+            widened["width"] = 128.0          # half the corner spacing on each side reaches the nearest line
+        elif AREA_KEYS & set(op):
+            widened["radius"] = 128.0 / math.sqrt(2) + 0.5    # reaches the nearest corner from anywhere
+        return self.corners(widened, path)[0] if widened != op else []
 
     def _flag(self, op: dict, path: str) -> bool:
         return _bool(op.get("value", True), f"{path}.value")
@@ -577,6 +600,10 @@ def terrain_edit(project, catalog, ops: list, quiet: list | None = None) -> dict
                         "older version of these tools); they were lowered to 2-level steps, which the World Editor "
                         "would have forced anyway: check terrain_render around the cliffs")
     out = {"changed": changed, "palette": _palette(t), "palette_added": brush.added, "warnings": warnings}
+    if brush.snapped:
+        out["snapped"] = brush.snapped
+        out["snapped_note"] = ("these areas held no corner (corners lie 128 apart), so the nearest corner line was "
+                               "used")
     if cliffs:
         out["cliffs"], out["cliffs_note"] = cliffs, CLIFFS_NOTE
     if brush.info:

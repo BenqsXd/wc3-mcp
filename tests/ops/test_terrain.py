@@ -285,3 +285,39 @@ def test_terrain_get_packs_rows_and_summarises(tmp_path):
         assert error(terrain.terrain_get, project, None, layers, 2, catalog, "pretty").code == "bad_value"
     finally:
         project.close(discard=True)
+
+
+# ---- narrow areas snap to the nearest corner line -------------------------------------------------------------
+def _snap_map(tmp_path, name):
+    from wc3mcp.ops.newmap import new_map
+
+    catalog = Catalog(_storage(), balance="Custom_V1")
+    return new_map(str(tmp_path / name), catalog, width=64, height=64, tileset="L", players=2,
+                   fill_tile="Lgrs"), catalog
+
+
+@pytest.mark.skipif(not HAVE_INSTALL, reason="needs the Warcraft III install")
+def test_a_paint_stroke_between_two_corner_lines_paints_the_nearest_one(tmp_path):
+    p, catalog = _snap_map(tmp_path, "S.w3x")
+    result = terrain.terrain_edit(p, catalog, [{"op": "paint", "tile": "Ldrt", "path": [[-1000, 40], [1000, 40]],
+                                                "width": 60}])
+    assert result["snapped"] == ["ops[0]"]
+    tiles = terrain.terrain_get(p, [-512, 0, -512, 128], ["texture"])["layers"]["texture"]
+    assert [row[0] for row in tiles] == ["Ldrt", "Lgrs"]       # y 0 is 40 away, y 128 is 88 away
+
+
+@pytest.mark.skipif(not HAVE_INSTALL, reason="needs the Warcraft III install")
+def test_a_small_circle_between_corners_paints_the_nearest_corner(tmp_path):
+    p, catalog = _snap_map(tmp_path, "C.w3x")
+    result = terrain.terrain_edit(p, catalog, [{"op": "paint", "tile": "Ldrt", "x": 30, "y": 20, "radius": 10}])
+    assert result["snapped"] == ["ops[0]"]
+    assert terrain.terrain_get(p, [0, 0, 0, 0], ["texture"])["layers"]["texture"][0][0] == "Ldrt"
+
+
+@pytest.mark.skipif(not HAVE_INSTALL, reason="needs the Warcraft III install")
+def test_a_path_stroke_has_round_joins(tmp_path):
+    p, catalog = _snap_map(tmp_path, "J.w3x")
+    terrain.terrain_edit(p, catalog, [{"op": "paint", "tile": "Ldrt", "path": [[-1024, 0], [0, 0], [0, 1024]],
+                                       "width": 512}])
+    # the outside of the bend: 181 units from the polyline, inside the 256 half-width
+    assert terrain.terrain_get(p, [128, -128, 128, -128], ["texture"])["layers"]["texture"][0][0] == "Ldrt"
