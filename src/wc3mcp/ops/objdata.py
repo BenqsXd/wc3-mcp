@@ -143,6 +143,18 @@ RANGE_HINTS = {
 HERO_ABILITIES = 5   # uhab: maxVal 5 in Units/UnitMetaData.slk; with 11 listed, SelectHeroSkill skipped the 9th
 
 
+def object_counts(project) -> dict:
+    """How many custom and modified objects of each kind the map holds (main and skin files merged)."""
+    out = {}
+    for kind in EXTENSIONS:
+        main, skin, _ = _load(project, kind)
+        custom = {e.new_id for om in (main, skin) for e in om.custom}
+        modified = {e.base_id for om in (main, skin) for e in om.original}
+        if custom or modified:
+            out[kind] = {"custom": len(custom), "modified": len(modified)}
+    return out
+
+
 def objdata_get(project, catalog, kind: str, obj_id: str, fields: list[str] | None = None) -> dict:
     main, skin, _ = _load(project, kind)
     strings = load_strings(project)

@@ -416,12 +416,18 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
 
 @_tool
 def map_status(path: str, include_files: bool = True) -> dict:
-    """Status of an open map: format, protection, dirty/deleted files, whether the original changed on disk, and
-    the file list."""
+    """Status of an open map: format, protection, dirty/deleted files, whether the original changed on disk, the file
+    list with sizes, the total size and the saved map's size, and custom/modified object counts per kind (object data
+    grows a map fastest)."""
     p = _project(path)
     status = p.status()
+    files = p.list_files()
+    source = Path(status["source"])
+    status["size"] = {"files": sum(f["size"] for f in files),
+                      "map_file": source.stat().st_size if source.is_file() else None}
+    status["objects"] = objdata_ops.object_counts(p)
     if include_files:
-        status["files"] = p.list_files()
+        status["files"] = files
     return status
 
 

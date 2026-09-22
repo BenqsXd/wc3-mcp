@@ -56,3 +56,12 @@ def test_isit_zero_names_the_unlimited_shape(tmp_path, catalog):
     with pytest.raises(ToolError) as e:
         objdata_edit(p, catalog, "item", [{"op": "set", "id": "rst1", "set": {"isit": 0}}])
     assert "isto" in (e.value.hint or "")
+
+
+def test_object_counts_per_kind(tmp_path, catalog):
+    from wc3mcp.ops.objdata import object_counts
+
+    p = new_map(str(tmp_path / "O.w3x"), catalog, width=64, height=64, players=2)
+    objdata_edit(p, catalog, "unit", [{"op": "create", "base": "hfoo"},
+                                      {"op": "set", "id": "hpea", "set": {"uhpm": 300}}])
+    assert object_counts(p)["unit"] == {"custom": 1, "modified": 1}
