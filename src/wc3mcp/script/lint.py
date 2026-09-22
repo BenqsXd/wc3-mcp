@@ -37,7 +37,16 @@ LEAKS = {"location": ("RemoveLocation", ("Location", "GetUnitLoc", "GetRectCente
          "group": ("DestroyGroup", ("CreateGroup",)),
          "force": ("DestroyForce", ("CreateForce", "GetPlayersAll", "GetPlayersByMapControl")),
          "rect": ("RemoveRect", ("Rect", "RectFromLoc")),
-         "boolexpr": ("DestroyBoolExpr", ("Condition", "Filter", "And", "Or", "Not"))}
+         "boolexpr": ("DestroyBoolExpr", ("Condition", "Filter", "And", "Or", "Not")),
+         "effect": ("DestroyEffect", ("AddSpecialEffect", "AddSpecialEffectTarget", "AddSpecialEffectLoc",
+                                      "AddSpecialEffectTargetUnitBJ", "AddSpecialEffectLocBJ"))}
+ITEM_EVENTS = ("EVENT_PLAYER_UNIT_PICKUP_ITEM", "EVENT_PLAYER_UNIT_DROP_ITEM")
+DAMAGE_EVENTS = ("EVENT_PLAYER_UNIT_DAMAGED", "EVENT_PLAYER_UNIT_DAMAGING", "EVENT_UNIT_DAMAGED")
+INVENTORY_CHANGES = ("RemoveItem", "UnitAddItemById", "UnitAddItem", "UnitRemoveItem", "UnitAddItemToSlotById",
+                     "UnitRemoveItemFromSlot")
+LIFE_CHECK = re.compile(r"UNIT_STATE_LIFE|UNIT_TYPE_DEAD|\bUnitAlive\b|\bGetWidgetLife\b|\bIsUnit(?:Alive|Dead)BJ\b")
+# calls that do the wrong thing on a corpse; reading one (GetUnitTypeId, its owner) is harmless, so it is left out
+ON_ENUMERATED = ("UnitDamageTarget", "IssueTargetOrder", "IssuePointOrder", "IssueImmediateOrder", "KillUnit")
 # natives that answer only inside the event response they belong to: after a wait the event can be another one
 EVENT_NATIVES = ("GetTriggerUnit", "GetAttacker", "GetKillingUnit", "GetDyingUnit", "GetEnteringUnit", "GetLeavingUnit",
                  "GetSpellAbilityUnit", "GetSpellTargetUnit", "GetSpellTargetLoc", "GetSpellAbilityId",
@@ -208,7 +217,76 @@ def _desync(name: str, first_line: int, body: str, text: str) -> list[dict]:
     return out
 
 
-RULES = (_leaks, _event_after_wait, _dead_trigger, _loops, _after_destroy, _desync)
+def handlers(text: str) -> dict[str, list[tuple[str, str]]]:
+    """Function -> [(event, "action" | "condition")] for every function a trigger runs on a registered event: the
+    trigger variable registered with the event and given the function in the same function body."""
+    out: dict[str, list[tuple[str, str]]] = {}
+    # in program order: one init function makes several triggers, often reusing the same local, so a fresh
+    # CreateTrigger() into a variable starts that variable's event list again
+    step = re.compile(r"\bset\s+(\w+)\s*=\s*CreateTrigger\s*\("
+                      r"|\bTriggerRegister\w*\s*\(\s*(\w+)\s*,[^\n]*?\b(EVENT_\w+)"
+                      r"|\bTriggerAdd(Action|Condition)\s*\(\s*(\w+)\s*,\s*(?:(?:Condition|Filter)\s*\(\s*)?"
+                      r"function\s+(\w+)")
+    for _name, _line_no, _params, body in functions(text):
+        events: dict[str, set] = {}
+        for m in step.finditer(body):
+            if m[1]:
+                events[m[1]] = set()
+            elif m[3]:
+                events.setdefault(m[2], set()).add(m[3])
+            else:
+                for event in sorted(events.get(m[5], ())):
+                    out.setdefault(m[6], []).append((event, m[4].lower()))
+    return out
+
+
+def _discarded_effects(name: str, first_line: int, body: str, text: str) -> list[dict]:
+    """A special effect created as a statement: nothing holds it, so it plays and stays for the whole game."""
+    return [_hit("leak", _line(body, m.start(), first_line), name,
+                 f"{m[1]}() is called for its effect and the effect it returns is never destroyed: "
+                 f"call DestroyEffect({m[1]}(...)) plays it once and frees it")
+            for m in re.finditer(r"(?m)^[ \t]*call[ \t]+(AddSpecialEffect\w*)\s*\(", body)]
+
+
+def _corpse_enum(name: str, first_line: int, body: str, text: str) -> list[dict]:
+    """GroupEnumUnitsIn* returns dead units too; a FirstOfGroup loop that damages, orders or reads them without a
+    life check works on corpses (two game runs were lost to this)."""
+    enum = re.search(r"\bGroupEnumUnitsIn\w*\s*\(([^\n]*)", body)
+    if not enum or "FirstOfGroup" not in body or LIFE_CHECK.search(body):
+        return []
+    flt = re.search(r"(?:Filter|Condition)\s*\(\s*function\s+(\w+)", enum[1])
+    if flt and any(n == flt[1] and LIFE_CHECK.search(b) for n, _l, _p, b in functions(text)):
+        return []
+    used = next((c for c in ON_ENUMERATED if _calls(body, c) >= 0), None)
+    if used is None:
+        return []
+    return [_hit("corpse_enum", _line(body, enum.start(), first_line), name,
+                 f"this group enumeration keeps dead units, and the loop calls {used}() on them: test "
+                 "GetUnitState(u, UNIT_STATE_LIFE) > 0.405 (in the loop or the filter)")]
+
+
+def _hooked_rules(name: str, first_line: int, body: str, hooked: dict) -> list[dict]:
+    """Rules that need to know which event a function handles, and whether it runs as an action or a condition."""
+    out = []
+    events = hooked.get(name, [])
+    if any(e in ITEM_EVENTS for e, _how in events):
+        changes = next((c for c in INVENTORY_CHANGES if _calls(body, c) >= 0), None)
+        guarded = re.search(r"\bDisableTrigger\s*\(", body) or re.search(
+            r"(?s)\bset\s+(\w+)\s*=\s*true\b.*\bset\s+\1\s*=\s*false\b", body)
+        if changes and not guarded:
+            out.append(_hit("item_reentry", first_line, name,
+                            f"this item-event handler calls {changes}(), which fires the item events again before "
+                            "the inventory settles (an unguarded recipe built six copies): guard it with a global "
+                            "flag or DisableTrigger(GetTriggeringTrigger()) around the change"))
+    if any(e in DAMAGE_EVENTS and how == "action" for e, how in events):
+        out.append(_hit("damage_action", first_line, name,
+                        "this damage handler runs as a trigger action, on a new thread after the damage call returned: "
+                        "globals the dealer set around UnitDamageTarget are reset by then. Register it with "
+                        "TriggerAddCondition(t, Condition(function ...)) returning false to run inside the call"))
+    return out
+
+
+RULES = (_leaks, _event_after_wait, _dead_trigger, _loops, _after_destroy, _desync, _discarded_effects, _corpse_enum)
 
 
 def lint(text: str) -> list[dict]:
@@ -216,9 +294,11 @@ def lint(text: str) -> list[dict]:
     from .validate import section_index   # validate imports this module for reserved_names
 
     out = reserved_names(text)
+    hooked = handlers(text)
     for name, first_line, _params, body in functions(text):
         for rule in RULES:
             out += rule(name, first_line, body, text)
+        out += _hooked_rules(name, first_line, body, hooked)
     marks = section_index(text)
     starts = [m[0] for m in marks]
     for hit in out:

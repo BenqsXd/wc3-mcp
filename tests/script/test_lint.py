@@ -106,3 +106,62 @@ endfunction
     assert len(hits) == 2                                    # the first block only changes what one player sees
     assert hits[0]["message"].startswith("CreateUnit() runs inside a GetLocalPlayer() block")
     assert hits[1]["message"].startswith("GetRandomInt() runs inside a GetLocalPlayer() block")
+
+
+HANDLERS = """
+function Fx takes nothing returns nothing
+    local effect e = AddSpecialEffect("x.mdl", 0, 0)
+    call AddSpecialEffectTarget("y.mdl", udg_Hero, "origin")
+    call DestroyEffect(AddSpecialEffect("z.mdl", 0, 0))
+endfunction
+
+function Burn takes nothing returns nothing
+    local group g = CreateGroup()
+    local unit u
+    call GroupEnumUnitsInRange(g, 0, 0, 500, null)
+    loop
+        set u = FirstOfGroup(g)
+        exitwhen u == null
+        call GroupRemoveUnit(g, u)
+        call UnitDamageTarget(udg_Hero, u, 50, true, false, ATTACK_TYPE_NORMAL, DAMAGE_TYPE_MAGIC, null)
+    endloop
+    call DestroyGroup(g)
+endfunction
+
+function Combine takes nothing returns nothing
+    call RemoveItem(GetManipulatedItem())
+    call UnitAddItemById(GetTriggerUnit(), 'ratc')
+endfunction
+
+function OnHit takes nothing returns nothing
+    call BlzSetEventDamage(0)
+endfunction
+
+function InitTrig_Items takes nothing returns nothing
+    set gg_trg_Items = CreateTrigger(  )
+    call TriggerRegisterAnyUnitEventBJ( gg_trg_Items, EVENT_PLAYER_UNIT_PICKUP_ITEM )
+    call TriggerAddAction( gg_trg_Items, function Combine )
+    set gg_trg_Hits = CreateTrigger(  )
+    call TriggerRegisterAnyUnitEventBJ( gg_trg_Hits, EVENT_PLAYER_UNIT_DAMAGED )
+    call TriggerAddAction( gg_trg_Hits, function OnHit )
+endfunction
+"""
+
+
+def test_the_new_rules_fire_once_each():
+    rules = [h["rule"] for h in lint(HANDLERS)]
+    assert rules.count("leak") == 2                       # the local effect and the discarded one
+    assert rules.count("corpse_enum") == 1 and rules.count("item_reentry") == 1 and rules.count("damage_action") == 1
+
+
+def test_guarded_code_is_quiet():
+    guarded = (HANDLERS
+               .replace("        call GroupRemoveUnit(g, u)\n",
+                        "        call GroupRemoveUnit(g, u)\n        if GetUnitState(u, UNIT_STATE_LIFE) > 0.405 then\n")
+               .replace("DAMAGE_TYPE_MAGIC, null)\n", "DAMAGE_TYPE_MAGIC, null)\n        endif\n")
+               .replace("function Combine takes nothing returns nothing\n",
+                        "function Combine takes nothing returns nothing\n    call DisableTrigger(GetTriggeringTrigger())\n")
+               .replace("call TriggerAddAction( gg_trg_Hits, function OnHit )",
+                        "call TriggerAddCondition( gg_trg_Hits, Condition(function OnHit) )"))
+    rules = [h["rule"] for h in lint(guarded)]
+    assert "corpse_enum" not in rules and "item_reentry" not in rules and "damage_action" not in rules
