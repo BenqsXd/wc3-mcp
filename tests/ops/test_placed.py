@@ -184,8 +184,9 @@ def test_rows_add_many_and_created_is_a_range(melee, catalog):
     assert result["created"] == [f"destructible:{first}..{first + 2}", f"unit:{result['created'][1].split(':')[1]}"]
     assert result["created_count"] == 4
     trees = {x["ref"]: x for x in placed_list(melee, catalog, kind="destructible", limit=5000)["items"]}
+    # LTlt has bfxr 270: the editor (and placed_edit since 1.4) forces that angle whatever the row asked for
     assert (trees[f"destructible:{first}"]["variation"], trees[f"destructible:{first}"]["angle"],
-            trees[f"destructible:{first + 2}"]["type"], trees[f"destructible:{first + 1}"]["life"]) == (2, 113.0, "ATtr", 80)
+            trees[f"destructible:{first + 2}"]["type"], trees[f"destructible:{first + 1}"]["life"]) == (2, 270.0, "ATtr", 80)
     err = _error(placed_edit, melee, catalog, [{"op": "add", "kind": "doodad", "columns": ["type", "x"],
                                                 "rows": [["LTlt", 0, 0]]}])
     assert err.code == "bad_value" and err.details["path"] == "ops[0].rows[0]"
@@ -242,3 +243,24 @@ def test_scales_outside_the_type_range_warn(melee, catalog):
     scale = [w for w in big["warnings"] if "scale" in w]
     assert len(scale) == 1 and "outside its range 0.8..1.2 (dmis..dmas)" in scale[0] and "clamps" in scale[0]
     assert any("variation 3" in w and "Ruins_Shrub3.mdl" in w for w in big["warnings"])
+
+
+def test_types_with_a_fixed_rotation_stand_at_it(tmp_path, catalog):
+    import math
+
+    from wc3mcp.ops import pathing
+    from wc3mcp.ops.newmap import new_map
+    from wc3mcp.ops.placed import _Map
+
+    p = new_map(str(tmp_path / "G.w3x"), catalog, width=64, height=64, tileset="D", players=2, fill_tile="Ddrt")
+    result = placed_edit(p, catalog, [
+        {"op": "add", "kind": "destructible", "type": "DTg3", "x": 0, "y": 0, "angle": 270},
+        {"op": "add", "kind": "destructible", "type": "DTg1", "x": 512, "y": 0}])
+    angles = {o["type"]: o["angle"] for o in placed_list(p, catalog, kind="destructible")["items"]}
+    assert angles == {"DTg3": 0, "DTg1": 270}
+    assert sum("fixed rotation" in w for w in result["warnings"]) == 1
+
+    terrain = _Map(p, catalog).terrain
+    stored_wrong = pathing.cells(p, terrain, catalog, [("destructible", "DTg3", 0.0, 0.0, math.radians(270))])[0]
+    stored_right = pathing.cells(p, terrain, catalog, [("destructible", "DTg3", 0.0, 0.0, 0.0)])[0]
+    assert stored_wrong == stored_right

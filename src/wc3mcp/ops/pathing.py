@@ -39,6 +39,20 @@ def footprint(catalog, kind: str, type_id: str, value, cache: dict) -> tuple[int
     return None if field is None else _blocked_pixels(catalog, str(value(kind, type_id, field) or ""), cache)
 
 
+FIXED_ROTATION_FIELDS = {"doodad": "dfxr", "destructible": "bfxr"}
+
+
+def fixed_rotation(value, kind: str, type_id: str) -> float | None:
+    """The angle (degrees) a type always stands at, or None when it may turn: the editor rewrites any other angle,
+    so an object stored at another one by an older version is pathed the way the game will see it."""
+    field = FIXED_ROTATION_FIELDS.get(kind)
+    try:
+        angle = float(value(kind, type_id, field)) if field else -1.0
+    except (TypeError, ValueError):
+        return None
+    return angle if angle >= 0 else None
+
+
 def footprint_cells(found, kind: str, x: float, y: float, angle: float, terrain):
     """The 32-unit cells (column, row from the map's south-west corner) a footprint blocks. The texture's top row
     is north for a doodad facing 270 degrees, and it turns with the doodad in quarter turns (measured against the
@@ -64,7 +78,9 @@ def walkable(terrain, catalog, objects, value=None) -> list[list[bool]]:
         found = footprint(catalog, kind, type_id, value, textures)
         if not found or not found[2]:
             continue
-        for gx, gy in footprint_cells(found, kind, x, y, rest[0] if rest else 4.712389, terrain):
+        fixed = fixed_rotation(value, kind, type_id)
+        angle = math.radians(fixed) if fixed is not None else (rest[0] if rest else 4.712389)
+        for gx, gy in footprint_cells(found, kind, x, y, angle, terrain):
             cx, cy = int(round((gx + 0.5) / 4)), int(round((gy + 0.5) / 4))   # the corner the cell touches
             if 0 <= cx < terrain.width and 0 <= cy < terrain.height:
                 grid[cy][cx] = False
@@ -191,7 +207,9 @@ def cells(project, terrain, catalog, objects, value=None) -> tuple[bytearray, in
         found = footprint(catalog, kind, type_id, value, textures)
         if not found or not found[2]:
             continue
-        for cx, cy in footprint_cells(found, kind, x, y, rest[0] if rest else 4.712389, terrain):
+        fixed = fixed_rotation(value, kind, type_id)
+        angle = math.radians(fixed) if fixed is not None else (rest[0] if rest else 4.712389)
+        for cx, cy in footprint_cells(found, kind, x, y, angle, terrain):
             if 0 <= cx < width and 0 <= cy < height:
                 free[cy * width + cx] = 0
     return free, width, height, source

@@ -80,6 +80,7 @@ class _Map:
         self._ids: dict[str, set[str]] = {}
         self._names: dict[str, dict[str, str]] = {}
         self._scales: dict[str, tuple] = {}
+        self._fixed: dict[str, float | None] = {}
 
     # ---- catalog and map object data
     def _objects(self, kind: str) -> None:
@@ -385,6 +386,16 @@ class _Edit(_Map, layout.LayoutOps, symmetry.PlacedMirror):
         self._position(kind, o, fields, path)
         if "angle" in fields:
             o.angle = math.radians(_num(fields["angle"], f"{path}.angle") % 360)
+        if kind in ("doodad", "destructible"):
+            fixed = self._fixed_rotation(kind, _id(o.id))
+            if fixed is not None:
+                asked = math.degrees(o.angle) % 360
+                if "angle" in fields and abs((asked - fixed + 180) % 360 - 180) > 0.5:
+                    note = (f"{kind} {_id(o.id)}: its type has a fixed rotation of {fixed:g} degrees, which the "
+                            "World Editor and the game always use, so the angle given was replaced")
+                    if note not in self.warnings:
+                        self.warnings.append(note)
+                o.angle = math.radians(fixed)
         if "scale" in fields:
             v = fields["scale"]
             scale = [v] * 3 if not isinstance(v, list) else v
@@ -505,6 +516,16 @@ class _Edit(_Map, layout.LayoutOps, symmetry.PlacedMirror):
                 "classic graphics, which the World Editor uses), so it renders nothing there")
         if note not in self.warnings:
             self.warnings.append(note)
+
+    def _fixed_rotation(self, kind: str, t: str) -> float | None:
+        """The angle the World Editor forces on this type (dfxr/bfxr of 0 or more; -1 means free), map overrides
+        included. Every such object in the shipped maps stands at it."""
+        if t not in self._fixed:
+            field = "dfxr" if kind == "doodad" else "bfxr"
+            doc = objdata_get(self.project, self.catalog, kind, t, [field])
+            value = _float_or(doc["fields"].get(field, {}).get("value"), -1.0)
+            self._fixed[t] = value if value >= 0 else None
+        return self._fixed[t]
 
     def _check_scale(self, kind: str, o) -> None:
         """The World Editor clamps a doodad's or destructible's scale to its type's minimum and maximum on save."""
