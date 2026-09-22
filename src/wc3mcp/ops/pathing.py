@@ -117,7 +117,7 @@ CELL_NOTE = ("walkability on the game's own 32-unit pathing cells: the terrain (
 
 def terrain_cells(terrain, catalog):
     """numpy bool array [row][column] of 32-unit cells a ground unit may stand on, from the terrain alone: cliff tiles,
-    unwalkable tiles, water deeper than DEEP_WATER (depth interpolated at the cell centre) and the boundary block."""
+    unwalkable tiles, water deeper than DEEP_WATER at the cell's shallowest point, and the boundary block."""
     import numpy as np
 
     from .terrain import DEEP_WATER, IMPASSABLE_WATER, RAW_ZERO, water_offset
@@ -136,17 +136,24 @@ def terrain_cells(terrain, catalog):
                      for x in terrain.tiles] or [True])
     h, w = terrain.height - 1, terrain.width - 1
     j, i = np.mgrid[0:h * 4, 0:w * 4]
-    ty, tx, v, u = j // 4, i // 4, ((j % 4) + 0.5) / 4, ((i % 4) + 0.5) / 4
-
-    def lerp(a):
-        return (a[ty, tx] * (1 - u) * (1 - v) + a[ty, tx + 1] * u * (1 - v) + a[ty + 1, tx] * (1 - u) * v
-                + a[ty + 1, tx + 1] * u * v)
-
+    ty, tx = j // 4, i // 4
     qy, qx = ty + (j % 4 >= 2), tx + (i % 4 >= 2)      # the corner whose quarter of the tile the cell is in
     quad = np.stack([layer[:-1, :-1], layer[1:, :-1], layer[:-1, 1:], layer[1:, 1:]])
     ramps = ramp[:-1, :-1] | ramp[1:, :-1] | ramp[:-1, 1:] | ramp[1:, 1:]
     cliff = ((quad.max(axis=0) != quad.min(axis=0)) & ~ramps)[ty, tx]
-    depth = lerp(surface) - lerp(ground)
+    # A cell is judged by its SHALLOWEST point, not its centre: measured against an editor-saved war3map.wpm, the
+    # editor lets a unit stand on a cell whose shallow side is wadeable, so a sloping shore stays walkable about one
+    # cell further out than a centre sample says (that one sampling change took the disagreement over a calibration
+    # map from 0.58% of the cells to 0.05%). Depth is bilinear over a tile, so its minimum over a cell is the
+    # smallest of the cell's four corner values. On flat water every sample is equal, which is where DEEP_WATER
+    # itself was calibrated.
+    below = surface - ground
+    ny, nx = np.mgrid[0:h * 4 + 1, 0:w * 4 + 1]
+    nty, ntx = np.minimum(ny // 4, h - 1), np.minimum(nx // 4, w - 1)
+    nv, nu = (ny - nty * 4) / 4, (nx - ntx * 4) / 4
+    node = (below[nty, ntx] * (1 - nu) * (1 - nv) + below[nty, ntx + 1] * nu * (1 - nv)
+            + below[nty + 1, ntx] * (1 - nu) * nv + below[nty + 1, ntx + 1] * nu * nv)
+    depth = np.minimum(np.minimum(node[:-1, :-1], node[:-1, 1:]), np.minimum(node[1:, :-1], node[1:, 1:]))
     deep = wet_flag[qy, qx] & (depth > 0) & ((depth > DEEP_WATER) | (terrain.tileset in IMPASSABLE_WATER))
     unwalkable_tile = ~walk[np.minimum(tiles[qy, qx], len(walk) - 1)]
     return ~(cliff | deep | unwalkable_tile | boundary[qy, qx])

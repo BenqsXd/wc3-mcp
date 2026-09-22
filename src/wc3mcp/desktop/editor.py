@@ -17,6 +17,8 @@ EXE_NAME = "World Editor.exe"
 TITLE = re.compile(r"^Warcraft III World Editor(?: - \[(?P<doc>.*?)(?P<dirty> \*)?\])?$")
 CAMPAIGN_TITLE = re.compile(r"^Campaign Editor - \[(?P<doc>.*?)(?P<dirty> \*)?\]$")
 PALETTES = {"Tool Palette"}
+# message boxes the editor shows for information during a save; they wait for a click and never close by themselves
+NOTICES = {"Reminder"}
 BENIGN = re.compile(r"Referencing unknown database field|Failed to load Environment Map")  # shipped data, every map
 DISABLED = re.compile(r"Trigger '(?P<name>.*)' has been disabled due to errors")
 
@@ -240,6 +242,24 @@ class Editor:
                         "editor_map action=quit force=true ends the process", status=self.status())
 
     # ---- saving ----------------------------------------------------------------------------------------------
+    def _dismiss_notices(self) -> list[str]:
+        """Read and close the editor's informational message boxes, which a save otherwise waits for forever: a map
+        still named "Just another Warcraft III map" gets a Reminder box every time it is saved. Their text is
+        reported as messages."""
+        out = []
+        for title in NOTICES:
+            h = self.find_window(title)
+            if not h:
+                continue
+            controls = win.controls(h)
+            out += [c["text"] for c in controls if c["class"] == "Static" and c["text"] and c["visible"]]
+            button = next((c for c in controls if c["class"] == "Button" and c["id"] in (1, 2)), None) \
+                or next((c for c in controls if c["class"] == "Button"), None)
+            if button:
+                win.click(button["hwnd"])
+                time.sleep(0.5)
+        return out
+
     def _dismiss_errors(self) -> tuple[list[dict], list[str], list[str]]:
         """Read and close the editor's compile error dialogs: (errors, disabled triggers, other messages)."""
         errors, disabled, messages = [], [], []
@@ -288,6 +308,9 @@ class Editor:
                 time.sleep(0.8)  # both error dialogs appear within a second
                 e, d, m = self._dismiss_errors()
                 errors, disabled, messages = errors + e, disabled + d, messages + m
+                quiet_since = None
+            elif NOTICES & set(s["dialogs"]):
+                messages += self._dismiss_notices()   # a notice box waits for a click, not for the save
                 quiet_since = None
             elif s["dialogs"]:
                 quiet_since = None

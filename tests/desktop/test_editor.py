@@ -198,3 +198,38 @@ def test_quit_force_kills_an_editor_that_does_not_exit(monkeypatch):
     monkeypatch.setattr(e, "_answer_prompt", lambda answer: False)
     result = e.quit(timeout=0.1, force=True)
     assert killed == [42] and result["killed"] is True
+
+
+def test_save_clicks_away_the_default_name_reminder(monkeypatch, tmp_path):
+    """The editor shows a Reminder box for a map still named "Just another Warcraft III map"; it waits for a click,
+    so a save that only waits for dialogs to clear never finishes."""
+    from wc3mcp.desktop import editor as ed
+
+    target = tmp_path / "Calibration.w3x"
+    target.write_bytes(b"before")
+    e = ed.Editor()
+    shown = []          # the Reminder appears only after File/Save Map is posted
+    clicked = []
+
+    def status():
+        return {"running": True, "pid": 7, "ready": True, "map": str(target), "untitled": False,
+                "dirty": bool(shown), "busy": False, "dialogs": list(shown), "modules": [],
+                "campaign": None, "campaign_dirty": False}
+
+    monkeypatch.setattr(e, "status", status)
+    monkeypatch.setattr(e, "main", lambda: 1)
+    monkeypatch.setattr(e, "find_window", lambda title: 2 if title in shown else None)
+    monkeypatch.setattr(ed.win, "window_menu", lambda h: [])
+    monkeypatch.setattr(ed.win, "find_command", lambda menu, path: 99)
+    def posted(h, cmd):
+        target.write_bytes(b"after")
+        shown.append("Reminder")
+
+    monkeypatch.setattr(ed.win, "post_command", posted)
+    monkeypatch.setattr(ed.win, "controls", lambda h: [
+        {"class": "Static", "text": "This map is still using the default name", "visible": True, "id": 20, "hwnd": 3},
+        {"class": "Button", "text": "OK", "visible": True, "id": 1, "hwnd": 4}])
+    monkeypatch.setattr(ed.win, "click", lambda hwnd: (clicked.append(hwnd), shown.clear()))
+    result = e.save(timeout=10)
+    assert clicked == [4] and result["saved"]
+    assert any("default name" in m for m in result["messages"])

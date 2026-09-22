@@ -80,7 +80,8 @@ def test_the_editor_keeps_the_tools_terrain_and_pathing_agrees(tmp_path):
     margin = 4 * 8    # compare inside the playable area: 8 tiles in from every edge covers the camera complements
     inside = (slice(margin, -margin), slice(margin, -margin))
     disagree = (walk_saved[inside] != walk_derived[inside]).mean()
-    assert disagree <= 0.005, f"derived and saved pathing disagree on {disagree:.2%} of the cells"
+    # measured 0.05 % on 2026-09-22, all of it cells the editor blocks and the tools allow at a sloping shore
+    assert disagree <= 0.001, f"derived and saved pathing disagree on {disagree:.2%} of the cells"
 
     project = MapProject.open(target)
     try:
