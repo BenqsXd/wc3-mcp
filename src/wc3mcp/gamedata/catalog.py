@@ -13,7 +13,8 @@ TRIGGER_KINDS = ("trigger_function", "trigger_type", "trigger_preset", "native")
 # model file field and variation count field of the placeable kinds
 MODEL_FIELDS = {"doodad": ("dfil", "dvar"), "destructible": ("bfil", "bvar"), "unit": ("umdl", None)}
 TILESET_FIELDS = {"doodad": "dtil", "destructible": "btil"}
-KINDS = tuple(OBJECT_KINDS) + tuple(ROW_KINDS) + tuple(PATH_KINDS) + TRIGGER_KINDS
+ORDER_KIND = "order"
+KINDS = tuple(OBJECT_KINDS) + tuple(ROW_KINDS) + tuple(PATH_KINDS) + TRIGGER_KINDS + (ORDER_KIND,)
 
 
 # the extension object data and scripts name a file by: the game finds the .dds or .mdx next to it
@@ -396,6 +397,11 @@ class Catalog:
             return self._search_terrain(kind, query, limit, offset, tileset)
         if kind == "native":
             return natives_module.search(self.natives, query)[offset:offset + limit]
+        if kind == ORDER_KIND:
+            q = query.casefold()
+            hits = [r for r in self._orders.values()
+                    if q in r["id"].casefold() or any(q in a.casefold() for a in r["abilities"])]
+            return hits[offset:offset + limit]
         if kind in TRIGGER_KINDS:
             q = query.casefold()
             hits = [r for r in self._trigger_rows(kind) if q in r["id"].casefold() or q in r["name"].casefold()]
@@ -494,6 +500,34 @@ class Catalog:
                 out["game"] = GAME_ORDERS[obj_id]
         return out
 
+    @cached_property
+    def _orders(self) -> dict[str, dict]:
+        """Every order string the data or the editor knows: its targeting (from the editor's presets), the abilities
+        whose order fields name it, and whether one of them disagrees with the editor about its own order."""
+        out: dict[str, dict] = {}
+
+        def row(order: str) -> dict:
+            return out.setdefault(order.casefold(), {"id": order, "targets": set(), "abilities": [], "presets": [],
+                                                     "disagree": False})
+
+        for rows in self._order_presets.values():
+            for r in rows:
+                entry = row(r["order"])
+                entry["targets"].add(r["targets"])
+                if r["preset"] not in entry["presets"]:
+                    entry["presets"].append(r["preset"])
+        for obj_id in self.ids("ability"):
+            orders = self.ability_orders(obj_id)
+            for value in orders["data"].values():
+                entry = row(value)
+                if obj_id not in entry["abilities"]:
+                    entry["abilities"].append(obj_id)
+                if orders.get("disagree") and value == orders["data"].get("aord"):
+                    entry["disagree"] = True
+        for entry in out.values():
+            entry["targets"] = sorted(entry["targets"])
+        return dict(sorted(out.items()))
+
     def tile_pathing(self, tile: str) -> dict:
         """Whether ground of this tile lets players build, units walk and flyers fly (TerrainArt/Terrain.slk)."""
         row = self._row("tile", tile) or {}
@@ -504,6 +538,11 @@ class Catalog:
         missing = ToolError("not_found", f"no {kind} with id {obj_id!r}", hint="data_search finds ids")
         if kind in TRIGGER_KINDS:
             return self._trigger_get(kind, obj_id, missing)
+        if kind == ORDER_KIND:
+            found = self._orders.get(obj_id.casefold())
+            if found is None:
+                raise missing
+            return {"kind": kind, **found}
         if kind in PATH_KINDS:
             if self.storage.norm(obj_id) in self.storage.names():
                 return {"kind": kind, "id": obj_id, "local": self.storage.is_local(obj_id)}

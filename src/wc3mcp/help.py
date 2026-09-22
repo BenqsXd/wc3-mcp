@@ -245,6 +245,9 @@ KINDS
   GUI          trigger_function, trigger_type, trigger_preset - the World Editor's own function and type tables
   script       native - the installed build's common.j, Blizzard.j and common.ai: natives, functions, constants and
                handle types with their signatures; globs work ("Blz*Frame*")
+  orders       order - every order string: targets (immediate/unit/point, from the editor's presets), the abilities
+               whose order fields name it, disagree when the ability data and the editor differ. A Channel copy
+               needs an order nobody else in the map uses and whose targets match its Ncl2.
 
 tileset ("L" or "Lordaeron Summer") scopes tile, cliff, doodad and destructible to one tileset; a plain query is a
 text search, not a tileset filter. Doodad and destructible results carry model_ok: false when the installed game

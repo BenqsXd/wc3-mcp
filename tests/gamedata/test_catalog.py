@@ -190,3 +190,11 @@ def test_an_icon_is_found_by_its_button_name(cat):
     with pytest.raises(ToolError) as e:
         cat.get("icon", "BTNForkedLightning")
     assert e.value.code == "not_found"
+
+
+def test_orders_list_their_targeting_and_the_abilities_that_use_them(cat):
+    rows = {r["id"]: r for r in cat.search("order", "", limit=2000)}
+    assert rows["thunderbolt"]["targets"] == ["unit"] and "AHtb" in rows["thunderbolt"]["abilities"]
+    assert rows["impale"]["targets"] == ["point", "unit"]
+    assert rows["slimemonster"]["disagree"] is True        # ANlm's data order; the editor's preset is lavamonster
+    assert cat.get("order", "starfall")["targets"] == ["immediate"]

@@ -52,7 +52,7 @@ mcp = FastMCP("wc3", instructions=(
 
 Kind = Literal["unit", "item", "ability", "buff", "upgrade", "destructible", "doodad", "tile", "cliff", "water",
                "weather", "sound", "model", "icon", "file", "trigger_function", "trigger_type", "trigger_preset",
-               "native"]
+               "native", "order"]
 ObjectKind = Literal["unit", "item", "destructible", "doodad", "ability", "buff", "upgrade"]
 MAX_READ = 1024 * 1024
 MAX_BATCH = 20
@@ -461,7 +461,8 @@ def data_search(kind: Kind, query: str = "", limit: int = 50, offset: int = 0, l
     """Search the game data of the installed build: objects (unit, item, ability, buff, upgrade, doodad,
     destructible) by id, name or editor suffix; terrain and sound rows; files (model, icon, file) by path or glob;
     the World Editor's own tables (trigger_function, trigger_type, trigger_preset); and kind=native, the script API
-    (common.j, Blizzard.j, common.ai) with real signatures. tileset scopes tiles, cliffs, doodads and destructibles
+    (common.j, Blizzard.j, common.ai) with real signatures, and kind=order, every order string with its targeting
+    and the abilities that use it. tileset scopes tiles, cliffs, doodads and destructibles
     to one tileset. balance picks the gameplay data set: Custom_V1 (current), Custom_V0, Melee_V0 or null for the
     base files. wc3_help("data_search") explains each kind and what its results carry."""
     catalog = _catalog(locale, balance, hd)
