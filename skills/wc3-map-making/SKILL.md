@@ -50,6 +50,14 @@ Read the one you need before working in that area; each is a list of facts estab
 - `wc3_batch` runs up to 20 calls in one round trip: the edit, the rebuild and the check that always go together.
 - `terrain_get format="summary"` answers with ranges and counts instead of every corner; `format="runs"` packs the rows.
 
+## Call shapes that differ from the obvious guess
+
+- `objdata_edit` and `objdata_get` take a top-level `kind`; `objdata_get` takes `id` (a list is fine), not `ids`.
+- `info_edit` ops are `{"op": "set", "path": "flags.melee_map", "value": false}`, not a flat object of fields.
+- `editor_map action="open"` takes `map_path`, not `path`.
+- The terrain brushes are split over two help pages: `wc3_help("terrain_edit")` (raise ... paint, cliff, water) and
+  `wc3_help("terrain_landscape")` (river, coast, ridge, erosion, terrace, blend, stamp, heightmap, mirror).
+
 ## Rules
 
 - **Never type, read or store credentials**, and never click through a login screen or the Battle.net app for the user. `game_test` (login="auto") has the Battle.net desktop app start the game, which hands it the app's own session, so a login screen should not appear at all; it does when the app itself is logged out - then ask the user to log in to the app once, with "Keep me logged in". `login_required: true` leaves the game open, and the same call again continues in it (`continued_game: true`). The first run may restart the Battle.net app to store the launch options; say so when the user is using it.
@@ -57,5 +65,5 @@ Read the one you need before working in that area; each is a list of facts estab
 - Take turns with the user in the World Editor and **never discard unsaved work** there; `map_save` refuses while the editor holds the map.
 - Keep a backup (`map_save` makes one) before replacing a user's map, and say which file changed.
 - If `game_test` returns no results and `exited_early`, the map failed to load: take a screenshot (`screenshot=true`) and tell the user.
-- Before a launch, run `script_validate lint=true` and `map_validate`: a rule that fires there is a game run saved. To prove a wall, moat or cliff ring closed (or find its hole), use `map_flow` with `origins` and `targets` before reaching for a game run.
+- Before a launch, run `script_validate lint=true` and `map_validate`: a rule that fires there is a game run saved. To prove a wall, moat or cliff ring closed (or find its hole), use `map_flow` with `origins` and `targets` before reaching for a game run. Pathing read before the first World Editor save is derived; re-check the ways that matter after `editor_map open` + `save`.
 - **Build the map the user asked for, not a template.** These tools have generators and recipes to compose, and no canned maps; `references/building-a-map.md` is the order to compose them in.

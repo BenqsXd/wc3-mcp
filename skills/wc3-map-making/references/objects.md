@@ -38,16 +38,26 @@
 - The stock fields live on the **sold unit**, not on the shop: `usma` stock maximum, `usit` initial stock, `usst` start delay (seconds), `usrg` replenish interval. `usma` 1, `usit` 1, `usst` 0, `usrg` 999 makes a hero available from the first second and not again. At runtime `AddUnitToStock(shop, id, 1, 1)` and `RemoveUnitFromStock(shop, id)` restock and empty them.
 - Free heroes: `ugol` 0, `ulum` 0, `ufoo` 0 on the hero copy.
 - A shop sells the items in its `usei`: a copy of `nmgv` (Magic Vault) with `uabi` `"Aneu,Avul,Apit"` sold items to a hero, and `IssueNeutralImmediateOrderById` bought one and charged the gold.
-- A hero's `uhab` takes at most 5 abilities (`maxVal` 5): with 11, `SelectHeroSkill` learned the 1st and 4th but not the 9th.
+- A hero's `uhab` takes at most 5 abilities (`maxVal` 5): with 11, `SelectHeroSkill` learned the 1st and 4th but not the 9th. `objdata_edit` warns when a `uhab` lists more, and `map_validate` reports `hero_ability_slots`.
+- Shops: `usei` Items Sold, `useu` Units Sold. `usse` does not exist - `data_get` and `objdata_get` now list a field name that matched nothing under `unknown_fields`. A shop's command card is 4 x 3 = 12 cells, so 12 items per vendor is the ceiling.
+- `isit` is 1-100: an item with no stock limit is `isto` 0, `isit` 1, `istr` 1 (the range error names that shape).
+- Spell items as loadout tokens: a clone of `rat9` with `iabi` `""` browses with its own icon and tooltip, sits in the 6 inventory slots, reorders by drag and un-picks by dropping; read it back with `UnitItemInSlot` 0..5 plus `GetItemTypeId`. Set `igol` 0, `iusa` 0, `iper` 0, `ipow` 0, `iprn` 0 and a distinct `ubpx`/`ubpy` per item.
+- Raw code arithmetic: `'I009' + 1` is `'I00:'`, not `'I010'`. Keep an id block that is used arithmetically inside one digit run.
 
 ## Gameplay constants
 
 - `constants_get` / `constants_edit` read and write the Gameplay Constants (`war3mapMisc.txt` over the game's `Units/MiscGame.txt` and `Units/MiscData.txt`); an editor save keeps the file. A misspelt key is refused, and `map_validate` warns (check `constant`) about one already in a map.
 - A level cap of 25: `{"MaxHeroLevel": 25, "MaxUnitLevel": 25, "HeroAbilityLevelSkip": 1}`. Verified in the game: `AddHeroXP(h, 40000, false)` took a fresh hero to level 25 and `SetHeroLevel(h, 25, false)` gave exactly 25 skill points.
+- The pawn (sell-back) rate is `PawnItemRate` (0.60); `constants_get query="pawn"` finds keys like it by name or by the editor's display name.
 - The experience curve is `NeedHeroXP` 200 with `NeedHeroXPFormulaA/B/C` (1/100/0), which gives 200, 500, 900, 1400, 2000, ... `HeroFactorXP` `80,70,60,50,0` is why a hero gets no creep experience from level 5 on.
 - Attributes are worth what these say: `StrHitPointBonus` 25, `IntManaBonus` 15, `StrAttackBonus` 1, `AgiDefenseBase` -2 with `AgiDefenseBonus` 0.30, `AgiAttackSpeedBonus` 0.02. `balance_report kind="unit"` computes a hero's real life, mana, armour and damage from them at level 1 and at the cap.
 
 ## Custom heroes
+
+- **The id must start with a capital letter.** `h000` copied from `Hmkg` was an ordinary unit in the game: level 0, no attributes, no learn menu. `objdata_edit` allocates an id with the base's case when `id` is left out, and warns when a given id disagrees with the base; `map_validate` reports `hero_id_case`.
+- **Skill points follow the ranks, not the level cap.** A hero gets no more points than it has ability ranks to learn: `MaxHeroLevel` 36 on a stock Paladin gave level 36 and 10 points. `map_validate` reports `hero_skill_points`. The 36-point spine verified in the game: four hidden `Aamk` proxies in `uhab` (three at `alev` 10 / `arlv` 1 / `alsk` 1, one at `alev` 6 / `arlv` 6 / `alsk` 6) give exactly 36 spendable points; mirror a learned proxy onto the real ability in `EVENT_PLAYER_HERO_SKILL` with `UnitAddAbility` then `SetUnitAbilityLevel` (abilities added that way never show in the learn menu).
+- **Button positions are object data and global.** `BlzSetAbilityPosX/Y` take an ability *code*, so they move the button for every player. For a pool of abilities, use one ability object per command-card slot: `create` from the custom ability copies all its changes, so a slot copy is one op changing `abpx` and `ahky` (verified to rank and cast like the original). `balance_report kind="ability"` lists `button_cells`, the cells two or more of the map's abilities share.
+- `SetPlayerTechMaxAllowed(p, heroId, 0)` after a purchase makes a hero one per player (it is per player, so it also gives per-team exclusivity).
 
 - **Hero stats do not live in the unit fields.** Every stock hero has `uhpm` 100, `umpm` 0, `ua1b` 0, `ua1d` 2, `umpr` 0.01: life comes from strength, mana from intelligence, damage from the primary attribute (`upra`). Tune `ustr`/`ustp`, `uagi`/`uagp`, `uint`/`uinp`, `ua1s`, `ua1c`, `udef`, `umvs`. Measured at level 25: strength 104 gave 2700 life, intelligence 96 gave 1440 mana.
 - **Rank gating:** `alev` ranks, `arlv` the hero level the first rank needs, `alsk` the levels between ranks (0 falls back to `HeroAbilityLevelSkip`). Three basics with `alev` 7 / `arlv` 1 / `alsk` 1 and one ultimate with `alev` 4 / `arlv` 6 / `alsk` 4 let a level-25 hero spend all 25 points (3 x 7 + 4 = 25).
@@ -65,6 +75,11 @@
 - A hidden, learnable, effect-free hero ability: copy `Aamk` (Attribute Bonus) with `Iagi`/`Iint`/`Istr` 0 and `Ihid` 1 on every level. It shows in the learn menu with its `arar` icon and `aret`/`arut` tooltips and has no command-card button.
 - True Sight abilities (`Adtg`, `Atru`, `ANtr`, `Agyv`, `Adts`, `Adt1`) detect within `aran` (Cast Range), not `aare`.
 - `Apiv` (Permanent Invisibility) fades in over `adur`/`ahdu`, 2 seconds by default. With both set to 0, a unit given the ability turns invisible at once.
+- **A Channel copy's `Ncl6` has to match its `Ncl2`.** A no-target Channel (`Ncl2` 0) whose order needs a target never fires (`frostarmor`, `healingwave` as no-target). Working no-target orders: `thunderclap`, `berserk`, `stomp`, `whirlwind`, `starfall`; point: `carrionswarm`, `shockwave`, `blizzard`, `breathoffire`, `flamestrike`; unit: `frostnova`, `impale`, `chainlightning`, `healingwave`. Unit orders aimed at a point through `Ncl2` 2 (`doom`, `acidbomb`, `soulburn`) do cast. `data_search kind=order` lists every order string with its targeting and the abilities that use it; `map_validate` reports `channel_target`.
+- **Per-rank numbers belong in object data.** `BlzSetAbility*LevelField` work on one unit's ability instance (`BlzGetUnitAbility`), not on the type. `objdata_edit` takes a list (levels 1..n), `{"from": a, "step": s}`, `{"from": a, "to": b}` and, for a text field, `{"template": "Storm Bolt [{level}] - {Htb1} damage, {acdn} s"}`, rendered per level from the object's own values - which is what keeps a tooltip from drifting from the numbers.
+- Icons: `data_search kind=icon` confirms one (`BTNForkedLightning.blp` does not exist, `BTNChainLightning.blp` does), and `data_get kind=icon` takes the bare name (`BTNChainLightning`) as well as the full storage path. Borrowing `aart`/`acat`/`atat`/`amat` from the stock ability being imitated guarantees valid paths.
+- Ranges `objdata_edit` refused: `usca` 0.1..10, `amsp` 0..10000, `arlv` 1..10000; `urtm` wants an integer. `extended_levels` was verified at `alev` 20 from a 3-level base.
+- A stun of any length from a dummy caster: a Storm Bolt clone cast with order `"thunderbolt"` and a 20-rank duration ladder (0.25 s a rank), `SetUnitAbilityLevel` on the dummy before the cast (the target moved 0 units during a 2 s stun, 306 after).
 
 ## Order strings
 

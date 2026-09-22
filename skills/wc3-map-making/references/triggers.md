@@ -36,6 +36,24 @@ Trigger code is emitted in **trigger-tree order**, so a function can only be cal
 - `map_save` compiles a regenerated or edited script and refuses to save when it does not compile; `validation.script` shows the result.
 - Reforged natives that pass pjass and work in the game: `BlzSetUnitMaxHP`, `BlzGetUnitMaxHP`, `GetEventDamageSource`, `BlzSetEventDamage`, `BlzGetUnitAbilityCooldownRemaining`, `BlzSetAbilityResearchTooltip`, `BlzGetAbilityResearchTooltip`, `BlzGetUnitAbility`, `BlzGetAbilityStringField` / `BlzSetAbilityStringField`, and the event `EVENT_PLAYER_UNIT_DAMAGED` (with `TriggerRegisterAnyUnitEventBJ`). `BlzSetAbilityResearchExtendedTooltip` passes pjass; its effect in the game is unchecked.
 
+### Damage handlers run as conditions
+
+`TriggerAddAction` runs the function on a **new thread, after the damage call returned**, so a global the dealer set around `UnitDamageTarget` is already reset by the time the handler reads it - the most expensive mistake of the arena build. `TriggerAddCondition(t, Condition(function F))`, with `F` returning `boolean` (`return false`), runs it inside the damage call instead. The `damage_detection` recipe writes that shape, and `script_validate lint=true` reports `damage_action` for the other one.
+
+Exact scripted damage: send it as `ATTACK_TYPE_CHAOS` + `DAMAGE_TYPE_UNIVERSAL` (the engine scales neither) and apply the map's own multiplier in the handler - true 200 arrived as 199.9, while magic 1000 arrived as 528.2 against the intended 528.3. `1 / (1 + 0.06 * X)` on a script-held resist reproduces the armour curve.
+
+### Trigger shapes the tools write
+
+- A library trigger (functions only, no event) gets an `InitTrig` that registers nothing. Before 1.3 the wrapper registered the first function as the trigger's action, which failed pjass when that function took parameters.
+- A map with no triggers at all keeps working: the World Editor leaves the `Triggers` section out of `war3map.j` for such a map, and the tools put the empty section back instead of refusing with `not_editor_script`. Keeping one placeholder trigger (a comment) is still tidier. `triggers_edit` warns when a delete removes the last one.
+
+### Lint rules beyond the leaks
+
+- `leak` also covers effects: an `effect` local that is never destroyed, and a discarded `AddSpecialEffect*` result (`call DestroyEffect(AddSpecialEffect(...))` plays it once and frees it).
+- `corpse_enum`: `GroupEnumUnitsIn*` returns dead units, and a `FirstOfGroup` loop that damages, orders or kills them without a life check works on corpses. Test `GetUnitState(u, UNIT_STATE_LIFE) > 0.405` in the loop or in the filter.
+- `item_reentry`: `RemoveItem` / `UnitAddItemById` inside an item-event handler fires the item events again before the inventory settles (an unguarded recipe built six copies). Guard it with a global flag or `DisableTrigger(GetTriggeringTrigger())` around the change.
+- `damage_action`: the handler shape above.
+
 ## The script API of the installed build
 
 `data_search kind=native` and `data_get kind=native` answer from this install's `common.j`, `Blizzard.j` and `common.ai`: natives, Blizzard.j functions, constants and handle types, each with its signature. Look a function up instead of remembering it — the answer matches the patch the map will run on.

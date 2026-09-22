@@ -93,7 +93,8 @@ The skill's references/triggers.md has the JASS pitfalls and the lint rules.
 
 page("terrain_edit", """
 terrain_edit(path, ops | ops_file, quiet) - all-or-nothing terrain brushes. Every op is {"op": <brush>, <area>,
-<settings>}.
+<settings>}. The landscape brushes (river, coast, ridge, erosion, terrace, blend, stamp, heightmap) and mirror are
+on wc3_help("terrain_landscape").
 
 AREAS (world units): "x"/"y"/"radius" a circle, "rect": [left, bottom, right, top], "path": [[x, y], ...] with
 "width" a stroke along a line, or no area at all for the whole map.
@@ -104,6 +105,8 @@ SHAPE
   {"op": "smooth", "strength": 0-1}
   {"op": "noise", "amount", "seed", "falloff"}
   {"op": "cliff", "level": 0-15, "cliff": <cliff tile id>}
+                                         neighbouring corners stay within 2 levels: the op's own corners keep theirs,
+                                         the ground around them steps (result: cliffs)
   {"op": "ramp"|"blight"|"boundary", "value": true|false}
   {"op": "water", "level": <surface z> | null}
                                          level is an absolute z (a level-3 mesa's ground is at 128 + height); it is
@@ -129,7 +132,8 @@ WATER DEPTH
 
 page("terrain_landscape", """
 The landscape brushes of terrain_edit, which shape ground the way the placed_edit scenery ops shape objects. They
-take the same areas, and every one of them is deterministic for a given seed.
+take the same areas, and every one of them is deterministic for a given seed. The basic brushes (raise, lower,
+plateau, smooth, noise, paint, cliff, water) are on wc3_help("terrain_edit").
 
   {"op": "river", "path": [[x, y], ...], "width", "depth" (default 192), "bed": <tile>, "bank": <tile>,
    "water": true, "shallows": <extra width at a third of the depth>, "water_level": <surface z>,

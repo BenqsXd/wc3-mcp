@@ -31,15 +31,30 @@ Everything here was observed in a real run (mostly through `game_test probe_scri
 ## Items
 
 - `EVENT_PLAYER_UNIT_PICKUP_ITEM` fires for `UnitAddItemById`, `UnitAddItem` and shop purchases.
-- Recipes: in the pickup handler, `TriggerSleepAction(0.0)`, then `RemoveItem` the components and `UnitAddItemById` the result. The result's own pickup event runs the handler again without combining twice.
+- Recipes: in the pickup handler, `RemoveItem` the components and `UnitAddItemById` the result. `RemoveItem` fires `EVENT_PLAYER_UNIT_DROP_ITEM` and `UnitAddItemById` fires `..._PICKUP_ITEM`, so the handler re-enters itself: an unguarded combine built six copies. Guard it with a global flag or `DisableTrigger(GetTriggeringTrigger())` around the change. (The older `TriggerSleepAction(0.0)` version worked in one test; the guard is what makes it safe, and `script_validate lint=true` reports `item_reentry` without one.)
 - `UnitAddItemToSlotById(h, id, 4)` puts an item in slot 4. `UnitDropItemSlot` right after `UnitAddItem` did not move the item.
 - Hero swap keeping items: `UnitRemoveItem` + `SetItemVisible(item, false)`, `RemoveUnit` the old hero, then `SetItemVisible(item, true)` + `UnitAddItem` on the new one; `SetHeroXP(new, GetHeroXP(old), false)` keeps the level.
 - `ChooseRandomItemEx(ITEM_TYPE_PERMANENT, 2)`, `(ITEM_TYPE_PERMANENT, 6)` and `(ITEM_TYPE_ARTIFACT, 7)` returned real item ids (Claws of Attack +5, Khadgar's Gem of Health, Orb of Frost), so random drops by class and level need no item pool.
+
+## Timers, stats and measurement
+
+- A countdown that subtracts a fixed step per tick drifts: a 0.1 s timer decrementing 2.0 by 0.10 read 0.8 left after 3 s. Run one free timer as the clock (`TimerStart(t, 1000000, false, null)`, `TimerGetElapsed`) and store absolute deadlines.
+- `BlzSetUnitMaxHP` changes max life; `SetUnitState(u, UNIT_STATE_MAX_LIFE, x)` does not.
+- `BlzSetUnitArmor` in a 0.5 s loop drives strength to armour exactly, and `SetUnitMoveSpeed(u, GetUnitDefaultMoveSpeed(u) * (1 + k * agi))` is exact too. A stat loop that writes move speed wipes an item's move-speed bonus: give each of move speed, armour and resist exactly one writer.
+- `SetUnitAcquireRange(h, 1.0)` stops acquiring, not retaliating; `PauseUnit(h, true)` holds a hero silent while scripted damage still goes out from it. Two heroes 400 apart auto-attack each other and spoil a damage measurement: pause both and place them thousands of units apart.
+- Pool dummy units. `CreateUnit` per missile plus `RemoveUnit` on impact grew the handle counter by 118 over 120 missiles; keeping the dummy and calling `ShowUnit(u, false)` gave 2 over 60. Every probe run reports `handles` (start, end, growth, per_minute), and `ProbeHandleCount()` samples the counter around a loop.
+- Bot gold is no measurement (a farming bot earns meanwhile): verify the reward function and the credit instead.
 
 ## Deaths
 
 - `ReviveHero(h, x, y, true)` after a `TriggerSleepAction` in the death handler revives the hero at (x, y) with full life. A death handler with `TriggerSleepAction(45.0)` and `CreateUnit` respawns a creep.
 - `KillUnit(u)` and a killing `UnitDamageTarget(src, u, ...)` run the `EVENT_PLAYER_UNIT_DEATH` handler before the next statement of the calling code; `GetKillingUnit()` returns `src`.
+- `GroupEnumUnitsInRange` keeps corpses: they still answer `GetUnitTypeId`, `BlzGetUnitMaxHP` and their owner, so an area spell hits them unless the loop or the filter tests `GetUnitState(u, UNIT_STATE_LIFE) > 0.405`.
+- `SetPlayerHandicapXP(p, 0)` plus `AddHeroXP` is the way to award authored kill experience. Last-hit attribution: store `(lastHitBy, lastHitAt)` per player in the damage handler and credit it on death inside 15 s.
+- A region leave event fires only when a unit inside the rect leaves it alive; a unit moved from outside to further outside, or a dead one, fires nothing useful.
+- Waygates: the generated script sets the destination and activates a placed gate at map start, so nothing has to be activated by hand. A unit uses it when ordered onto the gate itself (`IssueTargetOrder(h, "smart", gate)`, what a right-click does); `IssuePointOrder(h, "move", gateX, gateY)` stops about 110 units short and nothing happens. `map_validate` reports `waygate_self` for a gate whose destination region contains the gate.
+- An empty player slot is not a Computer and does not need to be: `CreateUnit`, orders and alliances work for it. "A human is here" is `GetPlayerController(p) == MAP_CONTROL_USER and GetPlayerSlotState(p) == PLAYER_SLOT_STATE_PLAYING`. Runtime teams on 12 FFA slots work with `SetPlayerAllianceStateBJ` (`bj_ALLIANCE_ALLIED_VISION` / `bj_ALLIANCE_UNALLIED`); allied players still get the gold-transfer slider.
+- Camps can be rebuilt from the placed units at init: enumerate `Player(PLAYER_NEUTRAL_AGGRESSIVE)` and cluster by distance (700 rebuilt 15 camps and 43 members), so moving a camp in the editor moves it in the script.
 
 ## Players, dialogs and UI
 
