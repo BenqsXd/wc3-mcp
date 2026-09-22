@@ -547,6 +547,19 @@ def layout_check(project, catalog, area=None, kinds=None, min_distance: float | 
         out["reach"] = {"walkable_corners": free, "reachable_from_starts": len(seen),
                         "share": round(len(seen) / free, 3) if free else 0.0,
                         "corner_units": CORNER, "note": NOTE}
+    if len(starts) >= 2:
+        from .flow import connect
+
+        first, *others = sorted(starts)
+        doc = connect(project, catalog, [f"start:{first}"], [f"start:{o}" for o in others])
+        reached = [t for t in doc["targets"] if t["reachable"]]
+        if reached:
+            worst = min(reached, key=lambda t: t["gap"])
+            out["narrowest"] = {"gap": worst["gap"], "at": worst["gap_at"],
+                                "between": [f"start:{first}", worst["target"]],
+                                "terrain_source": doc["terrain_source"],
+                                "note": "the narrowest free width (world units, 32-unit cells) on the shortest walk "
+                                        "between two starts; under about 128 is a wall for a hero"}
     return out
 
 

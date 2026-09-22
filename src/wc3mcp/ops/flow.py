@@ -22,6 +22,9 @@ NEAR_START = 1600.0         # a mine this close to a start is that player's own,
 NORMS_VERSION = 2           # bump when the mining below changes, so old caches are ignored
 MELEE_PREFIX = "war3.w3mod:maps/"
 SAMPLE = 40                 # shipped maps mined per player count; the norms move very little beyond that
+DERIVED_WARNING = ("terrain pathing is derived (the map changed since the last World Editor save): cliffs and water "
+                   "follow what the editor keeps, but only an editor save (editor_map open + save) writes "
+                   "war3map.wpm; re-check the ways that matter after that save before building on them")
 
 
 def _grid(project, catalog, corners: bool = True):
@@ -266,6 +269,8 @@ def connect(project, catalog, origins, targets) -> dict:
     out["reading"] = ("sealed means no target can be walked to from any origin. For a reachable target, gap is the "
                       "narrowest free width across the shortest walk (world units) and gap_at where it is: where a "
                       "wall meant to be closed leaks, that is the hole. route samples the walk")
+    if source == "derived":
+        out["warning"] = DERIVED_WARNING
     return out
 
 

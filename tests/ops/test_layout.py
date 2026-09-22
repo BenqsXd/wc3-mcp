@@ -154,3 +154,18 @@ def test_layout_ops_refuse_what_they_cannot_place(town_map):
         assert e.value.code == code, op
     assert placed_list(project, catalog)["total"] == 2   # only the start locations: nothing was written
     assert set(layout.OP_KEYS) == {"forest", "line", "town", "cluster", "clear"}
+
+
+def test_layout_check_reports_the_narrowest_way_between_the_starts(tmp_path, catalog):
+    from wc3mcp.ops import flow
+    from wc3mcp.ops.terrain import terrain_edit
+
+    p = new_map(str(tmp_path / "N.w3x"), catalog, width=64, height=64, tileset="L", players=2, fill_tile="Lgrs")
+    placed_edit(p, catalog, [{"op": "move", "ref": "start_location:0", "x": 0, "y": 1500},
+                             {"op": "move", "ref": "start_location:1", "x": 0, "y": -1500}])
+    terrain_edit(p, catalog, [{"op": "cliff", "rect": [-4096, -256, 4096, 256], "level": 3},
+                              {"op": "cliff", "rect": [-128, -256, 128, 256], "level": 2}])
+    placed_edit(p, catalog, [{"op": "add", "kind": "doodad", "type": "ZRrk", "x": 0, "y": 0}])
+    doc = layout_check(p, catalog)
+    assert doc["narrowest"]["gap"] <= 64 and doc["narrowest"]["between"] == ["start:0", "start:1"]
+    assert "warning" in flow.connect(p, catalog, ["start:0"], ["start:1"])

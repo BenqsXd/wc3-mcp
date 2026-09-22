@@ -478,6 +478,9 @@ ORIGINS AND TARGETS (the 32-unit cells the game paths on)
   the editor saved it after the last terrain and doodad edit, else it is derived (tiles, cliffs, water depth, boundary, the area
   outside the playable area); every placed object's pathing texture is added, turned with the object in quarter turns.
   A gap of one cell (32) lets small units through; units with a collision size above 16 need wider.
+  Before the first editor save the terrain part is derived, and the result carries a warning saying so. layout_check's
+  narrowest gives the tightest gap between the starts; a gap under about 128 stops heroes (collision above 16), 64 or
+  96 is a wall for them.
 
 melee_check measures the same map the way the melee maps shipped with this install are measured - mines per player,
 start distance, distance to a player's own mine, creep camps, playable area per player, tile count, doodad and unit
