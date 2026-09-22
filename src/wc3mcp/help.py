@@ -296,6 +296,11 @@ WARNINGS
   order_string      an order a unit will refuse, or one where the ability data and the editor disagree
   ability_order     two abilities of one unit sharing an order string
   reachable         start locations cut off from each other, or a preplaced unit its own player cannot walk to
+  hero_id_case      a copy of a hero whose id starts lowercase (the game makes it an ordinary unit)
+  hero_ability_slots  more than 5 abilities in a hero's uhab
+  hero_skill_points a hero with fewer ability ranks than MaxHeroLevel (points it can never spend)
+  channel_target    a no-target Channel copy (Ncl2 0) whose Ncl6 order needs a target, so the cast does nothing
+  waygate_self      a waygate leading into the region it stands in
 """)
 
 page("terrain_get", """

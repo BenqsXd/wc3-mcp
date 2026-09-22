@@ -9,7 +9,7 @@ import dataclasses
 import re
 from collections import Counter
 
-from ..formats import doo, imp, objmods, unitsdoo, w3e, w3i, wct, wtg
+from ..formats import doo, imp, objmods, unitsdoo, w3e, w3i, w3r, wct, wtg
 from ..formats.binary import FormatError
 from ..formats.wts import TriggerStrings
 from ..gamedata.catalog import MODEL_FIELDS
@@ -128,6 +128,9 @@ class _V:
         self.check_function_order()
         self.check_order_strings()
         self.check_ability_orders()
+        self.check_heroes()
+        self.check_channel_targets()
+        self.check_waygates()
         self.check_reachable()
         return {"errors": self.errors, "warnings": self.warnings}
 
@@ -447,6 +450,87 @@ class _V:
                              f"unit {oid}: {', '.join(sorted(set(sharing)))} all use the order {order!r}, so an "
                              "Issue*Order for one of them can run the other (copies of one base ability need their "
                              "own order: Channel's Ncl6, or the Order fields aord/aoro/aorf)")
+
+    def check_heroes(self):
+        """A copy of a hero is a hero only with a capital first letter; uhab holds 5; and a hero gets no more skill
+        points than it has ranks to learn (SetHeroLevel 36 on a Paladin gave 10 points)."""
+        from . import constants as constants_ops
+
+        units, abilities = self._mods("unit"), self._mods("ability")
+        if not units:
+            return
+        misc = constants_ops.defaults(self.catalog)
+        data = self.get(constants_ops.MAP_FILE)
+        mine = constants_ops._parse(data.decode("utf-8", "replace")) if data else {}
+        try:
+            cap = int(float(mine.get("MaxHeroLevel", misc.get("MaxHeroLevel", ("10", ""))[0])))
+        except ValueError:
+            cap = 10
+
+        def value(kind, oid, rid):
+            base, fields, _ = (units if kind == "unit" else abilities).get(oid, (oid, {}, False))
+            return fields[rid] if rid in fields else self.catalog.field(kind, base, rid)
+
+        for oid, (base, _fields, custom) in sorted(units.items()):
+            if custom and base[:1].isupper() and not oid[:1].isupper():
+                self.add(False, "hero_id_case", "war3map.w3u", f"unit {oid} copies the hero {base} but its id starts "
+                         "with a lowercase letter, so the game creates it as an ordinary unit (no levels, attributes "
+                         "or learn menu); recreate it with an id like H000")
+            if not oid[:1].isupper():
+                continue
+            listed = [a for a in str(value("unit", oid, "uhab") or "").split(",") if a.strip()]
+            if len(listed) > 5:
+                self.add(False, "hero_ability_slots", "war3map.w3u", f"hero {oid} lists {len(listed)} abilities in "
+                         "uhab; the game uses at most 5 and skips the rest (grant more with UnitAddAbility)")
+            ranks = 0
+            for a in listed[:5]:
+                try:
+                    ranks += int(float(value("ability", a, "alev") or 1))
+                except ValueError:
+                    ranks += 1
+            if listed and ranks < cap:
+                self.add(False, "hero_skill_points", "war3map.w3u", f"hero {oid} can learn {ranks} ability ranks, so "
+                         f"it gets only {ranks} of the {cap} skill points MaxHeroLevel allows (the game hands out no "
+                         "more points than there are ranks): raise alev of its abilities or add proxy abilities")
+
+    def check_channel_targets(self):
+        """A no-target Channel copy (Ncl2 0) needs an order the game can issue with no target, or the cast does
+        nothing (frostarmor as no-target never fired in the game). Only Ncl2 0 is checked: working maps aim unit
+        orders (doom, acidbomb, soulburn) at a point through Ncl2 2 and they cast, so the wider rule is folklore."""
+        wanted = {0: {"immediate"}}
+        data = self.catalog.table(OBJECT_KINDS["ability"].slks["AbilityData"]).rows
+        targets: dict[str, set] = {}
+        for rows in self.catalog._order_presets.values():
+            for r in rows:
+                targets.setdefault(r["order"].casefold(), set()).add(r["targets"])
+        for oid, (base, fields, _custom) in sorted(self._mods("ability").items()):
+            if data.get(base, {}).get("code", base) != "ANcl":
+                continue
+            kind = fields.get("Ncl2", self.catalog.field("ability", base, "Ncl2"))
+            order = str(fields.get("Ncl6", self.catalog.field("ability", base, "Ncl6")) or "").casefold()
+            try:
+                need = wanted.get(int(float(kind)), set())
+            except (TypeError, ValueError):
+                continue
+            have = targets.get(order)
+            if have and need and not (have & need):
+                self.add(False, "channel_target", "war3map.w3a",
+                         f"ability {oid}: Ncl2 asks for a {'/'.join(sorted(need))} target but its order {order!r} is "
+                         f"a {'/'.join(sorted(have))} order, so casting it does nothing; pick an order of that "
+                         "targeting (data_search kind=order)")
+
+    def check_waygates(self):
+        """A waygate whose destination region holds the gate itself sends a unit back onto the gate."""
+        units = self.parse("war3mapUnits.doo", unitsdoo.parse)
+        regions = self.parse("war3map.w3r", w3r.parse)
+        if units is None or regions is None:
+            return
+        by_index = {r.index: r for r in regions.regions}
+        for u in units.units:
+            r = by_index.get(u.waygate)
+            if r is not None and r.left <= u.x <= r.right and r.bottom <= u.y <= r.top:
+                self.add(False, "waygate_self", "war3mapUnits.doo", f"the waygate at ({u.x:g}, {u.y:g}) leads into "
+                         f"region {r.name!r}, which contains the gate itself")
 
     def check_order_strings(self):
         """Order strings a script issues: the ability data and the editor presets disagree for a few abilities, and

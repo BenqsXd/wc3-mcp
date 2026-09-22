@@ -190,3 +190,65 @@ def test_a_wall_of_trees_between_start_locations_is_a_warning(catalog):
     walled = [w["message"] for w in validate(files, catalog)["warnings"] if w["check"] == "reachable"]
     cut = {a.owner, b.owner} - {min(a.owner, b.owner)}   # the ring closes one of the two off from the other
     assert len(walled) == 1 and f"player(s) {sorted(cut)}" in walled[0] and "walkable corners" in walled[0]
+
+
+# ---- hero, Channel and waygate checks ---------------------------------------------------------------------------
+def _fresh(tmp_path, name="V.w3x"):
+    from wc3mcp.ops.newmap import new_map
+
+    return new_map(str(tmp_path / name), Catalog(_storage(), balance="Custom_V1"), width=64, height=64, players=2)
+
+
+def _checks(project) -> set:
+    from wc3mcp.ops.script import map_validate
+
+    return {w["check"] for w in map_validate(project, Catalog(_storage(), balance="Custom_V1"))["warnings"]}
+
+
+def test_hero_checks(tmp_path):
+    from wc3mcp.ops.objdata import objdata_edit
+
+    p = _fresh(tmp_path)
+    c = Catalog(_storage(), balance="Custom_V1")
+    objdata_edit(p, c, "unit", [{"op": "create", "base": "Hmkg", "id": "h000"},
+                                {"op": "create", "base": "Hpal", "id": "H001",
+                                 "set": {"uhab": "AHhb,AHds,AHre,AHad,AHhb,AHds"}}])
+    assert {"hero_id_case", "hero_ability_slots"} <= _checks(p)
+
+
+def test_hero_skill_points_follow_the_level_cap(tmp_path):
+    from wc3mcp.ops.constants import constants_edit
+    from wc3mcp.ops.objdata import objdata_edit
+
+    p = _fresh(tmp_path)
+    c = Catalog(_storage(), balance="Custom_V1")
+    objdata_edit(p, c, "unit", [{"op": "create", "base": "Hpal", "id": "H000"}])
+    assert "hero_skill_points" not in _checks(p)          # 3 + 3 + 3 + 1 ranks = the default cap of 10
+    constants_edit(p, c, {"MaxHeroLevel": 25})
+    assert "hero_skill_points" in _checks(p)
+
+
+def test_a_channel_order_must_match_its_target_type(tmp_path):
+    from wc3mcp.ops.objdata import objdata_edit
+
+    p = _fresh(tmp_path)
+    c = Catalog(_storage(), balance="Custom_V1")
+    objdata_edit(p, c, "ability", [
+        {"op": "create", "base": "ANcl", "id": "A000", "set": {"Ncl2": {"1": 0}, "Ncl6": {"1": "thunderclap"}}},
+        {"op": "create", "base": "ANcl", "id": "A001", "set": {"Ncl2": {"1": 1}, "Ncl6": {"1": "impale"}}}])
+    assert "channel_target" not in _checks(p)
+    objdata_edit(p, c, "ability", [
+        {"op": "create", "base": "ANcl", "id": "A002", "set": {"Ncl2": {"1": 0}, "Ncl6": {"1": "frostarmor"}}}])
+    assert "channel_target" in _checks(p)
+
+
+def test_a_waygate_into_its_own_region(tmp_path):
+    from wc3mcp.ops.elements import elements_edit
+    from wc3mcp.ops.placed import placed_edit
+
+    p = _fresh(tmp_path)
+    c = Catalog(_storage(), balance="Custom_V1")
+    elements_edit(p, c, "region", [{"op": "upsert", "name": "Home", "left": -512, "bottom": -512, "right": 512,
+                                    "top": 512}])
+    placed_edit(p, c, [{"op": "add", "kind": "unit", "type": "nwgt", "x": 0, "y": 0, "owner": 27, "waygate": "Home"}])
+    assert "waygate_self" in _checks(p)
