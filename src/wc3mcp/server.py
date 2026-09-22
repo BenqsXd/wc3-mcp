@@ -992,14 +992,16 @@ def editor_status() -> dict:
 
 @_tool
 def editor_map(action: Literal["open", "save", "close", "reload", "compile", "quit", "save_campaign"],
-               map_path: str | None = None, discard: bool = False) -> dict:
+               map_path: str | None = None, discard: bool = False, force: bool = False) -> dict:
     """Map actions in the World Editor. open (map_path; shows that map, or a .w3n campaign in the Campaign Editor, and
     reports previous_instance: reused when the running editor already showed it, relaunched when it was quit and started
     again, none when no editor ran; an editor showing another map or none is always relaunched, because starting it with
     the map is the dependable way to open one), save / compile (the editor regenerates and checks the script; script
     errors come back per trigger and the editor disables failing triggers), save_campaign (the Campaign Editor's
     campaign), close, reload (reopen from disk after map_save), quit. Anything that would drop unsaved editor changes
-    refuses with unsaved_changes unless discard=true: ask the user first."""
+    refuses with unsaved_changes unless discard=true: ask the user first. quit force=true kills an editor that does
+    not exit (after discard rules). File/Calculate Shadows and Save Map can run for an hour on a big map: a plain save
+    recomputes pathing and minimap icons in a second."""
     editor = desktop_editor.EDITOR
     if action == "open":
         if not map_path:
@@ -1018,7 +1020,7 @@ def editor_map(action: Literal["open", "save", "close", "reload", "compile", "qu
         return editor.close(discard=discard)
     if action == "reload":
         return editor.reload(discard=discard)
-    return editor.quit(discard=discard)
+    return editor.quit(discard=discard, force=force)
 
 
 @_tool

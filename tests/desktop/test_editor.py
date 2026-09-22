@@ -181,3 +181,20 @@ def test_editor_messages_come_from_the_log():
     assert ed.editor_messages(lines) == {"missing_files": ["Doodads\\Plants\\Wheat\\Wheat0.mdl"],
                                          "messages": ["Trigger 'Spawn' has been disabled due to errors"],
                                          "benign_messages": 2}
+
+
+def test_quit_force_kills_an_editor_that_does_not_exit(monkeypatch):
+    from wc3mcp.desktop import editor as ed
+
+    e = ed.Editor()
+    killed = []
+    monkeypatch.setattr(e, "status", lambda: {"running": not killed, "pid": 42, "dirty": False, "map": None,
+                                              "campaign": None, "campaign_dirty": False, "untitled": False,
+                                              "dialogs": []})
+    monkeypatch.setattr(e, "main", lambda: 1)
+    monkeypatch.setattr(ed.win, "close", lambda h: None)
+    monkeypatch.setattr(ed.win, "running", lambda pid: not killed)
+    monkeypatch.setattr(ed, "_kill", lambda pid: killed.append(pid))
+    monkeypatch.setattr(e, "_answer_prompt", lambda answer: False)
+    result = e.quit(timeout=0.1, force=True)
+    assert killed == [42] and result["killed"] is True

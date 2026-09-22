@@ -60,6 +60,11 @@ def _unsaved(s: dict) -> str | None:
     return f"the campaign {s['campaign'] or 'Untitled'}" if s["campaign_dirty"] else None
 
 
+def _kill(pid: int) -> None:
+    """End an editor that ignores its close message: a long operation (Calculate Shadows) owns the message loop."""
+    subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, check=False)
+
+
 class Editor:
     def __init__(self):
         self.launched: set[int] = set()
@@ -208,7 +213,7 @@ class Editor:
             time.sleep(0.3)
         raise ToolError("timeout", "the map did not close", status=self.status())
 
-    def quit(self, discard: bool = False, timeout: float = 60) -> dict:
+    def quit(self, discard: bool = False, timeout: float = 60, force: bool = False) -> dict:
         s = self.status()
         if not s["running"]:
             return s
@@ -226,8 +231,13 @@ class Editor:
                 return self.status()
             self._answer_prompt("No")
             time.sleep(0.3)
-        raise ToolError("timeout", "the World Editor did not exit", hint="it may be busy or showing a dialog",
-                        status=self.status())
+        if force:
+            _kill(pid)
+            self.launched.discard(pid)
+            return {**self.status(), "killed": True}
+        raise ToolError("timeout", "the World Editor did not exit", hint="it may be busy or showing a dialog "
+                        "(a progress dialog such as Calculate Shadows cannot be cancelled from here): "
+                        "editor_map action=quit force=true ends the process", status=self.status())
 
     # ---- saving ----------------------------------------------------------------------------------------------
     def _dismiss_errors(self) -> tuple[list[dict], list[str], list[str]]:
