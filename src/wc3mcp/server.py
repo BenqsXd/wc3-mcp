@@ -592,7 +592,9 @@ def objdata_edit(path: str, kind: ObjectKind, ops: list[dict] | None = None, bal
     stock base and all its modifications, like the editor's copy and paste), {"op": "set", "id": "h000", "set": {"Hbz1":
     {"1": 7, "2": 9}}} (per-level fields take level keys; stock ids such as hgtw work too), {"op": "reset", "id":
     "h000", "fields": ["uhpm"]}, {"op": "delete", "id": "h000"}. Fields accept raw codes, field names or display names.
-    ops_file: a local JSON file holding the ops array instead of ops."""
+    A per-level field also takes a list (levels 1..n), {"from": a, "step": s} or {"from": a, "to": b} (optional
+    "levels"), and a text field {"template": "... {Htb1} ... {level} ..."} filled per level from the object's own
+    values. ops_file: a local JSON file holding the ops array instead of ops."""
     return objdata_ops.objdata_edit(_project(path), _catalog("enUS", balance, True), kind, _ops(ops, ops_file))
 
 

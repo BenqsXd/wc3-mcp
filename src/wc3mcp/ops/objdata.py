@@ -1,5 +1,6 @@
 """Object data (the Object Editor): map modifications merged over base game data, plus atomic edits."""
 import dataclasses
+import re
 import struct
 
 from ..errors import ToolError
@@ -263,8 +264,45 @@ def _convert(meta, value, path: str) -> tuple[int, object]:
     return vt, value if vt == INT else float(value)
 
 
-def _level_values(meta, value, path: str) -> list[tuple[int, object]]:
+GENERATOR_KEYS = {"from", "step", "to", "levels"}
+PLACEHOLDER = re.compile(r"\{(\w+)\}")
+
+
+def _fmt(value) -> str:
+    """A field value as a tooltip shows it: 12.0 -> 12, 7.50 -> 7.5."""
+    number = _number(value) if not isinstance(value, (int, float)) else float(value)
+    if number is None:
+        return str(value)
+    return str(int(number)) if number.is_integer() else f"{number:g}"
+
+
+def _generated(meta, value: dict, path: str, count: int) -> list[tuple[int, object]]:
+    """{"from": a, "step": s} or {"from": a, "to": b}, with "levels" (default: the object's level count)."""
+    if set(value) - GENERATOR_KEYS or "from" not in value or ("step" in value) == ("to" in value):
+        raise ToolError("bad_value", f'{path}: a generated {meta.id} is {{"from": a, "step": s}} or '
+                                     '{"from": a, "to": b}, optionally with "levels"', path=path)
+    n = value.get("levels", count)
+    if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 100:
+        raise ToolError("bad_value", f"{path}: levels must be 1-100", path=path)
+    start = _number(value["from"])
+    end = _number(value.get("to", 0))
+    step = _number(value["step"]) if "step" in value else ((end - start) / (n - 1) if n > 1 and start is not None
+                                                           and end is not None else 0.0)
+    if start is None or step is None:
+        raise ToolError("bad_value", f"{path}: from, step and to are numbers", path=path)
+    whole = var_type(meta.type) == INT
+    return [(level, round(start + step * (level - 1)) if whole else round(start + step * (level - 1), 4))
+            for level in range(1, n + 1)]
+
+
+def _level_values(meta, value, path: str, count: int = 1) -> list[tuple[int, object]]:
     if meta.repeat > 0:
+        if isinstance(value, list):
+            if not value or len(value) > 100:
+                raise ToolError("bad_value", f"{path}: a list gives levels 1..n (1-100 values)", path=path)
+            return list(enumerate(value, start=1))
+        if isinstance(value, dict) and GENERATOR_KEYS & set(value):
+            return _generated(meta, value, path, count)
         if not isinstance(value, dict) or not value:
             raise ToolError("bad_value", f'{path}: {meta.id} has levels; give {{"1": value, "2": value}}', path=path)
         pairs = []
@@ -373,22 +411,60 @@ def _set_many(files, catalog, kind: str, custom: bool, base: bytes, new: bytes, 
     if not isinstance(values, dict):
         raise ToolError("bad_op", f"{path}: set must be an object of field: value", hint=_HINT)
     levels_before = _level_count(files, catalog, kind, custom, base, new)
+    templates = []
     for key, value in values.items():
         fpath = f"{path}.set.{key}"
         meta = _field(catalog, kind, base.decode("latin-1"), key, fpath)
+        if isinstance(value, dict) and "template" in value:
+            templates.append((meta, value, fpath))   # rendered last, from the values every other op already wrote
+            continue
         if value is None:   # clear the whole field, levels included: the base object's own value applies again
             _clear(files, custom, base, new, meta, None)
             continue
-        for level, v in _level_values(meta, value, fpath):
+        count = _level_count(files, catalog, kind, custom, base, new)
+        for level, v in _level_values(meta, value, fpath, count):
             if v is None:
                 _clear(files, custom, base, new, meta, level if meta.repeat > 0 else 0)
                 continue
             vt, converted = _convert(meta, v, fpath)
             _set(files, kind, custom, base, new, meta, level, vt, converted, strings)
+    grown = []
     if LEVEL_FIELDS.get(kind) in values:
-        grown = _extend_levels(files, catalog, kind, custom, base, new, levels_before, strings, path)
-        return [grown] if grown else []
-    return []
+        extended = _extend_levels(files, catalog, kind, custom, base, new, levels_before, strings, path)
+        grown = [extended] if extended else []
+    for meta, value, fpath in templates:
+        _render(files, catalog, kind, custom, base, new, meta, value, fpath, strings)
+    return grown
+
+
+def _render(files, catalog, kind: str, custom: bool, base: bytes, new: bytes, meta, value: dict, path: str,
+            strings) -> None:
+    """A text field per level from a template: {level} is the level, {<field>} the object's value of that field at
+    that level (the map's own, else the base object's), so a tooltip never drifts from the numbers."""
+    template = value["template"]
+    if set(value) - {"template", "levels"} or not isinstance(template, str):
+        raise ToolError("bad_value", f'{path}: {{"template": "text with {{field}} and {{level}}"}}', path=path)
+    count = value.get("levels") or _level_count(files, catalog, kind, custom, base, new)
+    metas = {f.id: f for f in catalog.fields(kind)}
+    mods = _merged([(om, custom, _entry_in(om, custom, base, new)) for om in files])
+    base_id = base.decode("latin-1")
+    for level in range(1, (count if meta.repeat > 0 else 1) + 1):
+        def fill(m, level=level):
+            code = m.group(1)
+            if code == "level":
+                return str(level)
+            if code not in metas:
+                raise ToolError("bad_value", f"{path}: the template names {code!r}, which is no {kind} field",
+                                path=path)
+            mod = mods.get((code, level)) or (mods.get((code, 0)) if level == 1 or metas[code].repeat <= 0 else None)
+            if mod is not None:
+                raw = strings.resolve(mod.value) if isinstance(mod.value, str) else mod.value
+            else:
+                raw = catalog.value(kind, base_id, metas[code], level)
+            return _fmt(raw)
+        text = PLACEHOLDER.sub(fill, template)
+        vt, converted = _convert(meta, text, path)
+        _set(files, kind, custom, base, new, meta, level if meta.repeat > 0 else 0, vt, converted, strings)
 
 
 def _locate(files, base_ids: set[str], kind: str, obj_id, path: str) -> tuple[bool, bytes, bytes]:
