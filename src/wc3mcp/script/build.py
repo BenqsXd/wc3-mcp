@@ -137,6 +137,26 @@ PLACED_DECL = ("gg_unit_", "gg_item_", "gg_dest_")
 _BANNER_LINE = re.compile(r"^//\*{75}\r\n//\*\r\n//\*  (.*)\r\n//\*\r\n//\*{75}\r\n", re.M)
 
 
+def ensure_trigger_section(o: str) -> str:
+    """The World Editor leaves the Triggers section (and InitCustomTriggers) out of a map with no triggers; put the
+    empty section back where it belongs - before the first section that follows it - so the splice has its anchors."""
+    trig = _crlf(banner("Triggers") + "\n")
+    if trig in o:
+        return o
+    csc = _crlf(banner("Custom Script Code") + "\n")
+    ict = _crlf(f"{BAR}\nfunction InitCustomTriggers takes nothing returns nothing\n")
+    run = _crlf(f"{BAR}\nfunction RunInitializationTriggers takes nothing returns nothing\n")
+    after = [m.start() for m in _BANNER_LINE.finditer(o) if m.group(1) in mapinfo.TITLES]
+    after += [o.index(x) for x in (ict, run, _crlf(f"{BAR}\nfunction main takes")) if x in o]
+    if not after:
+        raise ValueError("not an editor-generated war3map.j: no place for the Triggers section")
+    at = min(after)
+    section = ("" if csc in o[:at] else csc) + trig
+    if ict not in o:
+        section += _crlf(f"{BAR}\nfunction InitCustomTriggers takes nothing returns nothing\nendfunction\n\n")
+    return o[:at] + section + o[at:]
+
+
 def _trigger_start(o: str, after: int) -> tuple[int, int]:
     """(start of the header's Custom Script Code section or of the Triggers banner, start of the Triggers banner)"""
     t0 = _find(o, _crlf(banner("Triggers") + "\n"), after)
@@ -187,6 +207,7 @@ def splice(original: str, tf, ct, td, world=None, placed=None, info=None, refere
     earlier script of the map, supplies sound lengths, object order and random item spelling (default: `original`).
     `raw` prefixes the lines that are the map's own code (header, custom text, Custom Script actions) for lua.transpile."""
     o = _crlf(original.replace("\r\n", "\n")) if "\r\n" not in original else original
+    o = ensure_trigger_section(o)
     reference = o if reference is None else reference
     world_parts = worldgen.sections(world, reference) if world is not None else None
     placed_parts = placedgen.sections(placed, reference, tf, ct) if placed is not None else None

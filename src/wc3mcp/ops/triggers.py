@@ -500,6 +500,10 @@ class _Edit:
                                 hint="change those triggers first", triggers=users[:20])
             self._remove(t, TRIGGER)
             self.text.pop(t.id, None)
+            if not _triggers(self.tf):
+                self.warnings.append("no trigger left: the World Editor then writes war3map.j without its Triggers "
+                                     "section; these tools put it back, but a map without gameplay can keep one "
+                                     "placeholder script trigger (a comment) to stay editor-shaped")
         elif what == "category":
             c = self._category(name, path)
             children = [e for e in self.tf.elements if e.parent == c.id]

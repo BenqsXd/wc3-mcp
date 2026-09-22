@@ -281,3 +281,15 @@ def test_the_first_parameterless_function_is_the_action_when_no_trig_actions_exi
             "function Run takes nothing returns nothing\nendfunction\n")
     script, note, _ = wrap_script("T", text, lua=False)
     assert "call TriggerAddAction( gg_trg_T, function Run )" in script and "Run" in note
+
+
+def test_deleting_the_last_trigger_warns(tmp_path):
+    from corpus import _storage
+    from wc3mcp.gamedata.catalog import Catalog
+    from wc3mcp.ops.newmap import new_map
+    from wc3mcp.ops.triggers import triggers_edit
+
+    c = Catalog(_storage(), balance="Custom_V1")
+    p = new_map(str(tmp_path / "D.w3x"), c, width=64, height=64, players=2)
+    out = triggers_edit(p, c, [{"op": "delete", "what": "trigger", "name": "Melee Initialization"}])
+    assert any("no trigger left" in w for w in out["warnings"])

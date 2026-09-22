@@ -41,3 +41,39 @@ def test_splice_rejects_foreign_scripts(td):
     with pytest.raises(ValueError):
         build.splice("function main takes nothing returns nothing\r\nendfunction\r\n", wtg.TriggerFile(),
                      wct.CustomText(), td)
+
+
+def _without_triggers(script: str) -> str:
+    """What the World Editor may write for a map with no triggers: no Triggers banner, no InitCustomTriggers."""
+    from wc3mcp.script.build import BAR, banner
+
+    crlf = lambda s: s.replace("\n", "\r\n")  # noqa: E731
+    script = script.replace(crlf(banner("Triggers") + "\n"), "")
+    start = script.find(crlf(f"{BAR}\nfunction InitCustomTriggers takes nothing returns nothing\n"))
+    end = script.find("\r\nendfunction\r\n\r\n", start) + len("\r\nendfunction\r\n\r\n")
+    return script[:start] + script[end:] if start >= 0 else script
+
+
+def test_splice_puts_the_trigger_section_back(tmp_path):
+    from pathlib import Path
+
+    from corpus import _storage
+    from wc3mcp.gamedata.catalog import Catalog
+    from wc3mcp.ops.newmap import new_map
+    from wc3mcp.ops.script import script_build, script_validate
+    from wc3mcp.ops.triggers import triggers_edit
+
+    c = Catalog(_storage(), balance="Custom_V1")
+    p = new_map(str(tmp_path / "Z.w3x"), c, width=64, height=64, players=2)
+    triggers_edit(p, c, [{"op": "delete", "what": "trigger", "name": "Melee Initialization"}])
+    script_build(p, c)          # the script the tools write for a map with no triggers: an empty Triggers section
+    fixture = Path(__file__).parent / "data" / "no_triggers.j"
+    bare = fixture.read_bytes() if fixture.exists() else _without_triggers(
+        p.read("war3map.j").decode("utf-8")).encode("utf-8")
+    p.write("war3map.j", bare)
+    script_build(p, c)
+    triggers_edit(p, c, [{"op": "trigger", "name": "Hello", "script": 'call BJDebugMsg("hi")', "run_on_init": True}],
+                  validate=True)
+    text = p.read("war3map.j").decode("utf-8")
+    assert "//*  Triggers" in text and "call InitTrig_Hello(  )" in text
+    assert script_validate(p, c)["ok"]
