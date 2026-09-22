@@ -1,6 +1,6 @@
 {
   "name": "wc3-mcp",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Make Warcraft III maps, campaigns, AI and assets with Claude, and drive the World Editor and the game.",
   "author": {"name": "BenqsXd"},
   "repository": "https://github.com/BenqsXd/wc3-mcp",

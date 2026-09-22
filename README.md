@@ -68,6 +68,38 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.4
+
+The rest of the map-session feedback that 1.3 started.
+
+- **Doodads and destructibles with a fixed rotation** (`dfxr`/`bfxr`) now stand and path at that angle, as the World
+  Editor and the game do. Gates and trees no longer leave slits that only existed in the tools' own footprint.
+- **`mirror` refuses an image that overlaps its source**, and `axis: "rot4"` fills the other three quadrants from one
+  untouched quadrant.
+- **A brush area narrower than the 128-unit corner spacing** snaps to the nearest corner line (result: `snapped`)
+  instead of failing.
+- **`map_flow` warns while the terrain pathing it used is derived**, and `layout_check` reports `narrowest`: the
+  tightest gap on the walk between two start locations.
+- **Scenery says what it blocks.** `data_search` carries `pathing` and `blocks` per doodad and destructible;
+  `scatter` and `cluster` warn about blocking types, and `cluster` warns when it places fewer than `count`.
+- **`data_get`** lists field names that matched nothing under `unknown_fields`, and finds an icon or model by its
+  bare name (`BTNChainLightning`).
+- **`data_search kind=order`**: every order string with its targeting and the abilities that use it.
+- **Per-level values from a line or a list**: `{"from": a, "step": s}`, `{"from": a, "to": b}`, `[v1, v2, ...]`, and
+  a text field from `{"template": "... {Htb1} ... {level} ..."}` rendered per level from the object's own values.
+- **`objdata_edit` warns** about a lowercase hero copy and about more than 5 abilities in `uhab`; the `isit` range
+  error names the unlimited-stock shape.
+- **`map_validate`** gains `hero_id_case`, `hero_ability_slots`, `hero_skill_points`, `channel_target` and
+  `waygate_self`; **`balance_report kind="ability"`** lists abilities sharing a command-card cell.
+- **A map with no triggers stays workable**: the Triggers section is put back instead of `not_editor_script`, and
+  deleting the last trigger warns.
+- **`damage_detection` handles the event as a condition**, inside the damage call; new lint rules cover effect
+  leaks, corpses in group enumerations, item-event re-entry and damage handlers registered as actions.
+- **Probes write their report at the end** (a `PreloadGenClear()` in probe code no longer loses it) and every run
+  reports `handles`, with `ProbeHandleCount()` for sampling around a loop.
+- **`editor_map action=quit force=true`** ends an editor stuck in a long operation; **`map_status`** reports file
+  sizes and custom/modified object counts per kind.
+
 ## What's new in 1.3
 
 - **Cliff steps settle themselves.** The World Editor keeps neighbouring corners (diagonals included) at most 2 cliff
