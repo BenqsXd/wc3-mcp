@@ -37,3 +37,22 @@ def test_a_template_naming_an_unknown_field_is_refused(tmp_path, catalog):
         objdata_edit(p, catalog, "ability", [{"op": "create", "base": "AHtb", "id": "A000",
                                               "set": {"atp1": {"template": "{nope}"}}}])
     assert e.value.code == "bad_value" and "nope" in e.value.message
+
+
+def test_hero_copies_warn_about_a_lowercase_id_and_more_than_five_hero_abilities(tmp_path, catalog):
+    p = new_map(str(tmp_path / "H.w3x"), catalog, width=64, height=64, players=2)
+    auto = objdata_edit(p, catalog, "unit", [{"op": "create", "base": "Hmkg"}])
+    assert auto["created"] == ["H000"] and auto["warnings"] == []
+    out = objdata_edit(p, catalog, "unit", [{"op": "create", "base": "Hmkg", "id": "h000",
+                                             "set": {"uhab": "AHtb,AHtc,AHbh,AHav,AHhb,AHds"}}])
+    assert any("h000" in w and "capital" in w for w in out["warnings"])
+    assert any("uhab" in w and "5" in w for w in out["warnings"])
+
+
+def test_isit_zero_names_the_unlimited_shape(tmp_path, catalog):
+    from wc3mcp.errors import ToolError
+
+    p = new_map(str(tmp_path / "I.w3x"), catalog, width=64, height=64, players=2)
+    with pytest.raises(ToolError) as e:
+        objdata_edit(p, catalog, "item", [{"op": "set", "id": "rst1", "set": {"isit": 0}}])
+    assert "isto" in (e.value.hint or "")

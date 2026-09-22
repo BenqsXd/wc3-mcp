@@ -136,6 +136,11 @@ def objdata_list(project, catalog, kind: str, custom_only: bool = False) -> dict
 
 
 LEVEL_FIELDS = {"ability": "alev", "upgrade": "glvl"}
+RANGE_HINTS = {
+    "isit": "an item with no stock limit is isto 0 with isit 1 (and istr 1): isit counts from 1",
+    "uhab": "a hero learns at most 5 abilities through uhab; grant more with UnitAddAbility",
+}
+HERO_ABILITIES = 5   # uhab: maxVal 5 in Units/UnitMetaData.slk; with 11 listed, SelectHeroSkill skipped the 9th
 
 
 def objdata_get(project, catalog, kind: str, obj_id: str, fields: list[str] | None = None) -> dict:
@@ -260,7 +265,8 @@ def _convert(meta, value, path: str) -> tuple[int, object]:
                         path=path)
     low, high = _number(meta.min), _number(meta.max)
     if (low is not None and value < low) or (high is not None and value > high):
-        raise ToolError("bad_value", f"{path}: {meta.id} must be between {meta.min} and {meta.max}", path=path)
+        raise ToolError("bad_value", f"{path}: {meta.id} must be between {meta.min} and {meta.max}", path=path,
+                        hint=RANGE_HINTS.get(meta.id))
     return vt, value if vt == INT else float(value)
 
 
@@ -496,6 +502,8 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
     base_ids = set(catalog.ids(kind))
     taken = base_ids | {_key(e, True) for om in files for e in om.custom}
     created, extended = [], []
+    warnings: list[str] = []
+    touched: set[str] = set()
     for i, op in enumerate(ops):
         path = f"ops[{i}]"
         try:
@@ -522,6 +530,14 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
                     raise ToolError("id_taken", f"{path}: id {new!r} is already used", hint="omit id to allocate one")
                 taken.add(new)
                 created.append(new)
+                touched.add(new)
+                if kind == "unit" and op.get("id") is not None and base[0].isupper() != new[0].isupper():
+                    warnings.append(
+                        f"{path}: {new} copies {base}, which is a {'hero' if base[0].isupper() else 'unit'}: the game "
+                        "makes a unit a hero only when its id starts with a capital letter, so "
+                        + (f"{new} is created as an ordinary unit (no levels, attributes or learn menu)"
+                           if base[0].isupper() else f"{new} may be treated as a hero")
+                        + "; omit id to get one allocated with the base's case")
                 base_b, new_b = base.encode("latin-1"), new.encode("latin-1")
                 for om in files:  # the editor lists every object in both the main and the skin file
                     entry = _entry_in(om, True, base_b, new_b)
@@ -531,6 +547,7 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
                 extended += _set_many(files, catalog, kind, True, base_b, new_b, op.get("set", {}), strings, path)
             elif action == "set":
                 custom, base_b, new_b = _locate(files, base_ids, kind, op.get("id"), path)
+                touched.add(op.get("id"))
                 for om in files:
                     _entry_in(om, custom, base_b, new_b)
                 extended += _set_many(files, catalog, kind, custom, base_b, new_b, op.get("set"), strings, path)
@@ -555,6 +572,15 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
         except ToolError as e:
             e.details.setdefault("op_index", i)
             raise
+    if kind == "unit":
+        for oid in sorted(o for o in touched if isinstance(o, str)):
+            mods = _merged(_entries(files, oid))
+            uhab = mods.get(("uhab", 0))
+            listed = [a for a in str(uhab.value if uhab else "").split(",") if a.strip()]
+            if len(listed) > HERO_ABILITIES:
+                warnings.append(f"{oid}: uhab lists {len(listed)} hero abilities; the game uses at most "
+                                f"{HERO_ABILITIES} (Units/UnitMetaData.slk maxVal) and silently skips the rest. "
+                                + RANGE_HINTS["uhab"])
     try:
         payloads = [(name, objmods.serialize(om)) for om, name in zip(files, raw)
                     if raw[name] is not None or om.original or om.custom]
@@ -569,7 +595,7 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
     if wts_after != wts_before:
         project.write(strings_file(project), wts_after)
         changed = True
-    out = {"changed": changed, "created": created, "warnings": []}
+    out = {"changed": changed, "created": created, "warnings": warnings}
     if extended:
         out["extended_levels"] = extended
         out["extended_levels_note"] = ("these objects got more levels than their base object has, so the last value "
