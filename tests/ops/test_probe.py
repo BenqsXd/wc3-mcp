@@ -142,10 +142,26 @@ def test_probe_expect_records_a_verdict():
     jass = probe.script("jass", 10, 'call ProbeExpect("gold rose", GetPlayerState(Player(0), '
                                     "PLAYER_STATE_RESOURCE_GOLD) > 500)")
     assert "function ProbeExpect takes string name, boolean ok returns nothing" in jass
-    assert 'call Preload("check=pass:" + name)' in jass and 'call Preload("check=fail:" + name)' in jass
+    # buffered since 1.4: the report file is written at the end, so probe code cannot wipe the verdict
+    assert 'call wc3mcpProbe_Line("check=pass:" + name)' in jass
+    assert 'call wc3mcpProbe_Line("check=fail:" + name)' in jass
     lua = probe.script("lua", 5, 'ProbeExpect("hero alive", true)')
-    assert 'Preload("check=" .. (ok and "pass:" or "fail:") .. tostring(name))' in lua
+    assert 'wc3mcpProbe_Line("check=" .. (ok and "pass:" or "fail:") .. tostring(name))' in lua
     report = probe.parse(["probe=ok", "check=pass:gold rose", "check=fail:hero alive", "check=pass:wave spawned"])
     assert report["checks"] == {"gold rose": True, "hero alive": False, "wave spawned": True}
     assert report["checks_failed"] == ["hero alive"] and report["checks_passed"] == 2
     assert "checks" not in probe.parse(["probe=ok"])
+
+
+def test_a_probe_buffers_its_lines_and_samples_handles():
+    from wc3mcp.ops import probe
+
+    text = probe.script("jass", 5.0, user='call PreloadGenClear()\ncall ProbeReport("kept")')
+    body = text[text.index("function Trig_wc3mcpProbe_Actions"):]
+    # the report file is opened after the user code, so the user's PreloadGenClear cannot wipe it
+    assert body.index("call Trig_wc3mcpProbe_User()") < body.index("call PreloadGenClear()")
+    assert "ProbeHandleCount" in probe.JASS_MESSAGES
+    lines = ["probe=ok", "report=kept", "handles.start=1048800", "handles.end=1048920", "handles.seconds=120"]
+    doc = probe.parse(lines)
+    assert doc["reports"] == ["kept"]
+    assert doc["handles"] == {"start": 1048800, "end": 1048920, "growth": 120, "seconds": 120, "per_minute": 60.0}

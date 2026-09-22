@@ -195,6 +195,12 @@ PROBES (a throwaway copy of the map, so the map itself never gets test triggers)
     ProbeCountEvent(EVENT_..., "name")         counts a player-unit event from then on
     ProbeEventCount("name")                    reads the count
     ProbeCamera(x, y, distance, seconds)       looks at a place and waits there, for the screenshot series
+    ProbeHandleCount()                         the handle id of a fresh location: sample it around a loop to count
+                                               what the loop leaks
+  Every probe reports handles (start at 0 s, end at the report, growth and per_minute): a few dozen over a run is
+  normal; a steady climb of one per missile or per tick is a leak (pool dummy units instead of CreateUnit/RemoveUnit:
+  118 handles over 120 missiles fell to 2 over 60). The report is written at the end, so PreloadGenClear in probe
+  code no longer loses ProbeReport lines.
 
 BACKGROUND AND PICTURES
   wait=false starts the run and returns at once; game_status then reports it under run, and its whole result under

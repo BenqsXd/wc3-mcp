@@ -19,8 +19,27 @@ MAX_MESSAGES = 50
 JASS_GLOBALS = """    string array wc3mcpProbe_messages
     integer wc3mcpProbe_count = 0
     hashtable wc3mcpProbe_table = null
+    string array wc3mcpProbe_lines
+    integer wc3mcpProbe_lineCount = 0
+    integer wc3mcpProbe_handles0 = 0
+    timer wc3mcpProbe_clock = null
 """
 JASS_MESSAGES = """
+function wc3mcpProbe_Line takes string s returns nothing
+    if wc3mcpProbe_lineCount < 8000 then
+        set wc3mcpProbe_lines[wc3mcpProbe_lineCount] = s
+        set wc3mcpProbe_lineCount = wc3mcpProbe_lineCount + 1
+    endif
+endfunction
+
+function ProbeHandleCount takes nothing returns integer
+    local location l = Location(0, 0)
+    local integer id = GetHandleId(l)
+    call RemoveLocation(l)
+    set l = null
+    return id
+endfunction
+
 function wc3mcpProbe_Keep takes string s returns nothing
     if wc3mcpProbe_count < {limit} then
         set wc3mcpProbe_messages[wc3mcpProbe_count] = SubString(s, 0, 200)
@@ -63,25 +82,35 @@ endfunction
 function Trig_{name}_Actions takes nothing returns nothing
     local integer i = 0
     local group g = CreateGroup()
-    call PreloadGenClear()
-    call PreloadGenStart()
-    call Preload("probe=ok")
-    call Preload("seconds={seconds}")
+    call wc3mcpProbe_Line("probe=ok")
+    call wc3mcpProbe_Line("seconds={seconds}")
     loop
         exitwhen i > 11
         if GetPlayerSlotState(Player(i)) == PLAYER_SLOT_STATE_PLAYING then
             call GroupEnumUnitsOfPlayer(g, Player(i), null)
-            call Preload("player" + I2S(i) + ".units=" + I2S(CountUnitsInGroup(g)))
+            call wc3mcpProbe_Line("player" + I2S(i) + ".units=" + I2S(CountUnitsInGroup(g)))
             call GroupClear(g)
             call GroupEnumUnitsOfPlayer(g, Player(i), Condition(function Trig_{name}_Hero))
-            call Preload("player" + I2S(i) + ".heroes=" + I2S(CountUnitsInGroup(g)))
+            call wc3mcpProbe_Line("player" + I2S(i) + ".heroes=" + I2S(CountUnitsInGroup(g)))
             call GroupClear(g)
-            call Preload("player" + I2S(i) + ".gold=" + I2S(GetPlayerState(Player(i), PLAYER_STATE_RESOURCE_GOLD)))
-            call Preload("player" + I2S(i) + ".lumber=" + I2S(GetPlayerState(Player(i), PLAYER_STATE_RESOURCE_LUMBER)))
+            call wc3mcpProbe_Line("player" + I2S(i) + ".gold=" + I2S(GetPlayerState(Player(i), PLAYER_STATE_RESOURCE_GOLD)))
+            call wc3mcpProbe_Line("player" + I2S(i) + ".lumber=" + I2S(GetPlayerState(Player(i), PLAYER_STATE_RESOURCE_LUMBER)))
         endif
         set i = i + 1
     endloop
-{call_user}    set i = 0
+{call_user}    // the report file is opened only now, so a PreloadGenClear() in probe code cannot wipe what was reported
+    call PreloadGenClear()
+    call PreloadGenStart()
+    call Preload("handles.start=" + I2S(wc3mcpProbe_handles0))
+    call Preload("handles.end=" + I2S(ProbeHandleCount()))
+    call Preload("handles.seconds=" + I2S(R2I(TimerGetElapsed(wc3mcpProbe_clock))))
+    set i = 0
+    loop
+        exitwhen i >= wc3mcpProbe_lineCount
+        call Preload(wc3mcpProbe_lines[i])
+        set i = i + 1
+    endloop
+    set i = 0
     loop
         exitwhen i >= wc3mcpProbe_count
         call Preload("message" + I2S(i) + "=" + wc3mcpProbe_messages[i])
@@ -93,6 +122,9 @@ function Trig_{name}_Actions takes nothing returns nothing
 endfunction
 
 function Trig_{name}_Started takes nothing returns nothing
+    set wc3mcpProbe_clock = CreateTimer()
+    call TimerStart(wc3mcpProbe_clock, 1000000.0, false, null)
+    set wc3mcpProbe_handles0 = ProbeHandleCount()
     call PreloadGenClear()
     call PreloadGenStart()
     call Preload("started")
@@ -108,26 +140,47 @@ function InitTrig_{name} takes nothing returns nothing
 endfunction
 """
 LUA = """wc3mcpProbe_messages = {{}}
+wc3mcpProbe_lines = {{}}
+wc3mcpProbe_handles0 = 0
+wc3mcpProbe_clock = nil
+
+function wc3mcpProbe_Line(s)
+    if #wc3mcpProbe_lines < 8000 then table.insert(wc3mcpProbe_lines, s) end
+end
+
+function ProbeHandleCount()
+    local l = Location(0, 0)
+    local id = GetHandleId(l)
+    RemoveLocation(l)
+    return id
+end
 
 function Trig_{name}_Actions()
-    PreloadGenClear()
-    PreloadGenStart()
-    Preload("probe=ok")
-    Preload("seconds={seconds}")
+    wc3mcpProbe_Line("probe=ok")
+    wc3mcpProbe_Line("seconds={seconds}")
     for i = 0, 11 do
         if GetPlayerSlotState(Player(i)) == PLAYER_SLOT_STATE_PLAYING then
             local g = CreateGroup()
             GroupEnumUnitsOfPlayer(g, Player(i), nil)
-            Preload("player" .. i .. ".units=" .. CountUnitsInGroup(g))
+            wc3mcpProbe_Line("player" .. i .. ".units=" .. CountUnitsInGroup(g))
             GroupClear(g)
             GroupEnumUnitsOfPlayer(g, Player(i), Filter(function() return IsUnitType(GetFilterUnit(), UNIT_TYPE_HERO) end))
-            Preload("player" .. i .. ".heroes=" .. CountUnitsInGroup(g))
-            Preload("player" .. i .. ".gold=" .. GetPlayerState(Player(i), PLAYER_STATE_RESOURCE_GOLD))
-            Preload("player" .. i .. ".lumber=" .. GetPlayerState(Player(i), PLAYER_STATE_RESOURCE_LUMBER))
+            wc3mcpProbe_Line("player" .. i .. ".heroes=" .. CountUnitsInGroup(g))
+            wc3mcpProbe_Line("player" .. i .. ".gold=" .. GetPlayerState(Player(i), PLAYER_STATE_RESOURCE_GOLD))
+            wc3mcpProbe_Line("player" .. i .. ".lumber=" .. GetPlayerState(Player(i), PLAYER_STATE_RESOURCE_LUMBER))
             DestroyGroup(g)
         end
     end
-{call_user}    for i, text in ipairs(wc3mcpProbe_messages) do
+{call_user}    -- the report file is opened only now, so a PreloadGenClear() in probe code cannot wipe what was reported
+    PreloadGenClear()
+    PreloadGenStart()
+    Preload("handles.start=" .. wc3mcpProbe_handles0)
+    Preload("handles.end=" .. ProbeHandleCount())
+    Preload("handles.seconds=" .. math.floor(TimerGetElapsed(wc3mcpProbe_clock)))
+    for _, text in ipairs(wc3mcpProbe_lines) do
+        Preload(text)
+    end
+    for i, text in ipairs(wc3mcpProbe_messages) do
         Preload("message" .. (i - 1) .. "=" .. text)
     end
     PreloadGenEnd("{report}")
@@ -146,6 +199,9 @@ function InitTrig_{name}()
         end
     end
     TimerStart(CreateTimer(), 0.0, false, function()
+        wc3mcpProbe_clock = CreateTimer()
+        TimerStart(wc3mcpProbe_clock, 1000000.0, false, nil)
+        wc3mcpProbe_handles0 = ProbeHandleCount()
         PreloadGenClear()
         PreloadGenStart()
         Preload("started")
@@ -192,10 +248,10 @@ endfunction
 
 function ProbeReport takes string s returns nothing
     local integer i = 200
-    call Preload("report=" + SubString(s, 0, 200))
+    call wc3mcpProbe_Line("report=" + SubString(s, 0, 200))
     loop
         exitwhen i >= StringLength(s)
-        call Preload("report+=" + SubString(s, i, i + 200))
+        call wc3mcpProbe_Line("report+=" + SubString(s, i, i + 200))
         set i = i + 200
     endloop
 endfunction
@@ -203,7 +259,7 @@ endfunction
 function ProbeStartAI takes integer slot, string script returns nothing
     call SetPlayerController(Player(slot), MAP_CONTROL_COMPUTER)
     call StartMeleeAI(Player(slot), script)
-    call Preload("ai=" + I2S(slot) + ":" + script)
+    call wc3mcpProbe_Line("ai=" + I2S(slot) + ":" + script)
 endfunction
 
 function ProbeGold takes integer slot, integer gold, integer lumber returns nothing
@@ -216,15 +272,15 @@ function ProbeCamera takes real x, real y, real distance, real seconds returns n
     if distance > 0 then
         call SetCameraField(CAMERA_FIELD_TARGET_DISTANCE, distance, 0)
     endif
-    call Preload("camera=" + I2S(R2I(x)) + "," + I2S(R2I(y)))
+    call wc3mcpProbe_Line("camera=" + I2S(R2I(x)) + "," + I2S(R2I(y)))
     call TriggerSleepAction(seconds)
 endfunction
 
 function ProbeExpect takes string name, boolean ok returns nothing
     if ok then
-        call Preload("check=pass:" + name)
+        call wc3mcpProbe_Line("check=pass:" + name)
     else
-        call Preload("check=fail:" + name)
+        call wc3mcpProbe_Line("check=fail:" + name)
     endif
 endfunction
 
@@ -246,16 +302,16 @@ end
 
 function ProbeReport(s)
     s = tostring(s)
-    Preload("report=" .. string.sub(s, 1, 200))
+    wc3mcpProbe_Line("report=" .. string.sub(s, 1, 200))
     for i = 201, #s, 200 do
-        Preload("report+=" .. string.sub(s, i, i + 199))
+        wc3mcpProbe_Line("report+=" .. string.sub(s, i, i + 199))
     end
 end
 
 function ProbeStartAI(slot, script)
     SetPlayerController(Player(slot), MAP_CONTROL_COMPUTER)
     StartMeleeAI(Player(slot), script)
-    Preload("ai=" .. slot .. ":" .. script)
+    wc3mcpProbe_Line("ai=" .. slot .. ":" .. script)
 end
 
 function ProbeGold(slot, gold, lumber)
@@ -268,12 +324,12 @@ function ProbeCamera(x, y, distance, seconds)
     if distance and distance > 0 then
         SetCameraField(CAMERA_FIELD_TARGET_DISTANCE, distance, 0)
     end
-    Preload("camera=" .. math.floor(x) .. "," .. math.floor(y))
+    wc3mcpProbe_Line("camera=" .. math.floor(x) .. "," .. math.floor(y))
     TriggerSleepAction(seconds or 3)
 end
 
 function ProbeExpect(name, ok)
-    Preload("check=" .. (ok and "pass:" or "fail:") .. tostring(name))
+    wc3mcpProbe_Line("check=" .. (ok and "pass:" or "fail:") .. tostring(name))
 end
 
 {functions}function Trig_{name}_User()
@@ -368,6 +424,11 @@ def parse(lines: list[str]) -> dict:
             out.setdefault("checks", {})[name] = verdict == "pass"
         else:
             out[key] = (int(value) if sep and value.lstrip("-").isdigit() else value if sep else True)
+    if "handles.start" in out and "handles.end" in out:
+        start, end, seconds = out.pop("handles.start"), out.pop("handles.end"), out.pop("handles.seconds", 0)
+        growth = end - start
+        out["handles"] = {"start": start, "end": end, "growth": growth, "seconds": seconds,
+                          "per_minute": round(growth / (seconds / 60), 1) if seconds else None}
     if "checks" in out:   # ProbeExpect: the run's own verdict, so a caller reads pass/fail instead of text
         failed = sorted(name for name, ok in out["checks"].items() if not ok)
         out["checks_failed"] = failed
