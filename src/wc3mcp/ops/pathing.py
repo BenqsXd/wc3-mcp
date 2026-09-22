@@ -5,7 +5,6 @@ covers it - a unit needs more room than one pathing cell anyway. Used by map_val
 import math
 from collections import deque
 
-from ..formats import texture
 from .terrain import _corner_pathing
 
 # pathing texture field per kind; "none" means the type has no footprint
@@ -17,19 +16,10 @@ NOTE = ("walkability from the terrain plus the pathing texture of every placed o
 
 
 def _blocked_pixels(catalog, path: str, cache: dict) -> tuple[int, int, frozenset] | None:
-    """(width, height, the pixels that stop walking) of a pathing texture, or None when there is none."""
+    """(width, height, the pixels that stop walking) of a pathing texture, or None when there is none. The catalog
+    keeps the cache (data_search reads the same textures), so `cache` is only the caller's own shortcut."""
     if path not in cache:
-        cache[path] = None
-        if path and path.lower() != "none":
-            full = catalog.storage.resolve(path.replace("\\", "/"), **catalog.layer)
-            data = catalog.storage.read(full) if full else None
-            if data is not None:
-                image = texture.decode(data, path).convert("RGB")
-                w, h = image.size
-                pixels = image.tobytes()
-                # red marks ground a unit cannot walk on (blue is build-only, green is flying)
-                blocked = frozenset((i % w, i // w) for i in range(w * h) if pixels[i * 3] > 127)
-                cache[path] = (w, h, blocked)
+        cache[path] = catalog.pathing_pixels(path)
     return cache[path]
 
 

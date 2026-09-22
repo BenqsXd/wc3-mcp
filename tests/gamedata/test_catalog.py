@@ -169,3 +169,10 @@ def test_a_skin_section_spelled_in_another_case_still_gives_the_model(cat):
     """Doodads.slk has Ycgd, DoodadSkins.txt names the section [YCgd]; the game matches either."""
     model = cat.model("doodad", "Ycgd")
     assert model and "GeneralDecals" in model[0]
+
+
+def test_doodad_search_says_which_types_block_walking(cat):
+    rows = {r["id"]: r for r in cat.search("doodad", "ZRrk", limit=500)}
+    assert rows["ZRrk"]["blocks"] is True and rows["ZRrk"]["pathing"].endswith("4x4Default.tga")
+    shrub = {r["id"]: r for r in cat.search("doodad", "ZPsh", limit=500)}["ZPsh"]
+    assert shrub["blocks"] is False

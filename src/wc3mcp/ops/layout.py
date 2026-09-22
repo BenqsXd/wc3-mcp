@@ -464,6 +464,11 @@ class LayoutOps:
                 scale = float(scale_range[0]) + (float(scale_range[1]) - float(scale_range[0])) * near
             self._place(kind, pick(rng, weights), x, y, fields, rng, f"{path}[{i}]", scale=scale)
         self.notes.append(f"{path}: {len(placed)} {kind}(s) in the clump")
+        if len(placed) < count:
+            self.warnings.append(f"{path}: placed {len(placed)} of {count}; at spacing {spacing:g} (default 128, "
+                                 f"spreading to {spacing * (1 + 2 * falloff):g} at the rim) radius {radius:g} has no "
+                                 "room for more: lower spacing or raise radius")
+        self._warn_blocking(kind, weights, path)
 
     def op_clear(self, op: dict, path: str) -> None:
         """Delete the placed objects in an area: what a road, a plaza or a building site needs before it is built."""

@@ -527,6 +527,25 @@ class _Edit(_Map, layout.LayoutOps, symmetry.PlacedMirror):
             self._fixed[t] = value if value >= 0 else None
         return self._fixed[t]
 
+    def _blocking(self, kind: str, types) -> list[str]:
+        """The types among `types` whose pathing texture stops walking (map overrides included)."""
+        field = "dptx" if kind == "doodad" else "bptx"
+        out = []
+        for t in sorted(set(types)):
+            texture = objdata_get(self.project, self.catalog, kind, t, [field])["fields"].get(field, {}).get("value")
+            found = self.catalog.pathing_pixels(texture or "")
+            if found and found[2]:
+                out.append(t)
+        return out
+
+    def _warn_blocking(self, kind: str, types, path: str) -> None:
+        """Scattered or clustered scenery that blocks walking closes corridors nobody looked at again."""
+        blocking = self._blocking(kind, types) if kind in ("doodad", "destructible") else []
+        if blocking:
+            self.warnings.append(f"{path}: {', '.join(blocking)} block walking (their pathing texture, one pixel per "
+                                 "32 units): check with map_flow origins/targets that the ways between them stay "
+                                 'open, or use a copy with dptx/bptx "_" to keep the look without the footprint')
+
     def _check_scale(self, kind: str, o) -> None:
         """The World Editor clamps a doodad's or destructible's scale to its type's minimum and maximum on save."""
         t = _id(o.id)
@@ -637,6 +656,7 @@ class _Edit(_Map, layout.LayoutOps, symmetry.PlacedMirror):
         if placed < count:
             self.warnings.append(f"{path}: placed {placed} of {count}; the area is too full for min_distance, "
                                  "exclude and where")
+        self._warn_blocking(kind, weights, path)
 
     def op_set(self, op: dict, path: str) -> None:
         kind, o = self._find(op.get("ref"), f"{path}.ref")

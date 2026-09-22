@@ -48,7 +48,8 @@ SCENERY OPS - seeded, deterministic, terrain-aware; each takes the placement fie
    "face": "path"|"out"|"in"|<degrees>, "jitter"}
   {"op": "town", "kind", "types", "rect", "block": [w, h], "street", "margin", "spacing", "fill" 0-1,
    "props" (weights), "prop_spacing", "plaza": [l, b, r, t]}   - the result carries the streets for terrain_edit
-  {"op": "cluster", "kind", "types", "x", "y", "radius", "count", "spacing", "falloff", "scale_range": [small, big]}
+  {"op": "cluster", "kind", "types", "x", "y", "radius", "count", "spacing" (default 128; the rim spreads to
+   spacing x (1 + 2 x falloff)), "falloff", "scale_range": [small, big]}   - warns when it places fewer than count
   {"op": "clear", area ("rect", circle or "path" with "width"), "kinds", "types"}
   A road is three ops: terrain_edit paint along the path, clear along it, then line for the lanterns.
 
@@ -247,7 +248,8 @@ KINDS
 
 tileset ("L" or "Lordaeron Summer") scopes tile, cliff, doodad and destructible to one tileset; a plain query is a
 text search, not a tileset filter. Doodad and destructible results carry model_ok: false when the installed game
-cannot load the model in HD or in classic graphics (the editor's), with variations_ok listing the ones that do load.
+cannot load the model in HD or in classic graphics (the editor's), with variations_ok listing the ones that do load,
+and also pathing (the texture) and blocks (whether it stops walking).
 balance picks the gameplay data set: Custom_V1 (current), Custom_V0, Melee_V0, or null for the base files.
 """)
 

@@ -169,3 +169,17 @@ def test_layout_check_reports_the_narrowest_way_between_the_starts(tmp_path, cat
     doc = layout_check(p, catalog)
     assert doc["narrowest"]["gap"] <= 64 and doc["narrowest"]["between"] == ["start:0", "start:1"]
     assert "warning" in flow.connect(p, catalog, ["start:0"], ["start:1"])
+
+
+def test_a_cluster_that_cannot_place_its_count_says_so(tmp_path, catalog):
+    p = new_map(str(tmp_path / "K.w3x"), catalog, width=64, height=64, tileset="L", players=2, fill_tile="Lgrs")
+    result = placed_edit(p, catalog, [{"op": "cluster", "kind": "doodad", "types": ["LOsm"], "x": 0, "y": 0,
+                                       "radius": 260, "count": 8, "seed": 1}])
+    assert any("of 8" in w and "spacing" in w for w in result["warnings"])
+
+
+def test_scattering_blocking_rocks_warns_about_corridors(tmp_path, catalog):
+    p = new_map(str(tmp_path / "B.w3x"), catalog, width=64, height=64, tileset="L", players=2, fill_tile="Lgrs")
+    result = placed_edit(p, catalog, [{"op": "scatter", "kind": "doodad", "types": ["ZRrk"], "count": 20,
+                                       "rect": [-2048, -2048, 2048, 2048], "seed": 3}])
+    assert any("block walking" in w and "ZRrk" in w for w in result["warnings"])

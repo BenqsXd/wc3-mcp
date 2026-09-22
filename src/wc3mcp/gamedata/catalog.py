@@ -124,6 +124,7 @@ class Catalog:
         self._profiles: dict[str, dict] = {}
         self._profiles_lower: dict[str, dict] = {}
         self._fields: dict[str, list[FieldMeta]] = {}
+        self._pathing: dict[str, tuple | None] = {}
 
     # raw data
     def _read(self, relpath: str) -> bytes | None:
@@ -422,7 +423,29 @@ class Catalog:
                 row["model_ok"] = ok is None or len(ok) == max(found[1], 1)
                 if ok and not row["model_ok"]:
                     row["variations_ok"] = ok
+                path = self.field(kind, row["id"], "dptx" if kind == "doodad" else "bptx") or ""
+                blocked = self.pathing_pixels(path)
+                row["pathing"], row["blocks"] = path or None, bool(blocked and blocked[2])
         return page
+
+    def pathing_pixels(self, path: str):
+        """(width, height, the pixels a unit cannot walk on) of a pathing texture, or None when there is none. Red
+        marks unwalkable ground (blue is build-only, green flying); one pixel is one 32-unit cell."""
+        key = (path or "").strip()
+        if key not in self._pathing:
+            self._pathing[key] = None
+            if key and key.lower() not in ("none", "_"):
+                from ..formats import texture
+
+                full = self.storage.resolve(key.replace("\\", "/"), **self.layer)
+                data = self.storage.read(full) if full else None
+                if data is not None:
+                    image = texture.decode(data, key).convert("RGB")
+                    w, h = image.size
+                    pixels = image.tobytes()
+                    self._pathing[key] = (w, h, frozenset((i % w, i // w) for i in range(w * h)
+                                                          if pixels[i * 3] > 127))
+        return self._pathing[key]
 
     def _search_terrain(self, kind: str, query: str, limit: int, offset: int, tileset: str | None) -> list[dict]:
         """Tiles and cliffs carry their tileset, and can be filtered and searched by its letter or display name."""
