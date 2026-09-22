@@ -68,6 +68,18 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.4.1
+
+The live World Editor calibration, which 1.4 left open, has run. It confirmed the 1.3 cliff rule - the editor
+rewrote none of the levels `terrain_edit` settles - and found one defect in the derived pathing.
+
+- **A cell counts as deep water only where its shallowest point is deep.** The tools judged a cell by the water
+  depth at its centre, the editor by the cell's shallowest point, so a sloping shore came back one cell narrower
+  than the game has it. Against an editor-saved `war3map.wpm` that took the disagreement from 0.58 % of the cells
+  to 0.05 %, with the deep-water threshold unchanged.
+- **`editor_map action="save"` answers the Reminder box** a map still named "Just another Warcraft III map" gets on
+  every save. It used to wait for that box to close by itself, which hung the save until its timeout.
+
 ## What's new in 1.4
 
 The rest of the map-session feedback that 1.3 started.
