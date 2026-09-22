@@ -94,3 +94,18 @@ def test_mirror_refuses_what_it_cannot_do(half_built):
     with pytest.raises(ToolError) as e:
         terrain_edit(project, catalog, [{"op": "mirror", "axis": "rot90", "from": [-3000, -500, -1000, 500]}])
     assert e.value.code == "bad_value" and "square" in e.value.message
+
+
+def test_a_mirror_whose_image_overlaps_its_source_is_refused(tmp_path, catalog):
+    p = new_map(str(tmp_path / "M.w3x"), catalog, width=64, height=64, tileset="L", players=2, fill_tile="Lgrs")
+    with pytest.raises(ToolError) as e:
+        terrain_edit(p, catalog, [{"op": "mirror", "axis": "y", "from": [-2048, -2048, 2048, 2048]}])
+    assert e.value.code == "bad_value" and "overlaps" in e.value.message
+
+
+def test_rot4_fills_the_three_other_quadrants_from_one(tmp_path, catalog):
+    p = new_map(str(tmp_path / "R.w3x"), catalog, width=64, height=64, tileset="L", players=2, fill_tile="Lgrs")
+    terrain_edit(p, catalog, [{"op": "cliff", "rect": [512, 512, 768, 768], "level": 4},
+                              {"op": "mirror", "axis": "rot4", "from": [0, 0, 3072, 3072], "centre": [0, 0]}])
+    for x, y in ((640, 640), (-640, 640), (-640, -640), (640, -640)):
+        assert terrain_get(p, [x, y, x, y], ["cliff_level"])["layers"]["cliff_level"][0][0] == 4

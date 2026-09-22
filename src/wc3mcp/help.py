@@ -162,12 +162,14 @@ take the same areas, and every one of them is deterministic for a given seed.
       result says which world units black and white stand for, so a round trip is exact.
 
 SYMMETRY (the same op on terrain_edit and placed_edit)
-  {"op": "mirror", "axis": "x"|"y"|"point"|"rot90"|"rot180"|"rot270", "from": [l, b, r, t] (default: the half or
+  {"op": "mirror", "axis": "x"|"y"|"point"|"rot90"|"rot180"|"rot270"|"rot4", "from": [l, b, r, t] (default: the half or
    quadrant the axis implies), "centre": [x, y] (default: the middle of the playable area),
    "layers": [...] (terrain), "kinds": [...] (placed), "owner_map": {"0": 1} (placed: the owner the copies get),
    "replace": true (placed: clear the target area first)}
       Build one half or quadrant properly, then mirror it: a reflection flips every facing, a rotation turns it.
-      rot90 and rot270 need a square source area.
+      rot90, rot270 and rot4 need a square source area. rot4 fills the other three quadrants from one (three
+      quarter turns of the same source). A source whose image overlaps it is refused. x reflects the x coordinate
+      (a left-right mirror), y the y coordinate.
 """)
 
 page("game_test", """

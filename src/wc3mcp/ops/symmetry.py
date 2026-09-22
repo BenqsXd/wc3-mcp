@@ -9,7 +9,7 @@ from ..errors import ToolError
 from ..formats import w3e
 from .elements import _bad, _bool, _int, _num
 
-AXES = ("x", "y", "point", "rot90", "rot180", "rot270")
+AXES = ("x", "y", "point", "rot90", "rot180", "rot270", "rot4")
 KEYS = {"axis", "from", "centre"}
 TERRAIN_KEYS = {"mirror": KEYS | {"layers"}}
 PLACED_KEYS = {"mirror": {"op", *KEYS, "kinds", "owner_map", "replace"}}
@@ -47,6 +47,25 @@ def _source(op: dict, path: str, bounds, axis: str, centre) -> tuple[float, floa
     if axis == "y":
         return bounds[0], cy, bounds[2], bounds[3]
     return bounds[0], bounds[1], cx, cy      # a rotation copies one quadrant around the centre
+
+
+def axes_of(axis: str) -> tuple[str, ...]:
+    """rot4 is the three quarter turns of one quadrant, read from the same untouched source."""
+    return ("rot90", "rot180", "rot270") if axis == "rot4" else (axis,)
+
+
+def _check_overlap(axis: str, centre, source, path: str) -> None:
+    """A mirror whose image lands on its own source copies half-written ground; refuse it (sharing the axis line
+    itself is fine)."""
+    for one in axes_of(axis):
+        left, bottom, right, top = reflect_rect(one, centre, source)
+        width = min(right, source[2]) - max(left, source[0])
+        height = min(top, source[3]) - max(bottom, source[1])
+        if width > 128 and height > 128:
+            raise ToolError("bad_value", f"{path}: the mirror image of {list(source)} ({one}) overlaps its source "
+                            f"by {width:g} x {height:g}, so the copy would read ground it has already written",
+                            hint="mirror the half (or quadrant) on one side of the axis: leave out from for the "
+                                 "default, or give a from that ends at the centre")
 
 
 def reflect(axis: str, centre, x: float, y: float) -> tuple[float, float]:
@@ -95,34 +114,36 @@ def terrain_apply(brush, op: dict, path: str) -> bool:
     source = [(cx, cy) for cx, cy in brush._window(left, bottom, right, top)]
     if not source:
         raise _bad(path, f"the source area covers no terrain corner; the map spans {bounds}")
-    if axis in ("rot90", "rot270") and (right - left) != (top - bottom):
+    if axis in ("rot90", "rot270", "rot4") and (right - left) != (top - bottom):
         raise ToolError("bad_value", f"{path}: rotating by 90 degrees needs a square source area, not "
                                      f"{right - left:g} by {top - bottom:g}",
                         hint='use "point" for a 180 degree rotation, or square the area')
+    _check_overlap(axis, centre, (left, bottom, right, top), path)
+    # read every source corner before writing: rot4 copies the same untouched quadrant three times
+    read = [(_xy(t, cx, cy), dict(w3e.corner(t, cx, cy))) for cx, cy in source]
     written = 0
-    for cx, cy in source:
-        values = dict(w3e.corner(t, cx, cy))
-        x, y = _xy(t, cx, cy)
-        mx, my = reflect(axis, centre, x, y)
-        tx = int(round((mx - t.offset_x) / 128))
-        ty = int(round((my - t.offset_y) / 128))
-        if not (0 <= tx < t.width and 0 <= ty < t.height):
-            continue
-        fields = {}
-        if "height" in layers:
-            fields["height"] = values["height"]
-        if "texture" in layers:
-            fields["texture"] = values["texture"]
-        if "cliff" in layers:
-            fields.update(layer=values["layer"], cliff_texture=values["cliff_texture"])
-        if "water" in layers:
-            fields.update(water=values["water"], water_level=values["water_level"])
-        if "flags" in layers:
-            fields.update({flag: values[flag] for flag in FLAG_FIELDS})
-        w3e.set_corner(t, tx, ty, **fields)
-        if "texture" in layers:
-            brush.painted[(tx, ty)] = values["texture"]
-        written += 1
+    for one in axes_of(axis):
+        for (x, y), values in read:
+            mx, my = reflect(one, centre, x, y)
+            tx = int(round((mx - t.offset_x) / 128))
+            ty = int(round((my - t.offset_y) / 128))
+            if not (0 <= tx < t.width and 0 <= ty < t.height):
+                continue
+            fields = {}
+            if "height" in layers:
+                fields["height"] = values["height"]
+            if "texture" in layers:
+                fields["texture"] = values["texture"]
+            if "cliff" in layers:
+                fields.update(layer=values["layer"], cliff_texture=values["cliff_texture"])
+            if "water" in layers:
+                fields.update(water=values["water"], water_level=values["water_level"])
+            if "flags" in layers:
+                fields.update({flag: values[flag] for flag in FLAG_FIELDS})
+            w3e.set_corner(t, tx, ty, **fields)
+            if "texture" in layers:
+                brush.painted[(tx, ty)] = values["texture"]
+            written += 1
     if not written:
         raise ToolError("bad_value", f"{path}: every mirrored corner lands outside the map",
                         hint="check centre and from against the map bounds " + str(bounds))
@@ -138,7 +159,7 @@ class PlacedMirror:
         axis = _axis(op, path)
         centre = _centre(op, path, bounds)
         left, bottom, right, top = _source(op, path, bounds, axis, centre)
-        if axis in ("rot90", "rot270") and round(right - left) != round(top - bottom):
+        if axis in ("rot90", "rot270", "rot4") and round(right - left) != round(top - bottom):
             raise ToolError("bad_value", f"{path}: rotating by 90 degrees needs a square source area, not "
                                          f"{right - left:g} by {top - bottom:g}",
                             hint='use "point" for a 180 degree rotation, or square the area')
@@ -164,29 +185,31 @@ class PlacedMirror:
             for ref in self._refs_in(kind, lambda x, y: left <= x <= right and bottom <= y <= top, None):
                 found, o = self._find(ref, path)
                 rows.append((kind, o, self.to_json(kind, o, {})))
-        if replace:
-            target = reflect_rect(axis, centre, (left, bottom, right, top))
-            removed = 0
-            for kind in kinds:
-                for ref in self._refs_in(kind, lambda x, y: _inside(target, x, y), None):
-                    self.op_delete({"op": "delete", "ref": ref}, path)
-                    removed += 1
-            if removed:
-                self.notes.append(f"{path}: {removed} object(s) removed from the mirrored area first")
+        _check_overlap(axis, centre, (left, bottom, right, top), path)
         made = 0
-        for kind, o, doc in rows:
-            x, y = reflect(axis, centre, doc["x"], doc["y"])
-            # placed_list reports more than add takes (script_name, the resolved name); keep the writable fields
-            writable = self._fields(kind) - {"x", "y", "angle"}
-            fields = {k: v for k, v in doc.items() if k in writable and v is not None}
-            if kind == "start_location":
-                fields.pop("type", None)
-            add = {"op": "add", "kind": kind, "x": round(x, 1), "y": round(y, 1),
-                   "angle": round(turn(axis, doc.get("angle") or 0.0), 1), **fields}
-            if "owner" in fields and fields["owner"] in owner_map:
-                add["owner"] = owner_map[fields["owner"]]
-            self.op_add(add, f"{path}[{made}]")
-            made += 1
+        for one in axes_of(axis):
+            if replace:
+                target = reflect_rect(one, centre, (left, bottom, right, top))
+                removed = 0
+                for kind in kinds:
+                    for ref in self._refs_in(kind, lambda x, y: _inside(target, x, y), None):
+                        self.op_delete({"op": "delete", "ref": ref}, path)
+                        removed += 1
+                if removed:
+                    self.notes.append(f"{path}: {removed} object(s) removed from the mirrored area first")
+            for kind, o, doc in rows:
+                x, y = reflect(one, centre, doc["x"], doc["y"])
+                # placed_list reports more than add takes (script_name, the resolved name); keep the writable fields
+                writable = self._fields(kind) - {"x", "y", "angle"}
+                fields = {k: v for k, v in doc.items() if k in writable and v is not None}
+                if kind == "start_location":
+                    fields.pop("type", None)
+                add = {"op": "add", "kind": kind, "x": round(x, 1), "y": round(y, 1),
+                       "angle": round(turn(one, doc.get("angle") or 0.0), 1), **fields}
+                if "owner" in fields and fields["owner"] in owner_map:
+                    add["owner"] = owner_map[fields["owner"]]
+                self.op_add(add, f"{path}[{made}]")
+                made += 1
         self.notes.append(f"{path}: {made} object(s) mirrored ({axis})")
 
 
