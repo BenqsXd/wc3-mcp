@@ -264,3 +264,18 @@ def test_types_with_a_fixed_rotation_stand_at_it(tmp_path, catalog):
     stored_wrong = pathing.cells(p, terrain, catalog, [("destructible", "DTg3", 0.0, 0.0, math.radians(270))])[0]
     stored_right = pathing.cells(p, terrain, catalog, [("destructible", "DTg3", 0.0, 0.0, 0.0)])[0]
     assert stored_wrong == stored_right
+
+
+def test_setting_a_waygate_explains_how_units_use_it(tmp_path, catalog):
+    from wc3mcp.ops.newmap import new_map
+    from wc3mcp.ops.script import script_build
+
+    p = new_map(str(tmp_path / "W.w3x"), catalog, width=64, height=64, players=2)
+    elements_edit(p, catalog, "region", [{"op": "upsert", "name": "Out", "left": 1024, "bottom": 1024, "right": 1280,
+                                          "top": 1280}])
+    out = placed_edit(p, catalog, [{"op": "add", "kind": "unit", "type": "nwgt", "x": 0, "y": 0, "owner": 27,
+                                    "waygate": "Out"}])
+    assert any("smart" in w for w in out["warnings"])
+    script_build(p, catalog)
+    text = p.read("war3map.j").decode("utf-8")
+    assert "call WaygateActivate(" in text and "call WaygateSetDestination(" in text

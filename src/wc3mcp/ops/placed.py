@@ -471,6 +471,11 @@ class _Edit(_Map, layout.LayoutOps, symmetry.PlacedMirror):
             o.color = -1 if fields["color"] is None else _int(fields["color"], f"{path}.color", 0, 23)
         if "waygate" in fields:
             o.waygate = self._region_index(fields["waygate"], f"{path}.waygate")
+            note = ("waygate: the generated script sets the destination and activates the gate at map start; a unit "
+                    'uses it when ordered onto the gate itself (IssueTargetOrder(u, "smart", gate), what a '
+                    "right-click does) - a move order to a point next to it stops at its edge")
+            if o.waygate >= 0 and note not in self.warnings:
+                self.warnings.append(note)
 
     # ops
     def op_add(self, op: dict, path: str) -> None:
