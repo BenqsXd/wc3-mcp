@@ -176,3 +176,17 @@ def test_doodad_search_says_which_types_block_walking(cat):
     assert rows["ZRrk"]["blocks"] is True and rows["ZRrk"]["pathing"].endswith("4x4Default.tga")
     shrub = {r["id"]: r for r in cat.search("doodad", "ZPsh", limit=500)}["ZPsh"]
     assert shrub["blocks"] is False
+
+
+def test_a_field_name_that_matches_nothing_is_reported(cat):
+    doc = cat.get("unit", "ntav", ["useu", "usse"])
+    assert "useu" in doc["fields"] and doc["unknown_fields"] == ["usse"]
+
+
+def test_an_icon_is_found_by_its_button_name(cat):
+    doc = cat.get("icon", "BTNChainLightning")
+    assert doc["id"].endswith("BTNChainLightning.dds") or doc["id"].endswith("BTNChainLightning.blp")
+    assert doc["resolved_from"] == "BTNChainLightning"
+    with pytest.raises(ToolError) as e:
+        cat.get("icon", "BTNForkedLightning")
+    assert e.value.code == "not_found"

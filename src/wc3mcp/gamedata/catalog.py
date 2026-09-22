@@ -505,26 +505,44 @@ class Catalog:
         if kind in TRIGGER_KINDS:
             return self._trigger_get(kind, obj_id, missing)
         if kind in PATH_KINDS:
-            if self.storage.norm(obj_id) not in self.storage.names():
-                raise missing
-            return {"kind": kind, "id": obj_id, "local": self.storage.is_local(obj_id)}
+            if self.storage.norm(obj_id) in self.storage.names():
+                return {"kind": kind, "id": obj_id, "local": self.storage.is_local(obj_id)}
+            # a bare name ("BTNChainLightning") or a path with the other extension names one file often enough
+            stem = obj_id.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            hits = self.search(kind, f"*/{stem}.*", limit=20)
+            if len(hits) == 1:
+                path = hits[0]["id"]
+                return {"kind": kind, "id": path, "ref": hits[0].get("ref"), "resolved_from": obj_id,
+                        "local": self.storage.is_local(path)}
+            raise ToolError("not_found", f"no {kind} {obj_id!r}",
+                            hint='the id is a storage path (data_search kind=icon query="*ChainLightning*" finds '
+                                 "them); a bare name like BTNChainLightning works when it names one file",
+                            candidates=[h["id"] for h in hits[:10]])
         if kind in ROW_KINDS:
             row = self._row(kind, obj_id)
             if row is None:
                 raise missing
             wanted = {f.lower() for f in fields} if fields else None
-            return {"kind": kind, "id": obj_id, "name": self.name(kind, obj_id),
-                    "fields": {k: self.westring(v) for k, v in row.items() if wanted is None or k.lower() in wanted}}
+            doc = {"kind": kind, "id": obj_id, "name": self.name(kind, obj_id),
+                   "fields": {k: self.westring(v) for k, v in row.items() if wanted is None or k.lower() in wanted}}
+            unknown = [f for f in fields if f.lower() not in {k.lower() for k in row}] if fields else []
+            if unknown:
+                doc["unknown_fields"] = unknown
+            return doc
         spec = OBJECT_KINDS[kind]
         if obj_id not in self.table(spec.slks[spec.id_slk]).rows:
             raise missing
         levels = self.levels(kind, obj_id)
         wanted = [f.lower() for f in fields] if fields else None
+        matched: set[str] = set()
         out = {}
         for meta in self.fields(kind):
-            if wanted is not None and not any(w in (meta.id.lower(), meta.field.lower()) or w in meta.display_name.lower()
-                                              for w in wanted):
+            hits = [] if wanted is None else [w for w in wanted
+                                              if w in (meta.id.lower(), meta.field.lower())
+                                              or w in meta.display_name.lower()]
+            if wanted is not None and not hits:
                 continue
+            matched.update(hits)   # a field that exists but does not apply to this object is not unknown
             if not self.applies(kind, obj_id, meta):
                 continue
             entry = {"field": meta.field, "name": meta.display_name, "category": meta.category, "type": meta.type}
@@ -534,6 +552,9 @@ class Catalog:
                 entry["value"] = self.value(kind, obj_id, meta)
             out[meta.id] = entry
         doc = {"kind": kind, "id": obj_id, "name": self.name(kind, obj_id), "levels": levels, "fields": out}
+        unknown = [f for f in fields if f.lower() not in matched] if fields else []
+        if unknown:
+            doc["unknown_fields"] = unknown
         if kind == "ability":
             doc["orders"] = self.ability_orders(obj_id)
         models = self.missing_models(kind, obj_id) if kind in MODEL_FIELDS else None
