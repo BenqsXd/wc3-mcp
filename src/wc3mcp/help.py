@@ -432,7 +432,8 @@ balance_report(path, kind, ids, compare, balance) - what the map's own objects a
                   and damage per gold, life per gold and a combined worth per 100 gold
   kind="item"     the bonuses its abilities give (Iagi, Iint, Istr, Iatt, Ilif, Iman, Idef, ...) and per 100 gold
   kind="ability"  the per-level curve: cooldown, mana, range, duration, area, damage, damage per mana, damage per
-                  second of cooldown
+                  second of cooldown. It also lists button_cells: abilities sharing a command-card cell, which clash
+                  on a unit that is given both at runtime
 
 A unit whose udty is "hero" also gets a hero block: its attributes at level 1 and at MaxHeroLevel, and the life,
 mana, armour, attack damage bonus and damage per second they make of the unit's fields through the gameplay

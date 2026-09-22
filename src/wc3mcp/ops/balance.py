@@ -262,6 +262,7 @@ def balance_report(project, catalog, kind: str = "unit", ids: list[str] | None =
     elif compare and kind == "item":
         stock = _stock(project, catalog, kind, STOCK_ITEMS)
     rows = []
+    cells: dict[str, list[str]] = {}
     for obj_id in ids[:50]:
         fields, doc = _fields(project, catalog, kind, obj_id)
         if kind == "unit":
@@ -275,6 +276,9 @@ def balance_report(project, catalog, kind: str = "unit", ids: list[str] | None =
         else:
             row = {"id": obj_id, "name": doc.get("name", obj_id), "base": doc.get("base"),
                    **_ability(fields, int(doc.get("levels", 1)))}
+            cell = (_first(fields.get("abpx")), _first(fields.get("abpy")))
+            if None not in cell and "" not in cell:
+                cells.setdefault(f"{int(float(cell[0]))},{int(float(cell[1]))}", []).append(obj_id)
         against = hero_stock if kind == "unit" and "hero" in row else stock
         if against:
             near = _closest(row, against, kind)
@@ -286,6 +290,13 @@ def balance_report(project, catalog, kind: str = "unit", ids: list[str] | None =
                 row["flags"] = flags
         rows.append(row)
     out = {"kind": kind, "count": len(rows), "objects": rows}
+    shared = {k: v for k, v in sorted(cells.items()) if len(v) > 1}
+    if shared:
+        out["button_cells"] = shared
+        out["button_note"] = ("these abilities sit on the same command-card cell (abpx, abpy); a unit that gets two of "
+                              "them with UnitAddAbility shows only one. Button positions are object data, the same "
+                              "for every player (BlzSetAbilityPosX/Y take an ability code, so they move it for "
+                              "everyone): use one ability object per cell")
     if kind == "unit":
         out["formulas"] = {"damage_per_second": "(base + dice * (sides + 1) / 2) / cooldown, per enabled attack",
                            "effective_life": f"life / (1 - {ARMOUR_STEP} * armour / (1 + {ARMOUR_STEP} * armour))",

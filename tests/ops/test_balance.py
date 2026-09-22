@@ -97,3 +97,19 @@ def test_a_hero_is_read_through_its_attributes_and_set_beside_heroes(project, ca
                                                        "Ewar", "Edem"}
     plain = next(r for r in balance_report(project, catalog, "unit", ["hfoo"])["objects"] if r["id"] == "hfoo")
     assert "hero" not in plain and plain["life"] == 420
+
+
+def test_abilities_on_one_button_cell_are_listed(tmp_path):
+    from corpus import _storage
+    from wc3mcp.gamedata.catalog import Catalog
+    from wc3mcp.ops.balance import balance_report
+    from wc3mcp.ops.newmap import new_map
+    from wc3mcp.ops.objdata import objdata_edit
+
+    c = Catalog(_storage(), balance="Custom_V1")
+    p = new_map(str(tmp_path / "B.w3x"), c, width=64, height=64, players=2)
+    objdata_edit(p, c, "ability", [{"op": "create", "base": "ANcl", "id": "A000", "set": {"abpx": 1, "abpy": 2}},
+                                   {"op": "create", "base": "ANcl", "id": "A001", "set": {"abpx": 1, "abpy": 2}},
+                                   {"op": "create", "base": "ANcl", "id": "A002", "set": {"abpx": 2, "abpy": 2}}])
+    doc = balance_report(p, c, "ability")
+    assert doc["button_cells"] == {"1,2": ["A000", "A001"]}
