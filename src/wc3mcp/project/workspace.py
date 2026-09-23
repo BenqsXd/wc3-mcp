@@ -305,8 +305,12 @@ class MapProject:
         root = config.home() / "snapshots" / self.work.name
         if action == "list":
             return {"snapshots": sorted(p.name for p in root.iterdir()) if root.is_dir() else []}
-        if not label or not all(c.isalnum() or c in "-_." for c in label) or label in (".", ".."):
-            raise ToolError("bad_label", "snapshot labels use letters, digits, '-', '_' and '.'")
+        if not label:
+            raise ToolError("bad_label", f"label: {action} needs the snapshot's label (the parameter is label, not "
+                            "name)", path="label", hint='map_snapshot(path, action="create", label="before-terrain")')
+        if not all(c.isalnum() or c in "-_." for c in label) or label in (".", ".."):
+            raise ToolError("bad_label", f"label {label!r}: snapshot labels use letters, digits, '-', '_' and '.'",
+                            path="label")
         snap = root / label
         if action == "create":
             shutil.rmtree(snap, ignore_errors=True)

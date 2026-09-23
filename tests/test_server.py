@@ -487,6 +487,20 @@ def test_batch_runs_several_tools_in_one_call(tmp_path):
     assert bad_args["results"][0]["error"]["code"] == "bad_value"
     zero = payload(call("wc3_batch", {"calls": [{"tool": "wc3_help"}]}))   # a tool that takes nothing needs no args
     assert zero["results"][0]["ok"] and zero["results"][0]["result"]["topics"]
+    # a call without path takes the batch's last path, or the only open map
+    inherited = payload(call("wc3_batch", {"calls": [{"tool": "map_status", "args": {}},
+                                                    {"tool": "map_file_read", "args": {"name": "war3map.j"}}]}))
+    assert inherited["failed"] == 0 and inherited["results"][1]["result"]["content"] == "// script"
+    payload(call("map_close", {"path": str(src)}))
+
+
+def test_a_snapshot_without_a_label_names_the_parameter(tmp_path):
+    src = tmp_path / "snap.w3x"
+    src.write_bytes(write_archive({"war3map.j": b"// script"}))
+    payload(call("map_open", {"path": str(src)}))
+    err = call("map_snapshot", {"path": str(src), "action": "create"})
+    body = json.loads(err.content[0].text.split(": ", 1)[1])
+    assert err.isError and body["code"] == "bad_label" and body["message"].startswith("label:")
     payload(call("map_close", {"path": str(src)}))
 
 

@@ -1,6 +1,7 @@
 """wc3-mcp MCP server. Phase 1: map working copies and game data."""
 import base64
 import functools
+import inspect
 import json
 import logging
 import shutil
@@ -209,9 +210,10 @@ def wc3_batch(calls: list[dict], stop_on_error: bool = True) -> dict:
     """Run several of these tools in one round trip: [{"tool": "objdata_edit", "args": {...}}, {"tool": "script_build",
     "args": {"path": "..."}}, {"tool": "map_validate", "args": {"path": "..."}}]. Each call answers as it would on its
     own, under results[i].result, or with its error under results[i].error; stop_on_error=false runs the rest anyway.
-    Use it for the chains that always go together (edit, rebuild, check) instead of one call each. At most 20 calls,
-    no nesting, and the tools that answer with a picture (terrain_render, editor_screenshot, asset_preview) have to be
-    called on their own."""
+    Use it for the chains that always go together (edit, rebuild, check) instead of one call each. A call that leaves
+    out path gets the path of the batch's last call that gave one, or the only open map. At most 20 calls, no nesting,
+    and the tools that answer with a picture (terrain_render, editor_screenshot, asset_preview) have to be called on
+    their own."""
     if not isinstance(calls, list) or not calls:
         raise ToolError("bad_value", "calls is a list of {\"tool\", \"args\"}", path="calls")
     if len(calls) > MAX_BATCH:
@@ -230,8 +232,15 @@ def wc3_batch(calls: list[dict], stop_on_error: bool = True) -> dict:
             raise ToolError("bad_value", f"calls[{i}]: args is an object of the tool's parameters",
                             path=f"calls[{i}].args")
         plan.append((name, args))
-    results, failed = [], 0
+    results, failed, last_path = [], 0, None
     for i, (name, args) in enumerate(plan):
+        if "path" in args:
+            last_path = args["path"]
+        elif "path" in inspect.signature(TOOLS[name]).parameters:
+            only = [p.source for p in _projects.values()] if len(_projects) == 1 else []
+            default = last_path or (str(only[0]) if only else None)
+            if default is not None:
+                args = {**args, "path": default}
         try:
             results.append({"tool": name, "ok": True, "result": TOOLS[name](**args)})
         except ToolError as e:
@@ -457,7 +466,8 @@ def map_file_write(path: str, name: str, content: str = "", encoding: Literal["t
 
 @_tool
 def map_snapshot(path: str, action: Literal["create", "restore", "list", "diff"], label: str | None = None) -> dict:
-    """Named checkpoints of an open map's working copy: create, restore, list, or diff against the current state."""
+    """Named checkpoints of an open map's working copy: create, restore, list, or diff against the current state.
+    The name goes in label (letters, digits, '-', '_', '.')."""
     return _project(path).snapshot(action, label)
 
 
