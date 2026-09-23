@@ -409,6 +409,12 @@ The file is imported under war3mapImported and listed in a .toc beside it; the r
 the problems a check found (unknown frame type, an anchor that is not a corner, a SetPoint to a frame the file never
 defines, a texture the map does not hold) and the script that loads it: BlzLoadTOCFile, then BlzCreateFrame or
 BlzGetFrameByName. ui_get reads a file back, the game's own UI included.
+The .toc lists every layout by its archive path (war3mapImported\\score.fdf) and ends with blank lines: the game
+reads entries as paths, and a bare file name loads nothing, so every BlzCreateFrame of its templates returns null.
+ui_get on a .toc reports entries that are neither in the map nor in the game data. A StringList in a map's .fdf
+loaded with BlzLoadTOCFile replaces the game's own strings of the same keys (the STR/AGI/INT tooltips come from
+UI\\FrameDef\\InfoPanelStrings.fdf, BONUS_HITPOINTS and friends; keep their %d). BlzFrameClick(button) fires
+FRAMEEVENT_CONTROL_CLICK, which is how a probe presses a button; hover and mouse state cannot be faked from a probe.
 """)
 
 

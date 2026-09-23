@@ -72,7 +72,23 @@ def test_ui_edit_imports_the_layout_with_a_toc_and_a_loader(game_map):
     assert doc["source"] == "map" and [f["name"] for f in doc["frames"]] == ["MyPanel", "MyPanelTitle"]
     assert doc["frames"][0]["inherits"] == "EscMenuBackdropTemplate"
     toc = ui_get(project, catalog, "war3mapImported\\score.toc")
-    assert toc["kind"] == "toc" and toc["files"] == ["score.fdf"]
+    # the game reads .toc entries as archive paths: a bare "score.fdf" loaded nothing in a playtest
+    assert toc["kind"] == "toc" and toc["files"] == ["war3mapImported\\score.fdf"] and toc["problems"] == []
+    assert project.read("war3mapImported\\score.toc") == b"war3mapImported\\score.fdf\r\n\r\n"
+
+
+@pytest.mark.skipif(not HAVE_INSTALL, reason="needs the Warcraft III install")
+def test_a_toc_with_bare_names_is_reported_and_repaired(game_map):
+    from wc3mcp.ops.imports import imports_edit
+
+    project, catalog = game_map
+    ui_edit(project, catalog, "score.fdf", text=SAMPLE)
+    imports_edit(project, [{"op": "add", "path": "war3mapImported/score.toc",
+                            "content_base64": "c2NvcmUuZmRmCg=="}])      # "score.fdf\n", what 1.4 wrote
+    assert ui_get(project, catalog, "war3mapImported\\score.toc")["problems"]
+    ui_edit(project, catalog, "score.fdf", text=SAMPLE)
+    toc = ui_get(project, catalog, "war3mapImported\\score.toc")
+    assert toc["files"] == ["war3mapImported\\score.fdf"] and toc["problems"] == []
 
 
 @pytest.mark.skipif(not HAVE_INSTALL, reason="needs the Warcraft III install")

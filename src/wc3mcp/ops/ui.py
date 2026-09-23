@@ -56,7 +56,13 @@ def ui_get(project, catalog, path: str | None = None) -> dict:
                         hint="ui_get without a path lists the map's files; data_search kind=file finds the game's")
     if path.lower().endswith(".toc"):
         listed = [line.strip() for line in data.decode("utf-8", "replace").splitlines() if line.strip()]
-        return {"path": path, "source": source, "kind": "toc", "files": listed}
+        problems = [{"problem": f"{entry!r} is neither a file of the map nor of the game: the game reads a .toc entry "
+                                "as an archive path, so it loads nothing (every BlzCreateFrame of its templates "
+                                "returns null)",
+                     "hint": f"list it as {IMPORT_FOLDER}\\{entry}" if "\\" not in entry else "check the path"}
+                    for entry in listed if source == "map" and _read(project, entry) is None
+                    and _catalog_file(catalog, entry) is None]
+        return {"path": path, "source": source, "kind": "toc", "files": listed, "problems": problems}
     tree = fdf.parse(data)
     frames = [{"type": t, "name": n, "parent": parent,
                "inherits": next((str(a) for a in node["args"][2:] if a not in ("INHERITS", "WITHCHILDREN")), None),
@@ -126,12 +132,19 @@ def ui_edit(project, catalog, path: str, statements: list | None = None, text: s
     listed = []
     existing = _read(project, toc_name)
     if existing is not None:
-        listed = [line.strip() for line in existing.decode("utf-8", "replace").splitlines() if line.strip()]
-    entry = name.split("\\", 1)[1] if name.lower().startswith(IMPORT_FOLDER.lower()) else name
-    if entry not in listed:
-        listed.append(entry)
+        for line in existing.decode("utf-8", "replace").splitlines():
+            line = line.strip()
+            # a bare name loads nothing (the game reads entries as archive paths): an older version wrote those
+            if line and "\\" not in line and _read(project, f"{IMPORT_FOLDER}\\{line}") is not None:
+                line = f"{IMPORT_FOLDER}\\{line}"
+            if line and line.lower() not in {x.lower() for x in listed}:
+                listed.append(line)
+    if name.lower() not in {x.lower() for x in listed}:
+        listed.append(name)
+    # archive paths, CRLF and blank lines at the end: the shape the game's own .toc files have
     ops = [{"op": "add", "path": name.replace("\\", "/"), "content_base64": _b64(text)},
-           {"op": "add", "path": toc_name.replace("\\", "/"), "content_base64": _b64("\n".join(listed) + "\n")}]
+           {"op": "add", "path": toc_name.replace("\\", "/"),
+            "content_base64": _b64("\r\n".join(listed) + "\r\n\r\n")}]
     imports_edit(project, ops)
     frames = [n for _t, n, _node, _parent in fdf.frames(tree)]
     loader = LOADER.format(toc=toc_name.replace("\\", "\\\\"), first=frames[0] if frames else "MyFrame")
