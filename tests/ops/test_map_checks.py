@@ -290,3 +290,16 @@ def test_a_channel_on_an_order_the_game_does_not_know(tmp_path):
     objdata_edit(p, c, "ability", [{"op": "create", "base": "ANcl", "id": "A001",
                                     "set": {"Ncl6": {"1": "holywrath"}}}])
     assert "channel_order" in _checks(p)                      # OrderId("holywrath") is 0 in the game
+
+
+def test_a_channel_whose_middle_ranks_have_no_button(tmp_path):
+    from wc3mcp.ops.objdata import objdata_edit
+
+    p = _fresh(tmp_path)
+    c = Catalog(_storage(), balance="Custom_V1")
+    out = objdata_edit(p, c, "ability", [{"op": "create", "base": "ANcl", "id": "A000",
+                                          "set": {"Ncl3": {"1": 1}, "alev": 6}}])
+    assert any("rank(s) 2-3" in w for w in out["warnings"])          # Channel's own Ncl3 is 0 at ranks 2 and 3
+    assert "channel_levels" in _checks(p)
+    objdata_edit(p, c, "ability", [{"op": "set", "id": "A000", "set": {"Ncl3": [1, 1, 1, 1, 1, 1]}}])
+    assert "channel_levels" not in _checks(p)

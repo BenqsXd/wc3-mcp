@@ -159,6 +159,41 @@ def _classic_default(catalog, kind: str, base: str, meta):
     return sd if sd != hd else None
 
 
+CHANNEL = "ANcl"
+
+
+def channel_hidden_ranks(catalog, base: str, mods: dict) -> list[int] | None:
+    """The ranks of a Channel copy whose Ncl3 (Options) lacks the visible bit while other ranks have it: no button at
+    those ranks. Channel's own Ncl3 is 0 at every level, so a copy that sets rank 1 and grows alev keeps 0 at the
+    ranks between (a playtest found ranks 2 and 3 of a whole ability pool invisible). None when not a Channel."""
+    code = catalog.table("Units/AbilityData.slk").rows.get(base, {}).get("code", base)
+    if code != CHANNEL:
+        return None
+    meta = next(f for f in catalog.fields("ability") if f.id == "Ncl3")
+    count = mods.get(("alev", 0))
+    top = max(1, int(count.value)) if count is not None else catalog.levels("ability", base)
+    flags = []
+    for level in range(1, top + 1):
+        mod = mods.get(("Ncl3", level)) or (mods.get(("Ncl3", 0)) if level == 1 else None)
+        raw = mod.value if mod is not None else catalog.value("ability", base, meta, level)
+        try:
+            flags.append(bool(int(float(raw or 0)) & 1))
+        except ValueError:
+            flags.append(True)
+    return [level for level, visible in enumerate(flags, 1) if not visible] if any(flags) else []
+
+
+def _ranks(levels: list[int]) -> str:
+    """[2, 3, 7] -> "2-3, 7"."""
+    runs: list[list[int]] = []
+    for level in levels:
+        if runs and level == runs[-1][1] + 1:
+            runs[-1][1] = level
+        else:
+            runs.append([level, level])
+    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
+
+
 def object_counts(project) -> dict:
     """How many custom and modified objects of each kind the map holds (main and skin files merged)."""
     out = {}
@@ -642,6 +677,15 @@ def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = No
         if hidden:
             warnings.append(f"{oid}: {', '.join(hidden)} below 0 put the button off the card, so it does not show "
                             "(the usual way to hide one; the game accepts it)")
+    if kind == "ability":
+        for oid in sorted(o for o in touched if isinstance(o, str)):
+            entries = _entries(files, oid)
+            base_id = entries[0][2].base_id.decode("latin-1") if entries else oid
+            hidden = channel_hidden_ranks(catalog, base_id, _merged(entries))
+            if hidden:
+                warnings.append(f"{oid}: Ncl3 (Options) has no visible bit at rank(s) {_ranks(hidden)}, so the ability "
+                                "has no button there; Channel's own Ncl3 is 0 at every level: set every rank (a list, "
+                                'or {"from": 1, "step": 0})')
     if kind == "item":
         for oid in sorted(o for o in touched if isinstance(o, str)):
             stock = _merged(_entries(files, oid)).get(("isto", 0))

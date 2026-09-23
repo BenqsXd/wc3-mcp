@@ -334,6 +334,8 @@ WARNINGS
   hero_skill_points a hero with fewer ability ranks than MaxHeroLevel (points it can never spend)
   channel_target    a no-target Channel copy (Ncl2 0) whose Ncl6 order needs a target, so the cast does nothing
   channel_order     a Channel copy whose Ncl6 is a string OrderId() does not know in the game (never castable)
+  channel_levels    a Channel copy whose Ncl3 (Options) lacks the visible bit at some ranks and not others: no button
+                    at those ranks (Channel's own Ncl3 is 0 at every level, so set every rank)
   waygate_self      a waygate leading into the region it stands in
   shop_stock        a shop sells an item whose isto (Stock Maximum) is 0: it is never in stock, the shop greys it
   shop_hotkey       entries of one shop card on the same hotkey (a copied item keeps its base's uhot)

@@ -16,6 +16,7 @@ from ..gamedata import orderids
 from ..gamedata.catalog import MODEL_FIELDS
 from ..gamedata.kinds import OBJECT_KINDS
 from .gui import GENERATED, Checker, script_name
+from . import objdata as objdata_ops
 from .objdata import EXTENSIONS, var_type as mod_type
 
 TRIGSTR_ANY = re.compile(r"TRIGSTR_(-?\d+)")
@@ -515,6 +516,13 @@ class _V:
                 need = wanted.get(int(float(kind)), set())
             except (TypeError, ValueError):
                 continue
+            entries = objdata_ops._entries([om for name, om in self.objects.items() if name.endswith(".w3a")], oid)
+            hidden = objdata_ops.channel_hidden_ranks(self.catalog, base, objdata_ops._merged(entries))
+            if hidden:
+                self.add(False, "channel_levels", "war3map.w3a",
+                         f"ability {oid}: Ncl3 (Options) has no visible bit at rank(s) {objdata_ops._ranks(hidden)} "
+                         "while other ranks have it, so the ability has no button at those ranks (Channel's own "
+                         "Ncl3 is 0 at every level: set every rank)")
             if order and orderids.resolves(order) is False:
                 self.add(False, "channel_order", "war3map.w3a",
                          f"ability {oid}: its base order {order!r} (Ncl6) is not in the game's order table - OrderId "
