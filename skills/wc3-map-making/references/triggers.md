@@ -54,6 +54,11 @@ Exact scripted damage: send it as `ATTACK_TYPE_CHAOS` + `DAMAGE_TYPE_UNIVERSAL` 
 - `item_reentry`: `RemoveItem` / `UnitAddItemById` inside an item-event handler fires the item events again before the inventory settles (an unguarded recipe built six copies). Guard it with a global flag or `DisableTrigger(GetTriggeringTrigger())` around the change.
 - `damage_action`: the handler shape above.
 
+### Measuring in a map with bots
+
+- Freeze the bots (the map's own match-over flag) while measuring, and attribute a cast by the last ability id, not by a shared counter.
+- `data_get kind=native` carries `observed` for natives whose name promises more than a game run showed (`SetUnitAcquireRange`, `IssueNeutralImmediateOrderById`, `ForceUIKey`, `UnitRemoveAbility`, `DialogDisplay`, ...). Read it before building on one of them.
+
 ## The script API of the installed build
 
 `data_search kind=native` and `data_get kind=native` answer from this install's `common.j`, `Blizzard.j` and `common.ai`: natives, Blizzard.j functions, constants and handle types, each with its signature. Look a function up instead of remembering it — the answer matches the patch the map will run on.

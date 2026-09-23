@@ -45,6 +45,12 @@
 - Every probe result carries `handles` (`start`, `end`, `growth`, `seconds`, `per_minute`); `ProbeHandleCount()` samples the handle counter around a loop to find what the loop leaks.
 - The Battle.net app route is dependable: three launches in a row reported `launched_by: "battlenet_app"` and `login.screen_seen: false`.
 
+- **Keep one probe that does nothing.** Six phases of probes that fast-forwarded past the pick phase (`call AF_StartMatch()`) passed 100-odd checks, and the first probe that only started the map and waited found two defects in the skipped minute, either of which ended the game before a player chose a hero. It waits, samples and asserts that nothing happened early (no kills, no winner, the phase still counting).
+- When the question is "can a player do this" and no instrument in reach answers it (shop purchases: `IssueNeutralImmediateOrderById` and `ForceUIKey` both mislead), ask the person at the keyboard instead of spending runs on proxies. Mouse hover and minimap clicks cannot be driven from a probe.
+- Probe traps: marking the only human ready let the pick clock start the match and bots took the statue the probe meant to claim; a long run that finishes the match ends in a dialog that pauses the game - put the reports that matter before the match can end, or hold the map's own match-over flag.
+- Baselines to compare a run against: 76 handles over 129 s with twelve bots casting (35 a minute); 202 over 565 s of a full bot match (21.5 a minute, respawned camp members are real new units).
+- A Python snippet passed through a bash heredoc lost a level of backslashes in the JASS paths it wrote: write generators with a file editor and run them.
+
 ## World Editor
 
 `editor_launch`, `editor_status`, `editor_map` (open/save/reload/close/quit), `editor_menu`, `editor_dialogs`, `editor_dialog_act`, `editor_input`, `editor_screenshot`, `editor_log`.
