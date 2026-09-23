@@ -451,7 +451,11 @@ balance_report(path, kind, ids, compare, balance) - what the map's own objects a
   kind="item"     the bonuses its abilities give (Iagi, Iint, Istr, Iatt, Ilif, Iman, Idef, ...) and per 100 gold
   kind="ability"  the per-level curve: cooldown, mana, range, duration, area, damage, damage per mana, damage per
                   second of cooldown. It also lists button_cells: abilities sharing a command-card cell, which clash
-                  on a unit that is given both at runtime
+                  on a unit that is given both at runtime - over every id, also past the 50 reported rows
+  kind="shop"     each shop's card (ids: the shops; default the map's units with usei/useu): per entry the gold and
+                  lumber, the stock fields, hotkey, cell, a sold unit's race and requirement, and problems (Stock
+                  Maximum 0, a hotkey shared on the card). A shop sells only to a buyer's unit standing close to it
+                  (Tavern 300-350, Goblin Merchant 250, measured) and not in the first seconds of a map
 
 A unit whose udty is "hero" also gets a hero block: its attributes at level 1 and at MaxHeroLevel, and the life,
 mana, armour, attack damage bonus and damage per second they make of the unit's fields through the gameplay

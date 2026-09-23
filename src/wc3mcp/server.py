@@ -625,14 +625,16 @@ def ui_edit(path: str, file: str, statements: list[dict] | None = None, text: st
 
 
 @_tool
-def balance_report(path: str, kind: Literal["unit", "item", "ability"] = "unit", ids: list[str] | None = None,
+def balance_report(path: str, kind: Literal["unit", "item", "ability", "shop"] = "unit", ids: list[str] | None = None,
                    compare: bool = True, balance: str | None = "Custom_V1") -> dict:
     """What the map's own objects are worth, computed from their fields: for a unit the damage per second of each
     enabled attack, the effective life its armour buys, and both per 100 gold; for an item the bonuses its abilities
     give per 100 gold; for an ability the per-level curve with damage per mana and per second of cooldown. compare
     puts the stock objects closest in price (and food) beside each one and flags a ratio far outside what they show.
     ids defaults to what the map created or modified. The result carries the formulas and the fields it read, so the
-    numbers can be checked rather than believed. wc3_help("balance_report") has the formulas."""
+    numbers can be checked rather than believed. kind="shop" lists every entry of each shop's card (cost, stock,
+    hotkey, cell, a sold unit's race and requirement) with what stops a player buying it. wc3_help("balance_report")
+    has the formulas."""
     return balance_ops.balance_report(_project(path), _catalog("enUS", balance, True), kind, ids, compare)
 
 

@@ -113,3 +113,40 @@ def test_abilities_on_one_button_cell_are_listed(tmp_path):
                                    {"op": "create", "base": "ANcl", "id": "A002", "set": {"abpx": 2, "abpy": 2}}])
     doc = balance_report(p, c, "ability")
     assert doc["button_cells"] == {"1,2": ["A000", "A001"]}
+
+
+def test_button_cells_cover_every_ability_not_only_the_reported_rows(tmp_path):
+    from corpus import _storage
+    from wc3mcp.gamedata.catalog import Catalog
+    from wc3mcp.ops.balance import balance_report
+    from wc3mcp.ops.newmap import new_map
+    from wc3mcp.ops.objdata import objdata_edit
+
+    c = Catalog(_storage(), balance="Custom_V1")
+    p = new_map(str(tmp_path / "C.w3x"), c, width=64, height=64, players=2)
+    ops = [{"op": "create", "base": "ANcl", "id": f"A{i:03d}", "set": {"abpx": i % 4, "abpy": 0}} for i in range(52)]
+    ops += [{"op": "create", "base": "ANcl", "id": "Z000", "set": {"abpx": 3, "abpy": 2}},
+            {"op": "create", "base": "ANcl", "id": "Z001", "set": {"abpx": 3, "abpy": 2}}]
+    objdata_edit(p, c, "ability", ops)
+    doc = balance_report(p, c, "ability", compare=False)
+    assert doc["count"] == 50 and doc["button_cells"]["3,2"] == ["Z000", "Z001"]   # rows 53 and 54
+
+
+def test_a_shop_report_names_what_stops_a_purchase(tmp_path):
+    from corpus import _storage
+    from wc3mcp.gamedata.catalog import Catalog
+    from wc3mcp.ops.balance import balance_report
+    from wc3mcp.ops.newmap import new_map
+    from wc3mcp.ops.objdata import objdata_edit
+
+    c = Catalog(_storage(), balance="Custom_V1")
+    p = new_map(str(tmp_path / "S.w3x"), c, width=64, height=64, players=2)
+    objdata_edit(p, c, "item", [{"op": "create", "base": "rat9", "id": "I000", "set": {"isto": 0}},
+                                {"op": "create", "base": "rat9", "id": "I001"}])
+    objdata_edit(p, c, "unit", [{"op": "create", "base": "ngme", "id": "n000", "set": {"usei": "I000,I001"}}])
+    doc = balance_report(p, c, "shop")
+    shop = doc["shops"][0]
+    assert shop["id"] == "n000" and [e["id"] for e in shop["entries"]] == ["I000", "I001"]
+    first = shop["entries"][0]
+    assert any("never in stock" in x for x in first["problems"]) and any("hotkey C" in x for x in first["problems"])
+    assert first["stock"]["isto"] == 0 and first["hotkey"] == "C"

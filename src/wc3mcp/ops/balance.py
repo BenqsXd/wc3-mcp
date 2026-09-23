@@ -8,7 +8,7 @@ import statistics
 
 from ..errors import ToolError
 from . import constants as constants_ops
-from .objdata import objdata_get, objdata_list
+from .objdata import _entries, _load, _merged, objdata_get, objdata_list
 
 # attack fields, per weapon index: cooldown, base damage, dice, sides, range, targets, weapon type
 ATTACK = {1: ("ua1c", "ua1b", "ua1d", "ua1s", "ua1r", "ua1g", "ua1w"),
@@ -241,11 +241,87 @@ def _flag(row: dict, near: list[dict], kind: str) -> list[str]:
     return notes
 
 
+def button_cells(project, catalog, ids: list[str]) -> dict[str, list[str]]:
+    """Command-card cells (abpx, abpy) two or more of these abilities share, over every id given - the row limit of
+    the report does not apply, because an absent cell reads as "no collision"."""
+    main, skin, _ = _load(project, "ability")
+    cells: dict[str, list[str]] = {}
+    for obj_id in ids:
+        entries = _entries((main, skin), obj_id)
+        base = entries[0][2].base_id.decode("latin-1") if entries else obj_id
+        mods = _merged(entries)
+        cell = []
+        for rid in ("abpx", "abpy"):
+            mod = mods.get((rid, 0)) or mods.get((rid, 1))
+            cell.append(mod.value if mod is not None else catalog.field("ability", base, rid))
+        if None not in cell and "" not in cell:
+            cells.setdefault(f"{int(float(cell[0]))},{int(float(cell[1]))}", []).append(obj_id)
+    return {k: v for k, v in sorted(cells.items()) if len(v) > 1}
+
+
+SHOP_NOTE = ("a shop sells only to a unit of the buyer's standing close to it (measured: Tavern 300-350, Goblin "
+             "Merchant 250) and not in the first seconds of a map; isto/usma 0 means never in stock")
+
+
+def shop_report(project, catalog, ids: list[str] | None = None) -> dict:
+    """Every entry of each shop's card - what it costs, its stock, hotkey and cell, and for a sold unit its race and
+    requirement - with what stops a player buying it, so a whole card can be read in one call."""
+    if ids is None:
+        mods = [o["id"] for o in objdata_list(project, catalog, "unit")["objects"]]
+        ids = [oid for oid in mods if any(objdata_get(project, catalog, "unit", oid, [f])["fields"].get(f, {}).get(
+            "value") for f in ("usei", "useu"))]
+        if not ids:
+            return {"kind": "shop", "shops": [], "note": "no unit of this map sells anything (usei/useu); pass ids to "
+                                                         "read a stock shop such as ngme or ntav"}
+    shops = []
+    for shop in ids:
+        doc = objdata_get(project, catalog, "unit", shop, ["usei", "useu"])
+        lists = {f: [x.strip() for x in str(doc["fields"].get(f, {}).get("value") or "").split(",") if x.strip()]
+                 for f in ("usei", "useu")}
+        entries, keys = [], {}
+        for kind, field, cost, stock in (("item", "usei", ("igol", "ilum"), ("isto", "isit", "istr", "isst")),
+                                         ("unit", "useu", ("ugol", "ulum"), ("usma", "usit", "usrg", "usst"))):
+            extra = ("urac", "ureq") if kind == "unit" else ()
+            for entry in lists[field]:
+                wanted = [*cost, *stock, "uhot", "ubpx", "ubpy", *extra]
+                try:
+                    got = objdata_get(project, catalog, kind, entry, wanted)
+                except ToolError:
+                    entries.append({"id": entry, "kind": kind, "problems": [f"no {kind} {entry} exists"]})
+                    continue
+                f = {k: v.get("value", (v.get("values") or [None])[0]) for k, v in got["fields"].items()}
+                row = {"id": entry, "kind": kind, "name": got.get("name"),
+                       "gold": f.get(cost[0]), "lumber": f.get(cost[1]),
+                       "stock": {k: f.get(k) for k in stock}, "hotkey": f.get("uhot"),
+                       "cell": [f.get("ubpx"), f.get("ubpy")]}
+                if kind == "unit":
+                    row.update(race=f.get("urac"), requires=f.get("ureq") or None)
+                problems = []
+                if f.get(stock[0]) is not None and int(_number(f.get(stock[0]), 1)) == 0:
+                    problems.append(f"{stock[0]} (Stock Maximum) 0: never in stock")
+                if row["hotkey"]:
+                    keys.setdefault(str(row["hotkey"]).upper(), []).append(entry)
+                row["problems"] = problems
+                entries.append(row)
+        for key, sharing in keys.items():
+            if len(sharing) > 1:
+                for row in entries:
+                    if row["id"] in sharing:
+                        row["problems"].append(f"hotkey {key} shared with {', '.join(x for x in sharing if x != row['id'])}")
+        shops.append({"id": shop, "name": doc.get("name"), "entries": entries,
+                      "card": f"{len(entries)} of 12 cells" + (" - over the card, the rest never shows"
+                                                               if len(entries) > 12 else "")})
+    return {"kind": "shop", "shops": shops, "note": SHOP_NOTE}
+
+
 def balance_report(project, catalog, kind: str = "unit", ids: list[str] | None = None, compare: bool = True) -> dict:
     """The map's own objects of one kind with their damage, staying power and cost, and the stock objects of the same
-    price beside them. kind is unit, item or ability; ids defaults to what the map changed or created."""
+    price beside them. kind is unit, item or ability; ids defaults to what the map changed or created. kind="shop"
+    lists every entry of each shop's card instead."""
+    if kind == "shop":
+        return shop_report(project, catalog, ids)
     if kind not in ("unit", "item", "ability"):
-        raise ToolError("bad_kind", f"balance_report reads units, items and abilities, not {kind!r}",
+        raise ToolError("bad_kind", f"balance_report reads units, items, abilities and shops, not {kind!r}",
                         hint="objdata_list shows what the map holds")
     if ids is None:
         ids = [o["id"] for o in objdata_list(project, catalog, kind)["objects"]]
@@ -262,7 +338,6 @@ def balance_report(project, catalog, kind: str = "unit", ids: list[str] | None =
     elif compare and kind == "item":
         stock = _stock(project, catalog, kind, STOCK_ITEMS)
     rows = []
-    cells: dict[str, list[str]] = {}
     for obj_id in ids[:50]:
         fields, doc = _fields(project, catalog, kind, obj_id)
         if kind == "unit":
@@ -276,9 +351,6 @@ def balance_report(project, catalog, kind: str = "unit", ids: list[str] | None =
         else:
             row = {"id": obj_id, "name": doc.get("name", obj_id), "base": doc.get("base"),
                    **_ability(fields, int(doc.get("levels", 1)))}
-            cell = (_first(fields.get("abpx")), _first(fields.get("abpy")))
-            if None not in cell and "" not in cell:
-                cells.setdefault(f"{int(float(cell[0]))},{int(float(cell[1]))}", []).append(obj_id)
         against = hero_stock if kind == "unit" and "hero" in row else stock
         if against:
             near = _closest(row, against, kind)
@@ -290,7 +362,7 @@ def balance_report(project, catalog, kind: str = "unit", ids: list[str] | None =
                 row["flags"] = flags
         rows.append(row)
     out = {"kind": kind, "count": len(rows), "objects": rows}
-    shared = {k: v for k, v in sorted(cells.items()) if len(v) > 1}
+    shared = button_cells(project, catalog, ids) if kind == "ability" else {}
     if shared:
         out["button_cells"] = shared
         out["button_note"] = ("these abilities sit on the same command-card cell (abpx, abpy); a unit that gets two of "
