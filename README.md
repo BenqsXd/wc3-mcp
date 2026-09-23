@@ -68,6 +68,27 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.5
+
+From the arena map's phases 6-7 and two playtests.
+
+- **`game_test` gives the user's launcher back.** Every run - however it ends - puts the Battle.net app's launch
+  options back and deletes the launch copy; before, a Play in the app started the last tested map in a window.
+  `game_status` reports what a Play would start today, and `game_close` restores after a crashed run.
+- **Shops.** `objdata_edit` no longer calls `isto` 0 "unlimited" (it means never in stock) and warns on it;
+  `map_validate` reports `shop_stock`, `shop_hotkey` and `icon` (a path the game does not have), and
+  `balance_report kind="shop"` reads a whole shop card with what stops each purchase.
+- **Order strings.** `data_search kind=order` says whether a shipped ability uses a string (`backed`) and whether
+  the game resolved it (`resolves`); `map_validate` reports `channel_order` for a Channel on a string `OrderId`
+  does not know, and `channel_levels` for a Channel with no button at some ranks. A game test sweeps every string.
+- **Object data.** `upsert`, `quiet=["extended_levels"]`, buttons off the card (`arpy` -11), the classic-graphics
+  default the World Editor compares art fields with, and `learn_card` for hero abilities on one learn-menu cell.
+- **`game_test probe_init`** runs at map initialization, before any dialog; `ProbeSkipDialogs()` keeps dialogs shut.
+- **`data_get kind=native`** carries `observed`: what the game was seen to do where a native's name promises more.
+- Smaller: globs for every `data_search` kind (`kind=sound query="*"`), `placed_list type` (one or a list), `.mdl`
+  paths resolve in `data_get`, `button_cells` over every ability, `wc3_batch` calls inherit `path`, a snapshot
+  without a label names the parameter, and `ui_edit` writes a `.toc` the game can load.
+
 ## What's new in 1.4.1
 
 The live World Editor calibration, which 1.4 left open, has run. It confirmed the 1.3 cliff rule - the editor
