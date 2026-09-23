@@ -233,8 +233,12 @@ LOGIN
   login_required keeps the game open, and the same call again continues in it (continued_game).
   A game that reaches its main menu instead of the map is started again once (relaunched: ["stuck_at_main_menu"]);
   twice gives stuck_at: "main_menu".
-  The tools never type, read or store credentials. The launch copy is deleted when the run closes the game, so a
-  Play in the Battle.net app opens the menu and not the tested map (windowed, from the stored options).
+  The tools never type, read or store credentials.
+  Every run puts the app's launch options back when it ends - on its result files, a timeout, a kill or an error -
+  and deletes the launch copy, so a Play in the Battle.net app starts Warcraft III the way it did before (the result
+  says so under launcher). That stops and restarts the app when it is running, because the app rewrites its config
+  from memory. Only a game left open (close=false, login_required) keeps them until game_close; game_status reports
+  under launcher what a Play would start today.
 
 PITFALLS
   Every launch can meet a login screen (see LOGIN), so put many checks into one run. An open dialog pauses a single-player game, so report before it opens. The game keeps

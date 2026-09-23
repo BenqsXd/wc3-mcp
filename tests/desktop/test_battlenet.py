@@ -80,3 +80,40 @@ def test_processes_reads_the_task_list(monkeypatch):
     monkeypatch.setattr(battlenet.subprocess, "run",
                         lambda *a, **k: type("R", (), {"stdout": rows, "returncode": 0})())
     assert battlenet.processes() == [20704, 10004]
+
+
+def test_restore_puts_the_users_launch_options_back_and_removes_the_copy(tmp_path, monkeypatch):
+    """A Play in the Battle.net app after a session of runs must start Warcraft III the way it did before."""
+    _config(tmp_path, monkeypatch, {"Games": {"w3": {"AdditionalLaunchArguments": "-opengl"}}})
+    stops, starts, running = [], [], {"app": True}
+    monkeypatch.setattr(battlenet, "_stop", lambda: stops.append(1))
+    monkeypatch.setattr(battlenet, "_start", lambda app: starts.append(app))
+    monkeypatch.setattr(battlenet, "processes", lambda: [7] if running["app"] else [])
+    monkeypatch.setattr(battlenet, "exe", lambda: tmp_path / "Battle.net.exe")
+    copy = battlenet.copy_map(_write(tmp_path / "Map.w3x"))
+    battlenet.configure(tmp_path / "Battle.net.exe", copy)
+    assert battlenet.state()["points_at_test_map"] and battlenet.state()["launch_copy"]
+
+    out = battlenet.restore()
+    assert out["restored"] and out["args"] == "-opengl" and out["app_restarted"] and out["launch_copy_removed"]
+    assert battlenet.stored_args() == "-opengl" and not copy.exists()
+    assert not (tmp_path / "home" / "battlenet-previous-launch-arguments.txt").exists()
+    assert battlenet.state() == {"launch_args": "-opengl", "points_at_test_map": False, "launch_copy": False}
+    assert battlenet.restore() == {"restored": False, "launch_copy_removed": True}   # nothing left to do
+
+
+def test_restore_of_an_empty_setting_writes_it_back_empty(tmp_path, monkeypatch):
+    _config(tmp_path, monkeypatch)
+    monkeypatch.setattr(battlenet, "_stop", lambda: None)
+    monkeypatch.setattr(battlenet, "_start", lambda app: None)
+    monkeypatch.setattr(battlenet, "processes", lambda: [])
+    copy = battlenet.copy_map(_write(tmp_path / "Map.w3x"))
+    battlenet.configure(tmp_path / "Battle.net.exe", copy)
+    out = battlenet.restore()
+    assert out["restored"] and out["args"] == "" and not out["app_restarted"]
+    assert battlenet.stored_args() == ""
+
+
+def _write(path):
+    path.write_bytes(b"MAP")
+    return path

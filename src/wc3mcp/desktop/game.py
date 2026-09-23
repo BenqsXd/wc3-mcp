@@ -38,7 +38,9 @@ LOGIN_MODES = ("auto", "battlenet", "wait", "stop")
 MENU_WAIT = 20           # seconds at the main menu after a -loadfile launch before the run starts the game again
 MAX_RELAUNCHES = 2
 PAUSE_NOTE = ("an open dialog (DialogDisplay) pauses a single-player game until it is clicked, so timers and "
-              "probe_seconds wait for it (screenshot=true shows it)")
+              "probe_seconds wait for it (screenshot=true shows it; probe_init runs before any dialog opens)")
+LEFT_OPEN_NOTE = ("the game is still open on the test map, so the Battle.net app still starts Warcraft III on it: "
+                  "game_close ends the game and puts the app's launch options back")
 
 
 def _alert(window: int) -> None:
@@ -250,6 +252,19 @@ class Game:
             job["error"] = e
         except Exception as e:   # a background run must not take the server down
             job["error"] = ToolError("game_failed", f"the run failed: {e}")
+        finally:
+            # every exit path - result files, timeout, kill, error - gives the user their launcher back, unless the
+            # game was left open on purpose (close=false, or waiting for a login)
+            if any(p.poll() is None for p in self.launched.values()):
+                launcher = {"restored": False, "note": LEFT_OPEN_NOTE} if battlenet.ours() else None
+            else:
+                try:
+                    launcher = battlenet.restore()
+                except Exception as e:   # noqa: BLE001 - never lose the run's result over the launcher
+                    launcher = {"restored": False, "error": str(e),
+                                "note": "game_close tries again; game_status shows what the app would start"}
+            if launcher is not None and job["result"] is not None:
+                job["result"]["launcher"] = launcher
 
     def _launch(self, target: Path) -> subprocess.Popen:
         exe = self.exe()
@@ -468,7 +483,6 @@ class Game:
         if close and outcome != "login_required":
             result["closed_by"] = self._close(process)
             result["closed"] = True
-            battlenet.forget_map()   # a Play in the Battle.net app then opens the menu, not this run's map
         else:
             result["closed"] = process.poll() is not None
         if focused_at and previous and win32gui.IsWindow(previous):
@@ -521,17 +535,27 @@ class Game:
                 "windows": [win.info(h)["title"] for pid in alive for h in win.windows(pid)],
                 **({"run": run} if run else {}),
                 "log": log[-50:], "benign_log": {"count": len(benign), "examples": benign[:3], "note": BENIGN_NOTE},
-                "missing_files": missing_files[:50]}
+                "missing_files": missing_files[:50], "launcher": self._launcher()}
+
+    @staticmethod
+    def _launcher() -> dict:
+        """What a Play in the Battle.net app starts today; a run leaves it pointing at a test map only while the game
+        is open, and game_close puts it back."""
+        out = battlenet.state()
+        if out["points_at_test_map"] or out["launch_copy"]:
+            out["note"] = ("the Battle.net app would start Warcraft III on a test map: game_close puts the user's own "
+                           "launch options back and removes the copy")
+        return out
 
     def close(self) -> dict:
         self.cancelled = True   # a run waiting for the Battle.net app must not start the game again afterwards
         closed = [pid for pid, p in list(self.launched.items()) if self._close(p)]
         self.waiting = None
-        battlenet.forget_map()
         job = self.run
         if job is not None and job["thread"] is not None and job["thread"].is_alive():
             job["thread"].join(30)   # closing the game ends its loop; then the run can report what it collected
-        return {"closed": closed, "running": self.status()["running"],
+        launcher = battlenet.restore()   # also after a crashed server left the app pointing at a test map
+        return {"closed": closed, "running": self.status()["running"], "launcher": launcher,
                 **({"run": self.run_status()} if self.run else {})}
 
 

@@ -367,3 +367,23 @@ def test_game_close_stops_a_run_waiting_for_the_battlenet_app(monkeypatch, tmp_p
 
     result, _, _ = _fake_run(monkeypatch, tmp_path, ["login"] * 10, runner=runner, login="auto", app=waiting_app)
     assert result["cancelled"] and "relaunched" not in result and result["login"]["battlenet"]["ok"] is False
+
+
+def test_every_run_gives_the_launcher_back_even_when_it_fails(monkeypatch, tmp_path):
+    """A run that errors, times out or is killed must not leave the Battle.net app starting the test map."""
+    g = game.Game()
+    restored = []
+    monkeypatch.setattr(game.battlenet, "restore", lambda: restored.append(1) or {"restored": True})
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("the game crashed")
+
+    monkeypatch.setattr(g, "_test", boom)
+    job = {"result": None, "error": None}
+    g._run(job, tmp_path / "Map.w3x", 10, [], True, False)
+    assert restored == [1] and job["error"].code == "game_failed"
+
+    monkeypatch.setattr(g, "_test", lambda *a, **k: {"missing": []})
+    job = {"result": None, "error": None}
+    g._run(job, tmp_path / "Map.w3x", 10, [], True, False)
+    assert job["result"]["launcher"] == {"restored": True} and restored == [1, 1]

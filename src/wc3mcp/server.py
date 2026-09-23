@@ -1096,7 +1096,8 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
     "wait" flashes the window for the user and waits login_wait seconds, "stop" ends after 30 s. A run left at
     login_required keeps the game open and the same call continues in it; a game stuck at its main menu is started
     again (relaunched). The app route launches a copy of the map from the server's own folder and stores that path
-    in the app's launch options for Warcraft III. wc3_help("game_test") has the probe helpers and the pitfalls."""
+    in the app's launch options for Warcraft III, and every run puts them back when it ends (result: launcher).
+    wc3_help("game_test") has the probe helpers and the pitfalls."""
     target, extra = path, {}
     if probe_script is not None and probe_script_file is not None:
         raise ToolError("bad_value", "give probe_script or probe_script_file, not both")
@@ -1151,7 +1152,8 @@ def _finish_test(result: dict, probe: bool) -> dict:
 def game_status() -> dict:
     """Game processes (and which this server launched), their windows and the useful War3Log.txt lines. A game_test
     run started with wait=false is reported under run: while it goes, how long it has taken and which result files
-    it has; when it ends, its whole result (probe reports included) under run.result."""
+    it has; when it ends, its whole result (probe reports included) under run.result. launcher says what a Play in
+    the Battle.net app would start today."""
     job = desktop_game.GAME.run
     if job is not None and job["result"] is not None and not job.get("finished"):
         job["result"] = _finish_test(job["result"], job["meta"].get("probe", False))
@@ -1162,7 +1164,8 @@ def game_status() -> dict:
 
 @_tool
 def game_close() -> dict:
-    """Close game processes launched by game_test (never other game sessions)."""
+    """Close game processes launched by game_test (never other game sessions), and put the Battle.net app's launch
+    options back when a run left them pointing at a test map (result: launcher)."""
     return desktop_game.GAME.close()
 
 

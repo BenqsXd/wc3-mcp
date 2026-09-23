@@ -83,24 +83,64 @@ def _start(app: Path) -> None:
         time.sleep(1)
 
 
+def _kept() -> Path:
+    """The user's own launch arguments while a run has replaced them (the app drops keys it does not know, so they
+    cannot be parked in its config)."""
+    return config.home() / "battlenet-previous-launch-arguments.txt"
+
+
+def ours(args: str | None = None) -> bool:
+    """Whether the app's stored launch arguments are a run's: they name this server's launch copy."""
+    args = stored_args() if args is None else args
+    return str(launch_copy()).lower() in args.lower()
+
+
+def _write_args(args: str) -> None:
+    path = config_path()
+    data = json.loads(path.read_text("utf-8")) if path.is_file() else {}
+    data.setdefault("Games", {}).setdefault(UID, {})["AdditionalLaunchArguments"] = args
+    path.write_text(json.dumps(data, indent=4), encoding="utf-8")
+
+
 def configure(app: Path, target: Path) -> dict:
-    """Make the app launch Warcraft III on `target`, restarting it when its stored arguments differ. Returns what
-    was done, including the arguments it replaced (kept in the server's home folder, since the app drops keys it
-    does not know)."""
+    """Make the app launch Warcraft III on `target`, restarting it when its stored arguments differ. The user's own
+    arguments are kept aside for `restore`, which every run calls when it ends."""
     wanted, before = game_args(target), stored_args()
     if before == wanted:
         return {"restarted": False, "args": wanted}
     _stop()
-    if before and before != wanted:
-        kept = config.home() / "battlenet-previous-launch-arguments.txt"
-        kept.parent.mkdir(parents=True, exist_ok=True)
-        kept.write_text(before, encoding="utf-8")
-    path = config_path()
-    data = json.loads(path.read_text("utf-8")) if path.is_file() else {}
-    data.setdefault("Games", {}).setdefault(UID, {})["AdditionalLaunchArguments"] = wanted
-    path.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    if not ours(before):   # an empty file too: "" is what restore writes back then
+        _kept().parent.mkdir(parents=True, exist_ok=True)
+        _kept().write_text(before, encoding="utf-8")
+    _write_args(wanted)
     _start(app)
     return {"restarted": True, "args": wanted, **({"replaced": before} if before else {})}
+
+
+def restore() -> dict:
+    """Put the user's own launch arguments back and remove the launch copy, so a Play in the Battle.net app opens
+    Warcraft III the way it did before any run. The app rewrites its config from memory, so it is stopped for the
+    write and started again when it was running. Safe to call when nothing needs restoring."""
+    out: dict = {"restored": False}
+    if ours():
+        previous = _kept().read_text("utf-8") if _kept().is_file() else ""
+        running = bool(processes())
+        if running:
+            _stop()
+        _write_args(previous)
+        app = exe()
+        if running and app is not None:
+            _start(app)
+        _kept().unlink(missing_ok=True)
+        out.update(restored=True, args=previous, app_restarted=running)
+    out["launch_copy_removed"] = forget_map()
+    return out
+
+
+def state() -> dict:
+    """What a Play in the Battle.net app would start today, for game_status."""
+    args = stored_args()
+    return {"launch_args": args, "points_at_test_map": ours(args), "launch_copy": launch_copy().exists()}
 
 
 def copy_map(source: Path) -> Path:
@@ -112,12 +152,18 @@ def copy_map(source: Path) -> Path:
     return target
 
 
-def forget_map() -> None:
-    """Remove the launch copy once a run is over: a Play in the Battle.net app then opens the menu, not the map."""
-    try:
-        launch_copy().unlink(missing_ok=True)
-    except OSError:
-        pass   # a game still holds it; the next run overwrites it
+def forget_map(wait: float = 10.0) -> bool:
+    """Remove the launch copy once a run is over. A game that was just killed can hold the file for a few seconds,
+    so this tries again for `wait` seconds. True when the file is gone."""
+    end = time.time() + wait
+    while True:
+        try:
+            launch_copy().unlink(missing_ok=True)
+            return True
+        except OSError:
+            if time.time() >= end:
+                return False   # still held: game_close or the next run removes it
+            time.sleep(0.5)
 
 
 def launch(app: Path, game_name: str, running_before: set[int] | None = None) -> tuple[int | None, dict]:
