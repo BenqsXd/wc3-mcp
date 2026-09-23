@@ -193,6 +193,11 @@ PROBES (a throwaway copy of the map, so the map itself never gets test triggers)
   probe_script / _file       statements in the map's language that run at that moment; they may call the map's own
                              functions, read its udg_ globals and wait with TriggerSleepAction
   probe_functions            whole functions of your own, emitted before the probe code (callbacks for your triggers)
+  probe_init                 statements run inside map initialization, before the map's own initialization triggers
+                             and before any timer: set what a dialog would have asked for, or call
+                             ProbeSkipDialogs() so DialogDisplay/DialogDisplayBJ show nothing (a shown dialog pauses a
+                             single-player game, and the probe queued behind it never runs; the report then says
+                             dialog=suppressed)
   In the probe code:
     ProbeReport(text)                          -> probe.reports, any length
     ProbeExpect(name, condition)               -> probe.checks, checks_failed, checks_passed

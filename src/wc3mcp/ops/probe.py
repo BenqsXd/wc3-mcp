@@ -23,6 +23,7 @@ JASS_GLOBALS = """    string array wc3mcpProbe_messages
     integer wc3mcpProbe_lineCount = 0
     integer wc3mcpProbe_handles0 = 0
     timer wc3mcpProbe_clock = null
+    boolean wc3mcpProbe_noDialogs = false
 """
 JASS_MESSAGES = """
 function wc3mcpProbe_Line takes string s returns nothing
@@ -71,10 +72,23 @@ function wc3mcpProbe_DisplayTimedTextToForce takes force f, real d, string s ret
     call wc3mcpProbe_Keep(s)
     call DisplayTimedTextToForce(f, d, s)
 endfunction
+
+function wc3mcpProbe_DialogDisplay takes player p, dialog d, boolean flag returns nothing
+    if flag and wc3mcpProbe_noDialogs then
+        call wc3mcpProbe_Line("dialog=suppressed")
+        return
+    endif
+    call DialogDisplay(p, d, flag)
+endfunction
+
+function wc3mcpProbe_DialogDisplayBJ takes boolean flag, dialog d, player p returns nothing
+    call wc3mcpProbe_DialogDisplay(p, d, flag)
+endfunction
 """
 # map calls routed through the functions above (the Blizzard.j functions that call each other are left alone)
 ROUTED = {"BJDebugMsg": "wc3mcpProbe_Msg", **{name: "wc3mcpProbe_" + name for name in (
-    "DisplayTextToPlayer", "DisplayTimedTextToPlayer", "DisplayTextToForce", "DisplayTimedTextToForce")}}
+    "DisplayTextToPlayer", "DisplayTimedTextToPlayer", "DisplayTextToForce", "DisplayTimedTextToForce",
+    "DialogDisplay", "DialogDisplayBJ")}}
 JASS = """function Trig_{name}_Hero takes nothing returns boolean
     return IsUnitType(GetFilterUnit(), UNIT_TYPE_HERO)
 endfunction
@@ -133,7 +147,7 @@ function Trig_{name}_Started takes nothing returns nothing
 endfunction
 
 function InitTrig_{name} takes nothing returns nothing
-    call TimerStart(CreateTimer(), 0.0, false, function Trig_{name}_Started)
+{call_init}    call TimerStart(CreateTimer(), 0.0, false, function Trig_{name}_Started)
     set gg_trg_{name} = CreateTrigger(  )
     call TriggerRegisterTimerEvent(gg_trg_{name}, {seconds}, false)
     call TriggerAddAction(gg_trg_{name}, function Trig_{name}_Actions)
@@ -141,6 +155,7 @@ endfunction
 """
 LUA = """wc3mcpProbe_messages = {{}}
 wc3mcpProbe_lines = {{}}
+wc3mcpProbe_noDialogs = false
 wc3mcpProbe_handles0 = 0
 wc3mcpProbe_clock = nil
 
@@ -187,7 +202,16 @@ function Trig_{name}_Actions()
 end
 
 function InitTrig_{name}()
-    -- the force variants call these two, so wrapping them as well would keep every force message twice
+    -- a dialog pauses a single-player game until it is clicked; ProbeSkipDialogs() in probe_init keeps it shut
+    local display = DialogDisplay
+    DialogDisplay = function(p, d, flag)
+        if flag and wc3mcpProbe_noDialogs then
+            wc3mcpProbe_Line("dialog=suppressed")
+            return
+        end
+        return display(p, d, flag)
+    end
+{call_init}    -- the force variants call these two, so wrapping them as well would keep every force message twice
     for _, name in ipairs({{"BJDebugMsg", "DisplayTextToPlayer", "DisplayTimedTextToPlayer"}}) do
         local shown = _G[name]
         _G[name] = function(...)
@@ -276,6 +300,10 @@ function ProbeCamera takes real x, real y, real distance, real seconds returns n
     call TriggerSleepAction(seconds)
 endfunction
 
+function ProbeSkipDialogs takes nothing returns nothing
+    set wc3mcpProbe_noDialogs = true
+endfunction
+
 function ProbeExpect takes string name, boolean ok returns nothing
     if ok then
         call wc3mcpProbe_Line("check=pass:" + name)
@@ -284,7 +312,7 @@ function ProbeExpect takes string name, boolean ok returns nothing
     endif
 endfunction
 
-{functions}function Trig_{name}_User takes nothing returns nothing
+{functions}{init}function Trig_{name}_User takes nothing returns nothing
 {body}endfunction
 
 """
@@ -328,30 +356,45 @@ function ProbeCamera(x, y, distance, seconds)
     TriggerSleepAction(seconds or 3)
 end
 
+function ProbeSkipDialogs()
+    wc3mcpProbe_noDialogs = true
+end
+
 function ProbeExpect(name, ok)
     wc3mcpProbe_Line("check=" .. (ok and "pass:" or "fail:") .. tostring(name))
 end
 
-{functions}function Trig_{name}_User()
+{functions}{init}function Trig_{name}_User()
 {body}end
 
 """
 
 
-def script(language: str, seconds: float, user: str | None = None, functions: str | None = None) -> str:
+def _indent(code: str) -> str:
+    return "".join(f"    {line}\n" if line.strip() else "\n" for line in code.splitlines())
+
+
+def script(language: str, seconds: float, user: str | None = None, functions: str | None = None,
+           init: str | None = None) -> str:
+    """The probe trigger. `init` runs inside map initialization - before the map's own initialization triggers and
+    before any timer - so it can set what a dialog would have asked for, or call ProbeSkipDialogs()."""
     lua = language == "lua"
     template = LUA if lua else JASS
-    if functions is not None and user is None:
+    if (functions is not None or init is not None) and user is None:
         user = ""
     call = ("" if user is None else f"    Trig_{NAME}_User()\n" if lua else f"    call Trig_{NAME}_User()\n")
+    call_init = ("" if init is None else f"    Trig_{NAME}_Init()\n" if lua else f"    call Trig_{NAME}_Init()\n")
     text = template.format(name=NAME, seconds=f"{float(seconds):.2f}", report=REPORT.replace("\\", "\\\\"),
-                           started=STARTED.replace("\\", "\\\\"), limit=MAX_MESSAGES, call_user=call)
+                           started=STARTED.replace("\\", "\\\\"), limit=MAX_MESSAGES, call_user=call,
+                           call_init=call_init)
     if user is None:
         return text
-    body = "".join(f"    {line}\n" if line.strip() else "\n" for line in user.splitlines())
     own = functions.strip("\n") + "\n\n" if functions else ""
+    init_fn = "" if init is None else (f"function Trig_{NAME}_Init()\n{_indent(init)}end\n\n" if lua else
+                                       f"function Trig_{NAME}_Init takes nothing returns nothing\n{_indent(init)}"
+                                       "endfunction\n\n")
     return ((LUA_USER if lua else JASS_USER).replace("{name}", NAME).replace("{functions}", own)
-            .replace("{body}", body) + text)
+            .replace("{init}", init_fn).replace("{body}", _indent(user)) + text)
 
 
 def route_messages(script_text: str) -> str:
@@ -365,7 +408,7 @@ def route_messages(script_text: str) -> str:
 
 
 def build(source, dest, catalog, project=None, seconds: float = 10.0, user: str | None = None,
-          functions: str | None = None) -> Path:
+          functions: str | None = None, init: str | None = None) -> Path:
     """Write a copy of the map (the open working copy when `project` is given) with the probe trigger in it, running
     the caller's `user` code (JASS or Lua statements, as the map's language) when given, after the caller's own
     `functions`."""
@@ -381,7 +424,7 @@ def build(source, dest, catalog, project=None, seconds: float = 10.0, user: str 
         # in its own last category: trigger code is emitted in tree order, so probe_script can call any map function
         triggers_edit(copy, catalog, [{"op": "category", "name": NAME},
                                       {"op": "trigger", "name": NAME, "category": NAME,
-                                       "script": script(language, seconds, user, functions)}])
+                                       "script": script(language, seconds, user, functions, init)}])
         script_ops.script_build(copy, catalog)
         if language != "lua":
             name = next(n for n in ("war3map.j", "scripts\\war3map.j")
@@ -390,7 +433,7 @@ def build(source, dest, catalog, project=None, seconds: float = 10.0, user: str 
         checked = script_ops.script_validate(copy, catalog)
         if not checked["ok"]:
             first = checked["errors"][0]
-            mine = (user is not None or functions is not None) and first.get("trigger") == NAME
+            mine = (user is not None or functions is not None or init is not None) and first.get("trigger") == NAME
             raise ToolError("probe_script_failed", f"the probed map's script does not compile: {first['message']}",
                             hint="fix probe_script (it runs as the body of Trig_wc3mcpProbe_User; declare locals "
                             "first) or probe_functions (whole functions, placed before it)" if mine

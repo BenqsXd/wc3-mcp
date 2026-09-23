@@ -1102,11 +1102,12 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
               probe_script: str | None = None, probe_script_file: str | None = None,
               probe_functions: str | None = None, wait: bool = True, screenshots: int = 0,
               screenshot_every: float = 3.0, login: Literal["auto", "battlenet", "wait", "stop"] = "auto",
-              login_wait: float = 120) -> dict:
+              login_wait: float = 120, probe_init: str | None = None) -> dict:
     """Run a map in Warcraft III (windowed; the window needs to be in front while loading) and collect what it
     reports. The map writes result files with PreloadGenEnd and the run ends as soon as every file listed in results
     exists. probe=true runs a throwaway copy that reports the state at probe_seconds; probe_script, probe_functions
-    and the helpers ProbeReport, ProbeExpect, ProbeCountEvent and ProbeCamera make it a real test. wait=false runs it
+    and the helpers ProbeReport, ProbeExpect, ProbeCountEvent and ProbeCamera make it a real test; probe_init runs
+    at map initialization, before any dialog the map shows (ProbeSkipDialogs keeps them shut). wait=false runs it
     in the background (game_status reports it and its result); screenshots=N with screenshot_every saves pictures
     from the moment the map runs. Logins: login="auto" (default) starts the game through the Battle.net desktop app,
     which hands it the app's own session, so no login screen appears and no credentials are involved anywhere (the
@@ -1122,7 +1123,7 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
         raise ToolError("bad_value", "give probe_script or probe_script_file, not both")
     if probe_script_file is not None:
         probe_script = triggers_ops.read_text_file(probe_script_file, "probe_script_file")
-    probe = probe or probe_script is not None or probe_functions is not None
+    probe = probe or probe_script is not None or probe_functions is not None or probe_init is not None
     if probe:
         catalog = _catalog("enUS", None, True)
         opened = _projects.get(_key(path))
@@ -1130,7 +1131,8 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
         for old in folder.glob("*"):   # earlier runs; a game still open keeps its copy (the rmtree skips it)
             shutil.rmtree(old, ignore_errors=True)
         run = folder / str(time.time_ns()) / Path(path).name   # a new folder per run: never one a game still holds
-        target = str(probe_ops.build(path, run, catalog, opened, probe_seconds, probe_script, probe_functions))
+        target = str(probe_ops.build(path, run, catalog, opened, probe_seconds, probe_script, probe_functions,
+                                     probe_init))
         results = list(results or []) + [probe_ops.REPORT]
         extra["probe_map"] = target
     result = desktop_game.GAME.test(target, timeout=timeout, results=results, close=close, screenshot=screenshot,

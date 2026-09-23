@@ -165,3 +165,28 @@ def test_a_probe_buffers_its_lines_and_samples_handles():
     doc = probe.parse(lines)
     assert doc["reports"] == ["kept"]
     assert doc["handles"] == {"start": 1048800, "end": 1048920, "growth": 120, "seconds": 120, "per_minute": 60.0}
+
+
+def test_probe_init_runs_at_map_init_and_can_keep_dialogs_shut(tmp_path):
+    """A DialogDisplay pauses a single-player game, and a probe queued on a timer never runs behind it: probe_init
+    runs inside map initialization, before the map's own initialization triggers show one."""
+    from wc3mcp.gamedata.catalog import Catalog
+
+    jass = probe.script("jass", 5.0, init="call ProbeSkipDialogs()")
+    init = jass[jass.index("function InitTrig_wc3mcpProbe"):]
+    assert init.splitlines()[1].strip() == "call Trig_wc3mcpProbe_Init()"
+    assert "function Trig_wc3mcpProbe_Init takes nothing returns nothing\n    call ProbeSkipDialogs()" in jass
+    routed = probe.route_messages("globals\nendglobals\ncall DialogDisplayBJ(true, d, p)\ncall DialogDisplay(p, d, "
+                                  "true)\n")
+    assert "call wc3mcpProbe_DialogDisplayBJ(true, d, p)" in routed and "call wc3mcpProbe_DialogDisplay(p, d, true)" \
+        in routed.split("endglobals")[1].split("function wc3mcpProbe_DialogDisplayBJ")[1]
+    lua = probe.script("lua", 5.0, init="ProbeSkipDialogs()")
+    assert "Trig_wc3mcpProbe_Init()" in lua and "DialogDisplay = function(p, d, flag)" in lua
+
+    maps = [p for p in ladder_maps() if open_sample("ladder:" + p.name).read("war3map.j") is not None]
+    if not maps:
+        pytest.skip("no JASS ladder map")
+    source = tmp_path / maps[0].name
+    shutil.copyfile(maps[0], source)
+    probe.build(source, tmp_path / "probe" / maps[0].name, Catalog(_storage(), balance="Custom_V1"),
+                init="call ProbeSkipDialogs()")   # compiles (build runs pjass and raises when it does not)
