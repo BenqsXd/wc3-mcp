@@ -209,3 +209,15 @@ def test_orders_say_whether_a_shipped_ability_backs_them_and_what_the_game_answe
     assert rows["warcry"]["resolves"] is True
     current = {r["id"]: r for r in Catalog(cat.storage, balance="Custom_V1").search("order", "", limit=2000)}
     assert current["holywrath"]["backed"] is False and current["warcry"]["backed"] is False
+
+
+def test_a_glob_query_works_for_rows_and_objects_too(cat):
+    assert len(cat.search("sound", "*", limit=5000)) > 1000                  # every sound label, paged by the server
+    assert {r["id"] for r in cat.search("sound", "*Frost*", limit=500)} == {r["id"] for r in
+                                                                            cat.search("sound", "Frost", limit=500)}
+    assert [r["id"] for r in cat.search("unit", "Hmk?")] == ["Hmkg"]
+
+
+def test_a_model_named_the_way_object_data_names_it_is_found(cat):
+    doc = cat.get("model", r"Units\NightElf\HeroDemonHunter\HeroDemonHunter.mdl")
+    assert doc["id"].lower().endswith("herodemonhunter.mdx") and doc["resolved_from"].endswith(".mdl")

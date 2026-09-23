@@ -197,7 +197,8 @@ def _random_json(u: unitsdoo.Unit) -> dict:
 
 
 def placed_list(project, catalog, kind: str | None = None, area: list | None = None, owner: int | None = None,
-                type_id: str | None = None, limit: int = 200, offset: int = 0) -> dict:
+                type_id: str | list | None = None, limit: int = 200, offset: int = 0) -> dict:
+    types = {type_id} if isinstance(type_id, str) else set(type_id) if type_id is not None else None
     if kind is not None and kind not in KINDS:
         raise ToolError("bad_kind", f"unknown placed kind {kind!r}", hint="one of: " + ", ".join(KINDS))
     if area is not None:
@@ -209,7 +210,7 @@ def placed_list(project, catalog, kind: str | None = None, area: list | None = N
     hits = [(k, o) for k, o in m.placed() if (kind is None or k == kind)
             and (area is None or (area[0] <= o.x <= area[2] and area[1] <= o.y <= area[3]))
             and (owner is None or (isinstance(o, unitsdoo.Unit) and k != "item" and o.owner == owner))
-            and (type_id is None or _id(o.id) == type_id)]
+            and (types is None or _id(o.id) in types)]
     names = {g.index: g.name for g in m.regions()}
     return {"total": len(hits), "bounds": {"playable": m.playable(), "map": m.whole()},
             "items": [m.to_json(k, o, names) for k, o in hits[offset:offset + limit]]}

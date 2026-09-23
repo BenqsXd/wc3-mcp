@@ -1,4 +1,5 @@
 """Game data lookups: base objects with their editor fields, terrain/sound rows, asset paths."""
+import fnmatch
 from dataclasses import dataclass
 from functools import cached_property
 
@@ -61,6 +62,14 @@ def compact(doc: dict) -> dict:
         if value:
             out[key] = value
     return out
+
+
+def _matcher(query: str):
+    """A text query matches as a substring; one with * ? or [ is a glob over the whole text, like the file kinds."""
+    q = query.casefold()
+    if any(c in q for c in "*?["):
+        return lambda text: fnmatch.fnmatchcase(text.casefold(), q)
+    return lambda text: q in text.casefold()
 
 
 def _group_layers(paths: list[str], kind: str) -> list[dict]:
@@ -404,14 +413,12 @@ class Catalog:
             return self._search_terrain(kind, query, limit, offset, tileset)
         if kind == "native":
             return natives_module.search(self.natives, query)[offset:offset + limit]
+        match = _matcher(query)
         if kind == ORDER_KIND:
-            q = query.casefold()
-            hits = [r for r in self._orders.values()
-                    if q in r["id"].casefold() or any(q in a.casefold() for a in r["abilities"])]
+            hits = [r for r in self._orders.values() if match(r["id"]) or any(match(a) for a in r["abilities"])]
             return hits[offset:offset + limit]
         if kind in TRIGGER_KINDS:
-            q = query.casefold()
-            hits = [r for r in self._trigger_rows(kind) if q in r["id"].casefold() or q in r["name"].casefold()]
+            hits = [r for r in self._trigger_rows(kind) if match(r["id"]) or match(r["name"])]
             return hits[offset:offset + limit]
         if kind in PATH_KINDS:
             exts, needle = PATH_KINDS[kind]
@@ -421,13 +428,13 @@ class Catalog:
                     if (not exts or p.lower().endswith(exts)) and needle in p.lower()]
             return _group_layers(hits, kind)[offset:offset + limit]
         wanted = self._tileset_letter(tileset) if tileset else None
-        q, out = query.casefold(), []
+        out = []
         for obj_id in self.ids(kind):
             if wanted and not {"*", wanted} & set(split_list(self.field(kind, obj_id, TILESET_FIELDS[kind]) or "")):
                 continue
             name = self.name(kind, obj_id)
             suffix = self._lookup(kind, obj_id, OBJECT_KINDS[kind].suffix_keys) if kind in OBJECT_KINDS else ""
-            if q in obj_id.casefold() or q in name.casefold() or q in suffix.casefold():
+            if match(obj_id) or match(name) or (suffix and match(suffix)):
                 out.append({"id": obj_id, "name": name, "suffix": suffix})
         page = out[offset:offset + limit]
         if kind in TILESET_FIELDS:   # some ids of the data files have no model in the installed game
@@ -561,6 +568,16 @@ class Catalog:
         if kind in PATH_KINDS:
             if self.storage.norm(obj_id) in self.storage.names():
                 return {"kind": kind, "id": obj_id, "local": self.storage.is_local(obj_id)}
+            # the way object data names a file (Units\...\X.mdl, ...\BTNX.blp): the game loads the .mdx / .dds
+            # beside it, and so does objdata_get's model check - answer the same
+            stem = obj_id.replace("/", "\\").rsplit(".", 1)[0] if "." in obj_id.rsplit("\\", 1)[-1] else None
+            exts = {"model": (".mdx", ".mdl"), "icon": (".blp", ".dds", ".tga")}.get(kind, ())
+            for hd in (True, False) if stem and exts else ():
+                for ext in exts:
+                    found = self.storage.resolve(stem + ext, **{**self.layer, "hd": hd and self.layer["hd"]})
+                    if found:
+                        return {"kind": kind, "id": found, "ref": obj_id, "resolved_from": obj_id,
+                                "local": self.storage.is_local(found)}
             # a bare name ("BTNChainLightning") or a path with the other extension names one file often enough
             stem = obj_id.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0]
             hits = self.search(kind, f"*/{stem}.*", limit=20)

@@ -726,15 +726,18 @@ def elements_edit(path: str, kind: Literal["region", "camera", "sound"], ops: li
 
 @_tool
 def placed_list(path: str, kind: Literal["unit", "item", "start_location", "doodad", "destructible"] | None = None,
-                area: list[float] | None = None, owner: int | None = None, type_id: str | None = None,
-                limit: int = 200, offset: int = 0) -> dict:
+                area: list[float] | None = None, owner: int | None = None, type_id: str | list[str] | None = None,
+                limit: int = 200, offset: int = 0, type: str | list[str] | None = None) -> dict:
     """Placed objects of an open map: units, items and start locations (war3mapUnits.doo), doodads and destructibles
     (war3map.doo). Filters: kind, area [left, bottom, right, top], owner (player 0-23, 24 neutral hostile, 27 neutral
-    passive), type_id. Each object has a ref ("unit:12") for placed_edit, world position, angle in degrees and its
+    passive), type_id (or type: one raw code or a list). Each object has a ref ("unit:12") for placed_edit, world
+    position, angle in degrees and its
     kind's fields (owner, life %, mana, hero stats, inventory, abilities, item drops, random settings, waygate region,
     script_name gg_unit_/gg_item_/gg_dest_). bounds gives the playable area and the whole map."""
-    return placed_ops.placed_list(_project(path), _catalog("enUS", "Custom_V1", True), kind, area, owner, type_id,
-                                  limit, offset)
+    if type_id is not None and type is not None:
+        raise ToolError("bad_value", "give type or type_id, not both (they are the same filter)", path="type")
+    return placed_ops.placed_list(_project(path), _catalog("enUS", "Custom_V1", True), kind, area, owner,
+                                  type_id if type_id is not None else type, limit, offset)
 
 
 @_tool

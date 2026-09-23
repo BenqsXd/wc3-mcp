@@ -259,6 +259,9 @@ KINDS
   GUI          trigger_function, trigger_type, trigger_preset - the World Editor's own function and type tables
   script       native - the installed build's common.j, Blizzard.j and common.ai: natives, functions, constants and
                handle types with their signatures; globs work ("Blz*Frame*")
+A query with * ? or [ is a glob over the id, name and editor suffix for every kind ("*" lists them all, paged: sound
+labels for an ability's aefs, for instance); without them it is a substring. data_get kind=model or icon takes a path
+the way object data writes it (Units\...\X.mdl, ...\BTNX.blp) and answers with the .mdx or .dds the game loads.
   orders       order - every order string: targets (immediate/unit/point, from the editor's presets), the abilities
                whose order fields name it, backed (a shipped ability uses it), resolves (true: OrderId() knew it in a
                game run; false: OrderId() returned 0 - a Channel on it can never be cast; null: never checked) and

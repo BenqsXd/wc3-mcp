@@ -279,3 +279,12 @@ def test_setting_a_waygate_explains_how_units_use_it(tmp_path, catalog):
     script_build(p, catalog)
     text = p.read("war3map.j").decode("utf-8")
     assert "call WaygateActivate(" in text and "call WaygateSetDestination(" in text
+
+
+def test_placed_list_filters_by_one_type_or_several(melee, catalog):
+    units = placed_list(melee, catalog, kind="unit", limit=5000)["items"]
+    first, second = sorted({u["type"] for u in units})[:2]
+    one = placed_list(melee, catalog, kind="unit", type_id=first, limit=5000)
+    both = placed_list(melee, catalog, kind="unit", type_id=[first, second], limit=5000)
+    assert {u["type"] for u in one["items"]} == {first}
+    assert {u["type"] for u in both["items"]} == {first, second} and both["total"] > one["total"]
