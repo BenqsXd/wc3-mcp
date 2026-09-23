@@ -531,8 +531,16 @@ class Catalog:
                     entry["abilities"].append(obj_id)
                 if orders.get("disagree") and value == orders["data"].get("aord"):
                     entry["disagree"] = True
+        from . import orderids
+
         for entry in out.values():
             entry["targets"] = sorted(entry["targets"])
+            # backed: a shipped ability uses it; resolves: what a game run measured OrderId() to answer for it
+            entry["backed"] = bool(entry["abilities"])
+            entry["resolves"] = orderids.resolves(entry["id"])
+            number = orderids.order_id(entry["id"])
+            if number is not None:
+                entry["order_id"] = number
         return dict(sorted(out.items()))
 
     def tile_pathing(self, tile: str) -> dict:

@@ -198,3 +198,14 @@ def test_orders_list_their_targeting_and_the_abilities_that_use_them(cat):
     assert rows["impale"]["targets"] == ["point", "unit"]
     assert rows["slimemonster"]["disagree"] is True        # ANlm's data order; the editor's preset is lavamonster
     assert cat.get("order", "starfall")["targets"] == ["immediate"]
+
+
+def test_orders_say_whether_a_shipped_ability_backs_them_and_what_the_game_answered(cat):
+    rows = {r["id"]: r for r in cat.search("order", "", limit=2000)}
+    assert rows["thunderbolt"]["backed"] is True
+    # the base data has a Holy Wrath ability (AHpb) that the game's balance layers drop, and OrderId knows no
+    # holywrath: backed is not the same as resolves
+    assert rows["holywrath"]["resolves"] is False
+    assert rows["warcry"]["resolves"] is True
+    current = {r["id"]: r for r in Catalog(cat.storage, balance="Custom_V1").search("order", "", limit=2000)}
+    assert current["holywrath"]["backed"] is False and current["warcry"]["backed"] is False

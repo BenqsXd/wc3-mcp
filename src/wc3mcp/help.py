@@ -260,8 +260,11 @@ KINDS
   script       native - the installed build's common.j, Blizzard.j and common.ai: natives, functions, constants and
                handle types with their signatures; globs work ("Blz*Frame*")
   orders       order - every order string: targets (immediate/unit/point, from the editor's presets), the abilities
-               whose order fields name it, disagree when the ability data and the editor differ. A Channel copy
-               needs an order nobody else in the map uses and whose targets match its Ncl2.
+               whose order fields name it, backed (a shipped ability uses it), resolves (true: OrderId() knew it in a
+               game run; false: OrderId() returned 0 - a Channel on it can never be cast; null: never checked) and
+               disagree when the ability data and the editor differ. Not every listed string is in the game's order
+               table: prefer resolves true, or backed true, for a Channel's Ncl6, and one no other ability of the
+               map uses, whose targets match its Ncl2.
 
 tileset ("L" or "Lordaeron Summer") scopes tile, cliff, doodad and destructible to one tileset; a plain query is a
 text search, not a tileset filter. Doodad and destructible results carry model_ok: false when the installed game
@@ -314,6 +317,7 @@ WARNINGS
   hero_ability_slots  more than 5 abilities in a hero's uhab
   hero_skill_points a hero with fewer ability ranks than MaxHeroLevel (points it can never spend)
   channel_target    a no-target Channel copy (Ncl2 0) whose Ncl6 order needs a target, so the cast does nothing
+  channel_order     a Channel copy whose Ncl6 is a string OrderId() does not know in the game (never castable)
   waygate_self      a waygate leading into the region it stands in
   shop_stock        a shop sells an item whose isto (Stock Maximum) is 0: it is never in stock, the shop greys it
   shop_hotkey       entries of one shop card on the same hotkey (a copied item keeps its base's uhot)

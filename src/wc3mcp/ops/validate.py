@@ -12,6 +12,7 @@ from collections import Counter
 from ..formats import doo, imp, objmods, unitsdoo, w3e, w3i, w3r, wct, wtg
 from ..formats.binary import FormatError
 from ..formats.wts import TriggerStrings
+from ..gamedata import orderids
 from ..gamedata.catalog import MODEL_FIELDS
 from ..gamedata.kinds import OBJECT_KINDS
 from .gui import GENERATED, Checker, script_name
@@ -514,6 +515,11 @@ class _V:
                 need = wanted.get(int(float(kind)), set())
             except (TypeError, ValueError):
                 continue
+            if order and orderids.resolves(order) is False:
+                self.add(False, "channel_order", "war3map.w3a",
+                         f"ability {oid}: its base order {order!r} (Ncl6) is not in the game's order table - OrderId "
+                         "returns 0 for it in the game - so the ability can never be cast; pick an order data_search "
+                         "kind=order marks resolves: true, or one a shipped ability uses (backed: true)")
             have = targets.get(order)
             if have and need and not (have & need):
                 self.add(False, "channel_target", "war3map.w3a",

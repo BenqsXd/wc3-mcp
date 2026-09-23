@@ -278,3 +278,15 @@ def test_an_icon_the_game_does_not_have(tmp_path):
     objdata_edit(p, c, "item", [{"op": "set", "id": "I000",
                                  "set": {"iico": r"ReplaceableTextures\CommandButtons\BTNGlove.blp"}}])
     assert "icon" not in _checks(p)
+
+
+def test_a_channel_on_an_order_the_game_does_not_know(tmp_path):
+    from wc3mcp.ops.objdata import objdata_edit
+
+    p = _fresh(tmp_path)
+    c = Catalog(_storage(), balance="Custom_V1")
+    objdata_edit(p, c, "ability", [{"op": "create", "base": "ANcl", "id": "A000", "set": {"Ncl6": {"1": "warcry"}}}])
+    assert "channel_order" not in _checks(p)                  # unbacked, but it resolved and cast in a game run
+    objdata_edit(p, c, "ability", [{"op": "create", "base": "ANcl", "id": "A001",
+                                    "set": {"Ncl6": {"1": "holywrath"}}}])
+    assert "channel_order" in _checks(p)                      # OrderId("holywrath") is 0 in the game
