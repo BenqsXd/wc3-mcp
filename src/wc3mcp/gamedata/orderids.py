@@ -1,6 +1,8 @@
 """What the game's own OrderId() answers for an order string. The editor's presets and the ability data name 345 order
 strings, and not every one of them is in the game's order table: holywrath, lightsmercy and surgeoflight make OrderId
 return 0, and a Channel copy whose base order is one of them can never be cast - with nothing static to say so.
+The sweep of 2026-09-23 found 32 of 347 strings unknown to the game, 15 of them used by shipped abilities (bash,
+manashield, slimemonster, phoenix, ...): a backing ability is no proof. It asked with the spelling the data uses.
 
 orderids.json beside this file, when present, holds a full in-game sweep (tests/desktop/test_orderid_sweep_live.py
 writes it): order string -> the id OrderId returned, 0 for an unknown string. Without it only the strings map sessions

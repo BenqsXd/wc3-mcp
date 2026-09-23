@@ -273,9 +273,9 @@ KINDS
                native do where that differs from its name (SetUnitAcquireRange 0 is ignored, 1 reads 200, ...)
   orders       order - every order string: targets (immediate/unit/point, from the editor's presets), the abilities
                whose order fields name it, backed (a shipped ability uses it), resolves (true: OrderId() knew it in a
-               game run; false: OrderId() returned 0 - a Channel on it can never be cast; null: never checked) and
+               sweep of every string; false: OrderId() returned 0 - a Channel on it can never be cast), order_id, and
                disagree when the ability data and the editor differ. Not every listed string is in the game's order
-               table: prefer resolves true, or backed true, for a Channel's Ncl6, and one no other ability of the
+               table (32 of 347, some used by shipped abilities): pick resolves true for a Channel's Ncl6, one no other ability of the
                map uses, whose targets match its Ncl2.
 
 A query with * ? or [ is a glob over the id, name and editor suffix for every kind ("*" lists them all, paged: sound
