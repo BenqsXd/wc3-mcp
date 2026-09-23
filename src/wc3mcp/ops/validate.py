@@ -131,6 +131,8 @@ class _V:
         self.check_heroes()
         self.check_channel_targets()
         self.check_waygates()
+        self.check_shops()
+        self.check_icons()
         self.check_reachable()
         return {"errors": self.errors, "warnings": self.warnings}
 
@@ -531,6 +533,77 @@ class _V:
             if r is not None and r.left <= u.x <= r.right and r.bottom <= u.y <= r.top:
                 self.add(False, "waygate_self", "war3mapUnits.doo", f"the waygate at ({u.x:g}, {u.y:g}) leads into "
                          f"region {r.name!r}, which contains the gate itself")
+
+    def check_shops(self):
+        """What a shop's card offers that a player cannot use: an item whose Stock Maximum (isto) is 0 is never in
+        stock (a playtest found every item of a map unbuyable that way, while every other check stayed quiet), and
+        entries of one card on the same hotkey (a copied item keeps its base's). Only shops the map touches are read:
+        its own, and any that sell one of its objects. Shared button positions are not reported: stock shops list
+        items that all sit at (0, 0), and the card lays them out in list order."""
+        mods = {kind: self._mods(kind) for kind in ("unit", "item")}
+        if not mods["unit"] and not mods["item"]:
+            return
+
+        def value(kind, oid, rid, stock=False):
+            base, fields, _ = mods[kind].get(oid, (oid, {}, False))
+            return fields[rid] if rid in fields and not stock else self.catalog.field(kind, base, rid)
+
+        def ids(kind, oid, rid, stock=False):
+            return [x.strip() for x in str(value(kind, oid, rid, stock) or "").split(",") if x.strip()]
+
+        def card(shop, stock):
+            """The hotkey of every entry on a shop's card."""
+            return {entry: str(value(kind, entry, "uhot", stock) or "").strip().upper()
+                    for kind, field in (("item", "usei"), ("unit", "useu")) for entry in ids("unit", shop, field, stock)}
+
+        touched = set(mods["item"]) | set(mods["unit"])
+        shops = set(mods["unit"]) | set(self.catalog.ids("unit"))
+        for shop in sorted(shops):
+            sold = ids("unit", shop, "usei") + ids("unit", shop, "useu")
+            if not sold or not (shop in mods["unit"] or touched & set(sold)):
+                continue
+            for item in ids("unit", shop, "usei"):
+                stock_max = value("item", item, "isto")
+                try:
+                    empty = stock_max not in (None, "") and int(float(stock_max)) == 0
+                except ValueError:
+                    empty = False
+                if empty and item in mods["item"]:
+                    self.add(False, "shop_stock", "war3map.w3t", f"shop {shop} sells item {item}, whose isto (Stock "
+                             "Maximum) is 0, so it is never in stock and the shop shows it greyed out: shipped items "
+                             "use isto 1, isit 1, istr 120; a small stock that refills every second (isto 3, isit 3, "
+                             "istr 1, isst 0) is the nearest to unlimited")
+            keys, stock = card(shop, False), card(shop, True)
+            groups: dict[str, list[str]] = {}
+            for entry, key in keys.items():
+                if key:
+                    groups.setdefault(key, []).append(entry)
+            for key, sharing in sorted(groups.items()):
+                if len(sharing) < 2 or not touched & set(sharing):
+                    continue
+                if all(stock.get(e) == key for e in sharing):
+                    continue   # the stock shop ships that clash
+                self.add(False, "shop_hotkey", "war3map.w3t", f"shop {shop}: {', '.join(sharing)} all use the hotkey "
+                         f"{key} on its card, so the key buys only one of them (a copy keeps its base's uhot: give "
+                         "each entry its own, QWER/ASDF/ZXCV by card cell)")
+
+    def check_icons(self):
+        """An icon path the game cannot load draws a blank green square and nothing else says so."""
+        fields = {"item": ("iico",), "ability": ("aart", "arar"), "unit": ("uico", "ussi")}
+        files = {"item": "war3map.w3t", "ability": "war3map.w3a", "unit": "war3map.w3u"}
+        for kind, rids in fields.items():
+            for oid, (_base, values, _custom) in sorted(self._mods(kind).items()):
+                for rid in rids:
+                    path = str(values.get(rid) or "").strip()
+                    if not path or TRIGSTR_ANY.fullmatch(path):
+                        continue
+                    stem = path.rsplit(".", 1)[0] if "." in path.rsplit("\\", 1)[-1] else path
+                    if any(self.has_file(stem + ext) for ext in (".blp", ".dds", ".tga")) \
+                            or self.catalog.icon_exists(path):
+                        continue
+                    self.add(False, "icon", files[kind], f"{kind} {oid}: {rid} {path!r} is neither in the game data "
+                             "nor imported, so the game draws a blank green square (data_search kind=icon finds real "
+                             "ones)")
 
     def check_order_strings(self):
         """Order strings a script issues: the ability data and the editor presets disagree for a few abilities, and

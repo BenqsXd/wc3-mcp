@@ -55,7 +55,10 @@ def test_isit_zero_names_the_unlimited_shape(tmp_path, catalog):
     p = new_map(str(tmp_path / "I.w3x"), catalog, width=64, height=64, players=2)
     with pytest.raises(ToolError) as e:
         objdata_edit(p, catalog, "item", [{"op": "set", "id": "rst1", "set": {"isit": 0}}])
-    assert "isto" in (e.value.hint or "")
+    assert "isto 3, isit 3" in (e.value.hint or "") and "never in stock" in e.value.hint
+    # the old hint recommended isto 0 as "unlimited": that makes the item unbuyable, so it warns now
+    out = objdata_edit(p, catalog, "item", [{"op": "set", "id": "rst1", "set": {"isto": 0}}])
+    assert any("never in stock" in w for w in out["warnings"])
 
 
 def test_object_counts_per_kind(tmp_path, catalog):

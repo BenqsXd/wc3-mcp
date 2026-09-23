@@ -362,6 +362,13 @@ class Catalog:
         layer = {**self.layer, "hd": hd and self.layer["hd"]}
         return any(self.storage.resolve(stem + ext, **layer) for ext in (".mdx", ".mdl"))
 
+    def icon_exists(self, path: str) -> bool:
+        """Whether the game data has an icon (or any texture object data names) in either graphics mode: object data
+        says .blp, and the game loads the .dds beside it in HD."""
+        stem = path.replace("/", "\\").rsplit(".", 1)[0] if path.lower().endswith((".blp", ".dds", ".tga")) else path
+        return any(self.storage.resolve(stem + ext, **{**self.layer, "hd": hd})
+                   for hd in {self.layer["hd"], False} for ext in (".blp", ".dds", ".tga"))
+
     def missing_models(self, kind: str, obj_id: str, variation: int | None = None) -> tuple[list[str], list[str]] | None:
         """(model paths, the ones the game cannot load in HD or classic graphics) of a base doodad, destructible or
         unit, for every variation or one."""

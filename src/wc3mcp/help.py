@@ -315,6 +315,10 @@ WARNINGS
   hero_skill_points a hero with fewer ability ranks than MaxHeroLevel (points it can never spend)
   channel_target    a no-target Channel copy (Ncl2 0) whose Ncl6 order needs a target, so the cast does nothing
   waygate_self      a waygate leading into the region it stands in
+  shop_stock        a shop sells an item whose isto (Stock Maximum) is 0: it is never in stock, the shop greys it
+  shop_hotkey       entries of one shop card on the same hotkey (a copied item keeps its base's uhot)
+  icon              an iico, aart, arar, uico or ussi the game does not have and the map does not import (a blank
+                    green square in the game)
 """)
 
 page("terrain_get", """

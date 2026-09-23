@@ -20,8 +20,11 @@ EXPECTED = {"derived_files", "model", "start_location", "import", "script_langua
             "command_card", "inherited_builds", "reachable", "order_string", "ability_order"}
 # real defects the checks found in a map of the folder, kept here so the rule stays sharp for every other map
 KNOWN_DEFECTS = {
-    # A106 "Arcane Siphon" is a no-target Channel (Ncl2 0) whose order is parasite, a unit order: it never casts
-    "MapA.w3x": {"channel_target"},
+    # A106 "Arcane Siphon" is a no-target Channel (Ncl2 0) whose order is parasite, a unit order: it never casts;
+    # A100, A105 and A108 name icons the game does not have (BTNGrenade, BTNRuneOfRebirth, BTNImpalingBoneSpear)
+    "MapA.w3x": {"channel_target", "icon"},
+    # I241 and AR01 name BTNRainOfFire, which the game does not have (Rain of Fire's own icon is BTNFire)
+    "MapB.w3x": {"icon"},
 }
 
 
@@ -44,7 +47,8 @@ def test_the_checks_stay_quiet_on_a_working_map(map_path, catalog):
         allowed = EXPECTED | KNOWN_DEFECTS.get(map_path.name, set())
         unexpected = [w for w in result["warnings"] if w["check"] not in allowed]
         assert unexpected == [], [w["message"][:120] for w in unexpected[:3]]
-        assert len(result["warnings"]) <= 7, [w["check"] for w in result["warnings"]]
+        noise = [w for w in result["warnings"] if w["check"] not in KNOWN_DEFECTS.get(map_path.name, set())]
+        assert len(noise) <= 6, [w["check"] for w in noise]
         for name in ("war3map.j", r"scripts\war3map.j"):
             try:
                 text = project.read(name).decode("utf-8", "replace")

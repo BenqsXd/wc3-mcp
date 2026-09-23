@@ -252,3 +252,29 @@ def test_a_waygate_into_its_own_region(tmp_path):
                                     "top": 512}])
     placed_edit(p, c, [{"op": "add", "kind": "unit", "type": "nwgt", "x": 0, "y": 0, "owner": 27, "waygate": "Home"}])
     assert "waygate_self" in _checks(p)
+
+
+def test_a_shop_item_that_is_never_in_stock_and_a_card_on_one_hotkey(tmp_path):
+    from wc3mcp.ops.objdata import objdata_edit
+
+    p = _fresh(tmp_path)
+    c = Catalog(_storage(), balance="Custom_V1")
+    objdata_edit(p, c, "item", [{"op": "create", "base": "rat9", "id": "I000", "set": {"isto": 0}},
+                                {"op": "create", "base": "rat9", "id": "I001"}])
+    objdata_edit(p, c, "unit", [{"op": "create", "base": "ngme", "id": "n000", "set": {"usei": "I000,I001"}}])
+    assert {"shop_stock", "shop_hotkey"} <= _checks(p)          # both copies keep rat9's hotkey C
+    objdata_edit(p, c, "item", [{"op": "set", "id": "I000", "set": {"isto": 3, "isit": 3, "istr": 1, "uhot": "Q"}}])
+    assert not {"shop_stock", "shop_hotkey"} & _checks(p)
+
+
+def test_an_icon_the_game_does_not_have(tmp_path):
+    from wc3mcp.ops.objdata import objdata_edit
+
+    p = _fresh(tmp_path)
+    c = Catalog(_storage(), balance="Custom_V1")
+    objdata_edit(p, c, "item", [{"op": "create", "base": "gcel", "id": "I000",
+                                 "set": {"iico": r"ReplaceableTextures\CommandButtons\BTNGlovesOfHaste.blp"}}])
+    assert "icon" in _checks(p)
+    objdata_edit(p, c, "item", [{"op": "set", "id": "I000",
+                                 "set": {"iico": r"ReplaceableTextures\CommandButtons\BTNGlove.blp"}}])
+    assert "icon" not in _checks(p)

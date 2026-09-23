@@ -137,7 +137,9 @@ def objdata_list(project, catalog, kind: str, custom_only: bool = False) -> dict
 
 LEVEL_FIELDS = {"ability": "alev", "upgrade": "glvl"}
 RANGE_HINTS = {
-    "isit": "an item with no stock limit is isto 0 with isit 1 (and istr 1): isit counts from 1",
+    "isit": "isit (Stock Initial) counts from 1 and should not exceed isto (Stock Maximum). There is no unlimited "
+            "stock: isto 0 means the item is never in stock. Shipped shop items use isto 1, isit 1, istr 120; a small "
+            "stock that refills every second (isto 3, isit 3, istr 1, isst 0) is the nearest to unlimited",
     "uhab": "a hero learns at most 5 abilities through uhab; grant more with UnitAddAbility",
 }
 HERO_ABILITIES = 5   # uhab: maxVal 5 in Units/UnitMetaData.slk; with 11 listed, SelectHeroSkill skipped the 9th
@@ -584,6 +586,12 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
         except ToolError as e:
             e.details.setdefault("op_index", i)
             raise
+    if kind == "item":
+        for oid in sorted(o for o in touched if isinstance(o, str)):
+            stock = _merged(_entries(files, oid)).get(("isto", 0))
+            if stock is not None and stock.value == 0:
+                warnings.append(f"{oid}: isto (Stock Maximum) 0 means the item is never in stock, so a shop that "
+                                "sells it shows it greyed out. " + RANGE_HINTS["isit"])
     if kind == "unit":
         for oid in sorted(o for o in touched if isinstance(o, str)):
             mods = _merged(_entries(files, oid))
