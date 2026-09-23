@@ -324,6 +324,7 @@ WARNINGS
   start_location    the marker and war3map.w3i disagree about a player's start
   import            an entry of war3map.imp the map does not hold
   command_card      two buttons of one unit on the same position (unless its stock base has the same clash)
+  learn_card        two hero abilities (uhab) of one hero on the same learn-menu cell or hotkey (arpx/arpy, arhk)
   inherited_builds  a copied unit with its own uabi that kept its base's build list
   locked_ability    an ability whose required research nothing in the map offers
   order_string      an order a unit will refuse, or one where the ability data and the editor disagree

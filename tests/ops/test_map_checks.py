@@ -303,3 +303,17 @@ def test_a_channel_whose_middle_ranks_have_no_button(tmp_path):
     assert "channel_levels" in _checks(p)
     objdata_edit(p, c, "ability", [{"op": "set", "id": "A000", "set": {"Ncl3": [1, 1, 1, 1, 1, 1]}}])
     assert "channel_levels" not in _checks(p)
+
+
+def test_learn_menu_entries_on_one_cell_or_one_hotkey(tmp_path):
+    from wc3mcp.ops.objdata import objdata_edit
+
+    p = _fresh(tmp_path)
+    c = Catalog(_storage(), balance="Custom_V1")
+    objdata_edit(p, c, "ability", [{"op": "create", "base": "Aamk", "id": f"A00{i}"} for i in range(4)])
+    objdata_edit(p, c, "unit", [{"op": "create", "base": "Hpal", "id": "H000",
+                                 "set": {"uhab": "A000,A001,A002,A003"}}])
+    assert "learn_card" in _checks(p)                 # four proxies left on their defaults: one cell, one hotkey
+    objdata_edit(p, c, "ability", [{"op": "set", "id": f"A00{i}", "set": {"arpx": i, "arpy": 0, "arhk": "QWER"[i]}}
+                                   for i in range(4)])
+    assert "learn_card" not in _checks(p)

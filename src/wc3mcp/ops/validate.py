@@ -677,6 +677,19 @@ class _V:
                 card.setdefault((3, 2), []).append("Cancel")
             return card
 
+        def learn_card(oid, stock):
+            """("cell", x, y) and ("key", hotkey) -> the hero abilities (uhab) there on a hero's learn menu. Four
+            proxies left on their defaults all sat on one cell with the hotkey B in a playtest."""
+            card: dict[tuple, list[str]] = {}
+            for a in ids("unit", oid, "uhab", stock):
+                x, y = value("ability", a, "arpx", stock), value("ability", a, "arpy", stock)
+                if x not in (None, "") and y not in (None, "") and float(x) >= 0 and float(y) >= 0:
+                    card.setdefault(("cell", int(float(x)), int(float(y))), []).append(a)
+                key = str(value("ability", a, "arhk", stock) or "").strip().upper()
+                if key:
+                    card.setdefault(("key", key), []).append(a)
+            return card
+
         script = self.script or ""
         melee = "MeleeStartingUnits" in script
         units = self.parse("war3mapUnits.doo", unitsdoo.parse)
@@ -698,6 +711,14 @@ class _V:
                     self.add(False, "inherited_builds", name, f"unit {oid}: sets its abilities (uabi) but keeps the "
                              f"build list of {base} (ubui {','.join(builds)}), so it can still build those; set ubui "
                              'to "" if it must not build')
+            learn = learn_card(oid, False)
+            if any(len(v) > 1 for v in learn.values()):
+                stock = learn_card(base, True)
+                for key, labels in sorted(learn.items(), key=lambda kv: str(kv[0])):
+                    if len(labels) > 1 and sorted(labels) != sorted(stock.get(key, [])):
+                        what = f"learn-menu hotkey {key[1]}" if key[0] == "key" else f"learn-menu cell {key[1:]}"
+                        self.add(False, "learn_card", name, f"hero {oid}: {', '.join(labels)} share the {what}, so "
+                                 "only one of them can be learned that way (arpx/arpy and arhk are set per ability)")
             for ability in [] if melee else ids("unit", oid, "uabi") + ids("unit", oid, "uhab"):
                 for research in ids("ability", ability, "areq"):   # melee races can build the research buildings
                     if research in upgrades and research not in offered and research not in script:
