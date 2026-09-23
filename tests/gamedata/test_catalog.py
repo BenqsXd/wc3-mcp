@@ -221,3 +221,11 @@ def test_a_glob_query_works_for_rows_and_objects_too(cat):
 def test_a_model_named_the_way_object_data_names_it_is_found(cat):
     doc = cat.get("model", r"Units\NightElf\HeroDemonHunter\HeroDemonHunter.mdl")
     assert doc["id"].lower().endswith("herodemonhunter.mdx") and doc["resolved_from"].endswith(".mdl")
+
+
+def test_natives_carry_what_the_game_was_seen_to_do(cat):
+    from wc3mcp.gamedata.natives import NOTES
+
+    assert "200" in cat.get("native", "SetUnitAcquireRange")["observed"]
+    assert "observed" in cat.search("native", "IssueNeutralImmediateOrderById")[0]
+    assert set(NOTES) <= set(cat.natives), sorted(set(NOTES) - set(cat.natives))   # every note names a real native

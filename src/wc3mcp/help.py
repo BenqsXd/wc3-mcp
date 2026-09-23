@@ -249,6 +249,12 @@ PITFALLS
   Every launch can meet a login screen (see LOGIN), so put many checks into one run. An open dialog pauses a single-player game, so report before it opens. The game keeps
   about 259 characters of one Preload string (truncated lists the lines that hit it). A loading screen that waits for
   a key gets a space press (loading_screen_keys).
+  Nothing in a probe stands in for a player's click on a shop: IssueNeutralImmediateOrderById returned false for
+  heroes a Tavern did sell, and ForceUIKey does nothing on a neutral shop's card. A shop sells only to a unit standing
+  close to it (Tavern 300-350, Goblin Merchant 250) and not in the first seconds of a map. When the question is "can
+  a player buy this", balance_report kind="shop" and map_validate cover what the data can say; the rest is a person
+  at the keyboard. A probe that sets the map up for itself (skipping a pick phase) never tests the path a player
+  takes: keep one probe that only waits and checks that nothing happened early.
 """)
 
 page("data_search", """
@@ -263,7 +269,8 @@ KINDS
                (backslashes, icons .blp, models .mdl), layers the storage layers holding it, id a storage path
   GUI          trigger_function, trigger_type, trigger_preset - the World Editor's own function and type tables
   script       native - the installed build's common.j, Blizzard.j and common.ai: natives, functions, constants and
-               handle types with their signatures; globs work ("Blz*Frame*")
+               handle types with their signatures; globs work ("Blz*Frame*"). observed says what a game run saw a
+               native do where that differs from its name (SetUnitAcquireRange 0 is ignored, 1 reads 200, ...)
   orders       order - every order string: targets (immediate/unit/point, from the editor's presets), the abilities
                whose order fields name it, backed (a shipped ability uses it), resolves (true: OrderId() knew it in a
                game run; false: OrderId() returned 0 - a Channel on it can never be cast; null: never checked) and
