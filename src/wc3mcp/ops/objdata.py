@@ -220,9 +220,13 @@ ID_PREFIX = {"item": "I", "destructible": "B", "doodad": "D", "ability": "A", "b
 ID_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 SKIN_NETSAFE = frozenset({"1", "11"})
 _HINT = ('ops: {"op": "create", "base": "hfoo", "set": {"Name": "Guard"}}, {"op": "set", "id": "h000", "set": '
-         '{"uhpm": 500}}, {"op": "reset", "id": "h000", "fields": ["uhpm"]}, {"op": "delete", "id": "h000"}')
+         '{"uhpm": 500}}, {"op": "upsert", "id": "h000", "base": "hfoo", "set": {...}}, {"op": "reset", "id": "h000", '
+         '"fields": ["uhpm"]}, {"op": "delete", "id": "h000"}')
 OP_KEYS = {"create": {"op", "base", "id", "set"}, "set": {"op", "id", "set"}, "reset": {"op", "id", "fields"},
-           "delete": {"op", "id"}}
+           "delete": {"op", "id"}, "upsert": {"op", "base", "id", "set"}}
+QUIET = {"extended_levels"}
+# button positions below 0 put a button off the card: the long-standing way to hide one, and the game accepts it
+BUTTON_FIELDS = frozenset({"abpx", "abpy", "arpx", "arpy", "ubpx", "ubpy", "gbpx", "gbpy"})
 
 
 def _next_id(kind: str, base: str, taken: set[str]) -> str:
@@ -278,6 +282,8 @@ def _convert(meta, value, path: str) -> tuple[int, object]:
         raise ToolError("bad_value", f"{path}: {meta.id} expects {'an integer' if vt == INT else 'a number'}",
                         path=path)
     low, high = _number(meta.min), _number(meta.max)
+    if meta.id in BUTTON_FIELDS and value < 0:
+        return vt, value   # off the card (-11 is the classic value); objdata_edit notes it
     if (low is not None and value < low) or (high is not None and value > high):
         raise ToolError("bad_value", f"{path}: {meta.id} must be between {meta.min} and {meta.max}", path=path,
                         hint=RANGE_HINTS.get(meta.id))
@@ -508,7 +514,10 @@ def _remove(files, custom: bool, key: bytes) -> None:
             om.original = [e for e in om.original if e.base_id != key]
 
 
-def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
+def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = None) -> dict:
+    quiet = set(quiet or [])
+    if quiet - QUIET:
+        raise ToolError("bad_value", f"quiet: expected any of {sorted(QUIET)}", path="quiet")
     main, skin, raw = _load(project, kind)
     files = (main, skin)
     strings = load_strings(project)
@@ -518,6 +527,7 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
     created, extended = [], []
     warnings: list[str] = []
     touched: set[str] = set()
+    upserted: dict[str, str] = {}
     for i, op in enumerate(ops):
         path = f"ops[{i}]"
         try:
@@ -527,6 +537,17 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
             extra = set(op) - OP_KEYS.get(action, set(op))
             if extra:   # a misspelt key would otherwise drop the caller's values without a word
                 raise ToolError("bad_op", f"{path}: {action} takes no {sorted(extra)}", hint=_HINT)
+            if action == "upsert":   # a generator re-run over a built map need not know which ids are new
+                oid = op.get("id")
+                if not isinstance(oid, str):
+                    raise ToolError("bad_op", f"{path}: upsert needs the id to create or change", hint=_HINT)
+                exists = oid in base_ids or any(custom for _, custom, _ in _entries(files, oid))
+                if not exists and "base" not in op:
+                    raise ToolError("bad_op", f"{path}: {oid} does not exist yet, so upsert needs a base to create it "
+                                    "from", hint=_HINT)
+                action = "set" if exists else "create"
+                upserted[oid] = "set" if exists else "created"
+                op = {k: v for k, v in op.items() if k != "base" or not exists}
             if action == "create":
                 base = op.get("base")
                 copied = [] if base in base_ids else [(om, e) for om, custom, e in _entries(files, base) if custom]
@@ -586,6 +607,12 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
         except ToolError as e:
             e.details.setdefault("op_index", i)
             raise
+    for oid in sorted(o for o in touched if isinstance(o, str)):
+        hidden = sorted(rid for (rid, _level), mod in _merged(_entries(files, oid)).items()
+                        if rid in BUTTON_FIELDS and isinstance(mod.value, int) and mod.value < 0)
+        if hidden:
+            warnings.append(f"{oid}: {', '.join(hidden)} below 0 put the button off the card, so it does not show "
+                            "(the usual way to hide one; the game accepts it)")
     if kind == "item":
         for oid in sorted(o for o in touched if isinstance(o, str)):
             stock = _merged(_entries(files, oid)).get(("isto", 0))
@@ -616,7 +643,11 @@ def objdata_edit(project, catalog, kind: str, ops: list) -> dict:
         project.write(strings_file(project), wts_after)
         changed = True
     out = {"changed": changed, "created": created, "warnings": warnings}
-    if extended:
+    if upserted:
+        out["upserted"] = upserted
+    if extended and "extended_levels" in quiet:
+        out["extended_levels"] = {"objects": len(extended), "note": "quiet: the per-object list was left out"}
+    elif extended:
         out["extended_levels"] = extended
         out["extended_levels_note"] = ("these objects got more levels than their base object has, so the last value "
                                        "of every per-level field was repeated into the new ranks (what the World "

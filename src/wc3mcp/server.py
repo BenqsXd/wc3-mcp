@@ -592,16 +592,20 @@ def objdata_get(path: str, kind: ObjectKind, id: str | list[str], fields: list[s
 
 @_tool
 def objdata_edit(path: str, kind: ObjectKind, ops: list[dict] | None = None, balance: str | None = "Custom_V1",
-                 ops_file: str | None = None) -> dict:
+                 ops_file: str | None = None, quiet: list[str] | None = None) -> dict:
     """Create and change objects with an all-or-nothing batch: {"op": "create", "base": "hfoo", "set": {"Name": "Guard",
     "HP": 500}} (id optional, allocated like the editor; base may be one of the map's custom objects, which copies its
     stock base and all its modifications, like the editor's copy and paste), {"op": "set", "id": "h000", "set": {"Hbz1":
     {"1": 7, "2": 9}}} (per-level fields take level keys; stock ids such as hgtw work too), {"op": "reset", "id":
-    "h000", "fields": ["uhpm"]}, {"op": "delete", "id": "h000"}. Fields accept raw codes, field names or display names.
+    "h000", "fields": ["uhpm"]}, {"op": "delete", "id": "h000"}, {"op": "upsert", "id": "h000", "base": "hfoo", "set":
+    {...}} (creates when missing, sets when there; result: upserted). Fields accept raw codes, field names or display
+    names.
     A per-level field also takes a list (levels 1..n), {"from": a, "step": s} or {"from": a, "to": b} (optional
     "levels"), and a text field {"template": "... {Htb1} ... {level} ..."} filled per level from the object's own
-    values. ops_file: a local JSON file holding the ops array instead of ops."""
-    return objdata_ops.objdata_edit(_project(path), _catalog("enUS", balance, True), kind, _ops(ops, ops_file))
+    values. ops_file: a local JSON file holding the ops array instead of ops. quiet=["extended_levels"] shortens
+    that block to a count. A button position below 0 (arpy -11) puts the button off the card."""
+    return objdata_ops.objdata_edit(_project(path), _catalog("enUS", balance, True), kind, _ops(ops, ops_file),
+                                    quiet)
 
 
 @_tool

@@ -68,3 +68,30 @@ def test_object_counts_per_kind(tmp_path, catalog):
     objdata_edit(p, catalog, "unit", [{"op": "create", "base": "hfoo"},
                                       {"op": "set", "id": "hpea", "set": {"uhpm": 300}}])
     assert object_counts(p)["unit"] == {"custom": 1, "modified": 1}
+
+
+def test_upsert_creates_what_is_missing_and_sets_what_is_there(tmp_path, catalog):
+    p = new_map(str(tmp_path / "U.w3x"), catalog, width=64, height=64, players=2)
+    first = objdata_edit(p, catalog, "unit", [{"op": "upsert", "id": "h000", "base": "hfoo", "set": {"uhpm": 500}}])
+    assert first["upserted"] == {"h000": "created"} and first["created"] == ["h000"]
+    again = objdata_edit(p, catalog, "unit", [{"op": "upsert", "id": "h000", "base": "hfoo", "set": {"uhpm": 600}},
+                                              {"op": "upsert", "id": "hpea", "set": {"uhpm": 300}}])
+    assert again["upserted"] == {"h000": "set", "hpea": "set"} and again["created"] == []
+    assert objdata_get(p, catalog, "unit", "h000", ["uhpm"])["fields"]["uhpm"]["value"] == 600
+
+
+def test_quiet_extended_levels_keeps_the_result_small(tmp_path, catalog):
+    p = new_map(str(tmp_path / "Q.w3x"), catalog, width=64, height=64, players=2)
+    loud = objdata_edit(p, catalog, "ability", [{"op": "create", "base": "AHtb", "id": "A000", "set": {"alev": 10}}])
+    quiet = objdata_edit(p, catalog, "ability", [{"op": "create", "base": "AHtb", "id": "A001", "set": {"alev": 10}}],
+                         quiet=["extended_levels"])
+    assert isinstance(loud["extended_levels"], list)
+    assert quiet["extended_levels"] == {"objects": 1, "note": "quiet: the per-object list was left out"}
+
+
+def test_a_button_can_be_put_off_the_card(tmp_path, catalog):
+    p = new_map(str(tmp_path / "B.w3x"), catalog, width=64, height=64, players=2)
+    out = objdata_edit(p, catalog, "ability", [{"op": "create", "base": "AHtb", "id": "A000",
+                                                "set": {"arpx": 0, "arpy": -11}}])
+    assert any("off the card" in w for w in out["warnings"])
+    assert objdata_get(p, catalog, "ability", "A000", ["arpy"])["fields"]["arpy"]["value"] == -11
