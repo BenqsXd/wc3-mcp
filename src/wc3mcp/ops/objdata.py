@@ -145,6 +145,20 @@ RANGE_HINTS = {
 HERO_ABILITIES = 5   # uhab: maxVal 5 in Units/UnitMetaData.slk; with 11 listed, SelectHeroSkill skipped the 9th
 
 
+CLASSIC_NOTE = ("these art fields have another default in classic graphics, which the World Editor reads: values "
+                "above are the HD defaults. The editor compares an override with ITS default and drops one that "
+                "equals it on every save - after which objdata_get shows the HD default again")
+
+
+def _classic_default(catalog, kind: str, base: str, meta):
+    """The classic (SD) default of an art field when it differs from the HD one, else None. 262 stock units carry
+    another model in classic graphics (Edem: HeroDemonHunter there, Illidan in HD)."""
+    if meta.category != "art" or not catalog.layer["hd"]:
+        return None
+    hd, sd = catalog.value(kind, base, meta), catalog.sd.value(kind, base, meta)
+    return sd if sd != hd else None
+
+
 def object_counts(project) -> dict:
     """How many custom and modified objects of each kind the map holds (main and skin files merged)."""
     out = {}
@@ -202,6 +216,12 @@ def objdata_get(project, catalog, kind: str, obj_id: str, fields: list[str] | No
                                         for (rid, level), mod in mods.items() if (rid, level) not in used]
     doc.update({"id": obj_id, "base": base, "custom": custom, "levels": top,
                 "name": _name(catalog, kind, base, mods, strings)})
+    art = {f.id: f for f in catalog.fields(kind) if f.category == "art"}
+    classic = {rid: sd for rid in doc["fields"] if rid in art
+               and (sd := _classic_default(catalog, kind, base, art[rid])) is not None}
+    if classic:
+        doc["classic_defaults"] = classic
+        doc["classic_note"] = CLASSIC_NOTE
     file_field, count_field = MODEL_FIELDS.get(kind, (None, None))
     file_mod, count_mod = mods.get((file_field, 0)), mods.get((count_field, 0))
     if "model" in doc and (file_mod or count_mod):   # the map's own model: check that one, imports included
@@ -607,7 +627,16 @@ def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = No
         except ToolError as e:
             e.details.setdefault("op_index", i)
             raise
+    art = {f.id: f for f in catalog.fields(kind) if f.category == "art"}
     for oid in sorted(o for o in touched if isinstance(o, str)):
+        entries = _entries(files, oid)
+        base_id = entries[0][2].base_id.decode("latin-1") if entries else oid
+        for (rid, _level), mod in sorted(_merged(entries).items()):
+            classic = _classic_default(catalog, kind, base_id, art[rid]) if rid in art else None
+            if classic is not None and str(mod.value).lower() == str(classic).lower():
+                warnings.append(f"{oid}: {rid} {mod.value!r} is the classic-graphics default of {base_id}, which the "
+                                "World Editor compares with, so its next save drops this value (and objdata_get then "
+                                "shows the HD default); the game uses the classic one in classic graphics anyway")
         hidden = sorted(rid for (rid, _level), mod in _merged(_entries(files, oid)).items()
                         if rid in BUTTON_FIELDS and isinstance(mod.value, int) and mod.value < 0)
         if hidden:

@@ -95,3 +95,16 @@ def test_a_button_can_be_put_off_the_card(tmp_path, catalog):
                                                 "set": {"arpx": 0, "arpy": -11}}])
     assert any("off the card" in w for w in out["warnings"])
     assert objdata_get(p, catalog, "ability", "A000", ["arpy"])["fields"]["arpy"]["value"] == -11
+
+
+def test_an_art_value_equal_to_the_classic_default_is_named(tmp_path):
+    from corpus import _storage
+    from wc3mcp.gamedata.catalog import Catalog
+
+    hd = Catalog(_storage(), balance="Custom_V1")
+    p = new_map(str(tmp_path / "A.w3x"), hd, width=64, height=64, players=2)
+    out = objdata_edit(p, hd, "unit", [{"op": "create", "base": "Edem", "id": "H000",
+                                        "set": {"umdl": r"Units\NightElf\HeroDemonHunter\HeroDemonHunter"}}])
+    assert any("classic-graphics default" in w for w in out["warnings"])
+    doc = objdata_get(p, hd, "unit", "H000", ["umdl"])
+    assert doc["classic_defaults"]["umdl"].endswith("HeroDemonHunter") and "classic_note" in doc
