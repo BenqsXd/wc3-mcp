@@ -177,7 +177,7 @@ def test_editor_messages_come_from_the_log():
              "9/16 16:21:47.345  SysMsg: Failed to load Environment Map for tileset A",
              "9/16 16:21:47.898  SysMsg:  ",
              "9/16 16:21:48.000  SysMsg: Trigger 'Spawn' has been disabled due to errors",
-             "9/16 16:21:46.997  Opening map - D:/war3/MapE.w3x"]
+             "9/16 16:21:46.997  Opening map - C:/Maps/Test.w3x"]
     assert ed.editor_messages(lines) == {"missing_files": ["Doodads\\Plants\\Wheat\\Wheat0.mdl"],
                                          "messages": ["Trigger 'Spawn' has been disabled due to errors"],
                                          "benign_messages": 2}

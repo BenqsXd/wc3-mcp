@@ -12,9 +12,9 @@ from functools import cache
 from pathlib import Path
 
 SWEEP_FILE = Path(__file__).with_name("orderids.json")
-# OrderId returned 0 in the game (MapB phase 6, 2026-09-22): a Channel on one of these is inert
+# OrderId returned 0 in the game (measured 2026-09-22): a Channel on one of these is inert
 FAIL = frozenset({"holywrath", "lightsmercy", "surgeoflight"})
-# no shipped ability uses these, and they resolved and cast in game runs (MapB phase 6; MapC)
+# no shipped ability uses these, and they resolved and cast in game runs
 RESOLVE = frozenset({"witheringfire", "valiantcharge", "consecration", "warcry", "breathoffrost", "firebolt", "drain",
                      "inspirecourage", "avengerform", "lavamonster", "summonphoenix", "dreadlordinferno"})
 

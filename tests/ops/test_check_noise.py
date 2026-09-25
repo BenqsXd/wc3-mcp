@@ -2,6 +2,7 @@
 every check runs over the shipped sample maps and, when they are there, the maps in the folder below, and
 it has to report no errors and only the warnings a real map is allowed to carry.
 """
+import json
 import os
 from pathlib import Path
 
@@ -18,14 +19,12 @@ pytestmark = pytest.mark.skipif(not HAVE_INSTALL, reason="needs the Warcraft III
 # warnings a finished map is allowed to carry: they are facts about the map, not defects of the checks
 EXPECTED = {"derived_files", "model", "start_location", "import", "script_language", "locked_ability",
             "command_card", "inherited_builds", "reachable", "order_string", "ability_order"}
-# real defects the checks found in a map of the folder, kept here so the rule stays sharp for every other map
-KNOWN_DEFECTS = {
-    # A106 "Arcane Siphon" is a no-target Channel (Ncl2 0) whose order is parasite, a unit order: it never casts;
-    # A100, A105 and A108 name icons the game does not have (BTNGrenade, BTNRuneOfRebirth, BTNImpalingBoneSpear)
-    "MapA.w3x": {"channel_target", "icon"},
-    # I241 and AR01 name BTNRainOfFire, which the game does not have (Rain of Fire's own icon is BTNFire)
-    "MapB.w3x": {"icon"},
-}
+# Your own maps and the real defects the checks found in them live outside the repo, in tests/local.json
+# (git-ignored): {"maps": "<folder of .w3x files>", "known_defects": {"<file name>": ["<check>", ...]}}. A known
+# defect stays listed there so the rule stays sharp for every other map. WC3MCP_TEST_MAPS overrides the folder.
+LOCAL = Path(__file__).parents[1] / "local.json"
+_local = json.loads(LOCAL.read_text("utf-8")) if LOCAL.is_file() else {}
+KNOWN_DEFECTS = {name: set(checks) for name, checks in _local.get("known_defects", {}).items()}
 
 
 @pytest.fixture(scope="module")
@@ -34,8 +33,8 @@ def catalog():
 
 
 def _own_maps() -> list[Path]:
-    folder = Path(os.environ.get("WC3MCP_TEST_MAPS", r"D:\war3"))
-    return sorted(folder.glob("*.w3x")) if folder.is_dir() else []
+    folder = os.environ.get("WC3MCP_TEST_MAPS") or _local.get("maps")
+    return sorted(Path(folder).glob("*.w3x")) if folder and Path(folder).is_dir() else []
 
 
 @pytest.mark.parametrize("map_path", _own_maps(), ids=lambda p: p.name)
@@ -55,8 +54,8 @@ def test_the_checks_stay_quiet_on_a_working_map(map_path, catalog):
             except Exception:   # noqa: BLE001 - a Lua map or a map without that file
                 continue
             hits = lint(text)
-            # 6, not 4: MapA carries library triggers whose InitTrig the pre-1.3 wrapper gave an action
-            # (dead_trigger); the 1.3 wrapper writes an empty InitTrig for a library, so new maps do not.
+            # 6, not 4: a map made before 1.3 can carry library triggers whose InitTrig the old wrapper gave an
+            # action (dead_trigger); the 1.3 wrapper writes an empty InitTrig for a library, so new maps do not.
             assert len(hits) <= 6, [f"{h['rule']} line {h['line']}" for h in hits[:5]]
             break
     finally:

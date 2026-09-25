@@ -38,7 +38,7 @@ Trigger code is emitted in **trigger-tree order**, so a function can only be cal
 
 ### Damage handlers run as conditions
 
-`TriggerAddAction` runs the function on a **new thread, after the damage call returned**, so a global the dealer set around `UnitDamageTarget` is already reset by the time the handler reads it - the most expensive mistake of the arena build. `TriggerAddCondition(t, Condition(function F))`, with `F` returning `boolean` (`return false`), runs it inside the damage call instead. The `damage_detection` recipe writes that shape, and `script_validate lint=true` reports `damage_action` for the other one.
+`TriggerAddAction` runs the function on a **new thread, after the damage call returned**, so a global the dealer set around `UnitDamageTarget` is already reset by the time the handler reads it - an expensive mistake to find late. `TriggerAddCondition(t, Condition(function F))`, with `F` returning `boolean` (`return false`), runs it inside the damage call instead. The `damage_detection` recipe writes that shape, and `script_validate lint=true` reports `damage_action` for the other one.
 
 Exact scripted damage: send it as `ATTACK_TYPE_CHAOS` + `DAMAGE_TYPE_UNIVERSAL` (the engine scales neither) and apply the map's own multiplier in the handler - true 200 arrived as 199.9, while magic 1000 arrived as 528.2 against the intended 528.3. `1 / (1 + 0.06 * X)` on a script-held resist reproduces the armour curve.
 

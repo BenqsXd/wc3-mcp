@@ -34,7 +34,7 @@ For a map that is corridors and rooms rather than open ground, carve instead of 
 3. Carve rooms as circles hanging off that graph.
 4. One World Editor round trip (`editor_map open` + `save`), then verify with `map_flow` against the saved `war3map.wpm` before any camp or scenery goes in.
 
-Carve first, decorate after: the opposite order took a dozen editor round trips on the dungeon map. Sizing: the default camera shows about 1800-2000 units of ground, so a path wider than about 1000 fills the screen and stops reading as a path, while 600-800 reads as a corridor with both walls visible. A ring-and-spoke graph has no dead ends by construction, and alcoves hung off it read as clearings. Decoration inside an alcove or on a 640-wide path has to be non-blocking (`data_search` `blocks`).
+Carve first, decorate after: the opposite order costs a dozen editor round trips. Sizing: the default camera shows about 1800-2000 units of ground, so a path wider than about 1000 fills the screen and stops reading as a path, while 600-800 reads as a corridor with both walls visible. A ring-and-spoke graph has no dead ends by construction, and alcoves hung off it read as clearings. Decoration inside an alcove or on a 640-wide path has to be non-blocking (`data_search` `blocks`).
 
 ## 3. Scenery that reads as placed
 

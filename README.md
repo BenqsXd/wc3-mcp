@@ -70,8 +70,6 @@ The game install is never modified. Maps are edited in working copies; `map_save
 
 ## What's new in 1.5
 
-From the arena map's phases 6-7 and two playtests.
-
 - **`game_test` gives the user's launcher back.** Every run - however it ends - puts the Battle.net app's launch
   options back and deletes the launch copy; before, a Play in the app started the last tested map in a window.
   `game_status` reports what a Play would start today, and `game_close` restores after a crashed run.
