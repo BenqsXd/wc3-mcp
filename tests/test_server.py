@@ -22,7 +22,7 @@ EXPECTED = {"map_new", "map_open", "map_close", "map_save", "map_status", "map_f
             "game_test", "game_status", "game_close", "elements_list", "elements_edit", "placed_list",
             "placed_edit", "terrain_get", "terrain_edit", "terrain_render", "campaign_new", "campaign_get",
             "campaign_edit", "ai_get", "ai_edit", "ai_export", "asset_info", "asset_convert", "asset_edit",
-            "asset_preview", "constants_get", "constants_edit"}
+            "asset_preview", "constants_get", "constants_edit", "image_crop"}
 
 
 def call(name: str, args: dict):
@@ -554,3 +554,51 @@ def test_compact_results_for_loops(tmp_path):
     edit = payload(call("terrain_edit", {"path": path, "ops": [{"op": "cliff", "rect": [-512, -512, 512, 512],
                                                                 "level": 6}]}))
     assert edit["cliffs"]["ops"] == 1 and edit["cliffs"]["blended"] > 0
+
+
+def test_image_crop_enlarges_part_of_a_picture(tmp_path):
+    from PIL import Image as PILImage
+
+    shot = tmp_path / "shot.png"
+    PILImage.new("RGB", (100, 80), (0, 0, 255)).save(shot)
+    result = call("image_crop", {"path": str(shot), "rect": [10, 20, 5, 4], "scale": 3})
+    assert not result.isError and result.content[0].type == "image"
+    assert "shot_crop_10_20.png" in result.content[1].text
+    with PILImage.open(tmp_path / "shot_crop_10_20.png") as im:
+        assert im.size == (15, 12)
+    assert call("image_crop", {"path": str(shot), "rect": [0, 0, 0, 4]}).isError
+
+
+@needs_install
+def test_editor_dropped_names_fields_a_save_left_out(tmp_path):
+    from wc3mcp.gamedata.catalog import Catalog
+    from wc3mcp.ops.newmap import new_map
+    from wc3mcp.ops.objdata import objdata_edit
+    from corpus import _storage
+
+    catalog = Catalog(_storage(), balance=None)
+    p = new_map(str(tmp_path / "D.w3x"), catalog, width=32, height=32, players=2)
+    objdata_edit(p, catalog, "destructible", [{"op": "create", "base": "LTlt", "id": "B000",
+                                               "set": {"bmis": 0.5, "bmas": 2.0}}])
+    names = [f["name"] for f in p.list_files() if f["name"].lower().endswith(".w3b")]
+    before = {n: p.read(n) for n in names}
+    objdata_edit(p, catalog, "destructible", [{"op": "reset", "id": "B000", "fields": ["bmis", "bmas"]}])
+    after = {n: p.read(n) for n in names}
+    dropped = server._editor_dropped(before, after, catalog)
+    assert {(d["id"], d["field"]) for d in dropped} == {("B000", "bmis"), ("B000", "bmas")}
+    assert server._editor_dropped(before, before, catalog) == []
+
+
+def test_closing_an_editor_that_does_not_run_is_not_an_error(monkeypatch):
+    from wc3mcp.errors import ToolError
+
+    def close(discard=False):
+        raise ToolError("editor_not_running", "no World Editor is running")
+
+    monkeypatch.setattr(server.desktop_editor.EDITOR, "close", close)
+    assert payload(call("editor_map", {"action": "close"})) == {"closed": False, "running": False}
+
+
+def test_probe_functions_come_from_one_place():
+    err = call("game_test", {"path": "x.w3x", "probe_functions": "a", "probe_functions_file": "b.j"})
+    assert err.isError and "not both" in err.content[0].text

@@ -223,6 +223,8 @@ class _Edit(_Map, layout.LayoutOps, symmetry.PlacedMirror):
         self.region_list = None
         self.created: list[str] = []
         self.warnings: list[str] = []
+        self.off_scale: dict[tuple, dict] = {}   # (kind, type) -> the objects placed outside the type's scale range
+        self.clamp_scale = False
         self.skipped: list[str] = []   # ref deletes with missing_ok whose object was not there
         self.deleted = 0                # objects an area delete removed
         self.notes: list[str] = []       # what a layout op built, in op order
@@ -565,12 +567,23 @@ class _Edit(_Map, layout.LayoutOps, symmetry.PlacedMirror):
         # 0.01 of slack: a type with a fixed scale such as 1.095 is placed at 1.09 or 1.1 by anyone rounding
         if low is None or high is None or all(low - SCALE_SLACK <= s <= high + SCALE_SLACK for s in o.scale):
             return
-        lo, hi = SCALE_FIELDS[kind]
-        note = (f"{kind} {t}: scale {'/'.join(f'{s:g}' for s in o.scale)} is outside its range {low:g}..{high:g} "
-                f"({lo}..{hi}); the World Editor clamps it to that range when it saves the map. For bigger or smaller "
-                f"ones, give a custom {kind} type a wider {lo}/{hi} (objdata_edit)")
-        if not any(w.startswith(f"{kind} {t}: scale ") for w in self.warnings):
-            self.warnings.append(note)
+        entry = self.off_scale.setdefault((kind, t), {"range": (low, high), "refs": [], "scales": set()})
+        entry["refs"].append(f"{kind}:{o.editor_id}")
+        entry["scales"].add("/".join(f"{s:g}" for s in o.scale))
+        if self.clamp_scale:
+            o.scale = tuple(min(max(s, low), high) for s in o.scale)
+
+    def _scale_notes(self) -> None:
+        for (kind, t), e in sorted(self.off_scale.items()):
+            (low, high), refs = e["range"], e["refs"]
+            lo, hi = SCALE_FIELDS[kind]
+            which = ", ".join(refs[:5]) + (f" and {len(refs) - 5} more" if len(refs) > 5 else "")
+            self.warnings.append(
+                f"{kind} {t} ({which}): scale {', '.join(sorted(e['scales']))} is outside its range {low:g}..{high:g} "
+                f"({lo}..{hi}); " + ("clamp_scale set it to that range" if self.clamp_scale else
+                                     "the World Editor clamps it to that range when it saves the map (clamp_scale=true "
+                                     "does it now)")
+                + f". For bigger or smaller ones, give a custom {kind} type a wider {lo}/{hi} (objdata_edit)")
 
     def _variations(self, kind: str, t: str) -> list[int]:
         """Variations of a type whose model the installed game has (variation 0 for map-defined types)."""
@@ -743,6 +756,7 @@ class _Edit(_Map, layout.LayoutOps, symmetry.PlacedMirror):
         return synced
 
     def finish(self, verbose: bool = False) -> dict:
+        self._scale_notes()
         synced = self._sync_starts()
         changed = ["war3map.w3i"] if synced else []
         for name, model, before, codec in ((UNITS_FILE, self.units, self.units_before, unitsdoo),
@@ -810,8 +824,9 @@ def _rows(op: dict, path: str) -> list[tuple[dict, str]]:
     return out
 
 
-def placed_edit(project, catalog, ops: list, verbose: bool = False) -> dict:
+def placed_edit(project, catalog, ops: list, verbose: bool = False, clamp_scale: bool = False) -> dict:
     edit = _Edit(project, catalog)
+    edit.clamp_scale = clamp_scale
     for i, op in enumerate(ops):
         path = f"ops[{i}]"
         try:

@@ -475,6 +475,9 @@ class Game:
             result["launched_by"] = "battlenet_app" if through_app else "directly"
         if launch_info is not None or asked_user or login_seen:
             result["login"] = {"mode": login, "screen_seen": login_seen,
+                               **({"seconds": round(grace, 1)} if grace else {}),
+                               **({"note": f"seen for {round(grace, 1):g} s during the Battle.net hand-off, cleared on "
+                                           "its own"} if login_seen and map_since is not None else {}),
                                **({"battlenet": launch_info} if launch_info is not None else {}),
                                **({"asked_user": True} if asked_user else {})}
         if relaunches:

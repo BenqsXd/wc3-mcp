@@ -68,3 +68,6 @@
 - The first editor save of a map made by `map_new` adds `conversation.json`, `war3map.w3l`, `war3map.w3grp` and `war3map.w3c`; an editor save of a map without imports or sounds drops `war3map.imp` and `war3map.w3s` (`merged.removed` in `map_save merge_external=true`). Editor files, not defects.
 - The viewport draws region weather, so `editor_screenshot` right after `editor_map open` shows it without a game run.
 - `map_save dest=<other path>` writes a copy without touching the open map: a throwaway calibration map for an editor round trip. Several maps can be open at once, keyed by path. `map_snapshot restore` of a snapshot taken since the last save marks only the files that differ as dirty.
+
+- `GroupEnumUnitsInRect` and the other `GroupEnum...` calls skip units hidden with `ShowUnit(false)`: a probe that counts them must keep their handles or read `placed_list`. Raw codes are base-256 integers, so `'n020' + 10` is `'n02:'`, not `'n02A'`.
+- `image_crop` enlarges part of a screenshot (`rect` [x, y, width, height], `scale`), for reading a tooltip or a buff icon in a `game_test` picture.

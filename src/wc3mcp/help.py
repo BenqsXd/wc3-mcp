@@ -222,6 +222,9 @@ BACKGROUND AND PICTURES
   looked at in the game. A frame that could not be taken is listed in screenshots_failed with the reason. The run
   ends when its results are written, so put ProbeCamera stops before the last ProbeReport.
 
+  In probes: GroupEnumUnitsInRect (and the other GroupEnum calls) skip units hidden with ShowUnit(false) - keep their
+  handles, or read placed_list. Raw codes are base-256 integers, so 'n020' + 10 is 'n02:', not 'n02A'.
+
 FOCUS
   The game only loads while its window is in front. focus.raised counts how often the run raised it and
   focus.lost_to names the windows that held the foreground meanwhile. The Battle.net app's windows are minimised once

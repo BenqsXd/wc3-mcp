@@ -80,8 +80,9 @@ def test_add_set_move_delete_round_trip(melee, catalog):
         verbose=True)
     assert result["changed"] and set(result["files"]) == {"war3mapUnits.doo", "war3map.doo"}
     assert len(result["created"]) == result["created_count"] == 6 and len(result["warnings"]) == 4
-    assert result["warnings"][0].startswith("doodad LRrk: scale 1/1/2 is outside its range")
-    assert "belongs to player 5, which war3map.w3i does not list" in result["warnings"][1]
+    assert any(w.startswith("doodad LRrk (doodad:") and "scale 1/1/2 is outside its range" in w
+               for w in result["warnings"])
+    assert any("belongs to player 5, which war3map.w3i does not list" in w for w in result["warnings"])
     items = {x["ref"]: x for x in placed_list(melee, catalog, limit=5000)["items"]}
     hero, item, tree, rock, start, creep = (items[r] for r in result["created"])
     terrain = w3e.parse(melee.read("war3map.w3e"))
@@ -243,6 +244,11 @@ def test_scales_outside_the_type_range_warn(melee, catalog):
     scale = [w for w in big["warnings"] if "scale" in w]
     assert len(scale) == 1 and "outside its range 0.8..1.2 (dmis..dmas)" in scale[0] and "clamps" in scale[0]
     assert any("variation 3" in w and "Ruins_Shrub3.mdl" in w for w in big["warnings"])
+    clamped = placed_edit(melee, catalog, [{"op": "add", "kind": "doodad", "type": "ZPsh", "x": 0, "y": 0,
+                                            "scale": 1.55}], clamp_scale=True, verbose=True)
+    ref = clamped["created"][0]
+    assert any("clamp_scale set it" in w and ref in w for w in clamped["warnings"])
+    assert next(o for o in placed_list(melee, catalog, limit=5000)["items"] if o["ref"] == ref)["scale"] == [1.2] * 3
 
 
 def test_types_with_a_fixed_rotation_stand_at_it(tmp_path, catalog):

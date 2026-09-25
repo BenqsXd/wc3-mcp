@@ -159,6 +159,34 @@ def _many(kind: str, id, get, verbose: bool) -> dict:
     return {"kind": kind, "count": len(docs), "objects": docs, **note}
 
 
+OBJECT_KINDS = ("unit", "item", "destructible", "doodad", "ability", "buff", "upgrade")
+
+
+def _object_files(path) -> dict[str, bytes]:
+    """The object data files (war3map.w3? and war3mapSkin.w3?) of a map file or folder on disk, read now."""
+    source = Path(path)
+    names = [f"{p}.{e}" for p in ("war3map", "war3mapSkin") for e in objdata_ops.EXTENSIONS.values()]
+    if source.is_dir():
+        return {n: (source / n).read_bytes() for n in names if (source / n).is_file()}
+    if not source.is_file():
+        return {}
+    archive = MpqArchive.open(source)
+    return {n: archive.read(n) for n in names if archive.find(n) is not None}
+
+
+def _editor_dropped(before: dict, after: dict, catalog) -> list[dict]:
+    """Fields an object had before an editor save and lacks after it."""
+    out = []
+    for kind in OBJECT_KINDS:
+        old, new = objdata_ops._side(before.get, kind, catalog), objdata_ops._side(after.get, kind, catalog)
+        for oid, fields in sorted(old.items()):
+            kept = new.get(oid, {})
+            for (field, level), was in sorted((k, v) for k, v in fields.items() if isinstance(k, tuple)):
+                if (field, level) not in kept:
+                    out.append({"kind": kind, "id": oid, "field": field, "level": level, "was": was})
+    return out
+
+
 def _version_reader(project, against: str):
     """A read(name) -> bytes | None over another version of the map: the file on disk, or a snapshot."""
     if against == "source":
@@ -764,7 +792,8 @@ def placed_list(path: str, kind: Literal["unit", "item", "start_location", "dood
 
 
 @_tool
-def placed_edit(path: str, ops: list[dict] | None = None, ops_file: str | None = None, verbose: bool = False) -> dict:
+def placed_edit(path: str, ops: list[dict] | None = None, ops_file: str | None = None, verbose: bool = False,
+                clamp_scale: bool = False) -> dict:
     """Place, change and remove units, items, start locations, doodads and destructibles, all-or-nothing.
     Ops: add (one object, or many through "columns"/"rows"), set, move, delete, scatter (uniform random), and the
     scenery generators forest, line, town, cluster and clear, which build a layout instead of a heap - seeded,
@@ -773,8 +802,10 @@ def placed_edit(path: str, ops: list[dict] | None = None, ops_file: str | None =
     world units; created comes back as ref ranges (verbose=true lists every ref), and ops_file takes the ops array
     from a local JSON file. delete takes a ref (missing_ok skips a gone one) or kind + area (+ types), so a
     generator can clear its ground and run again. wc3_help("placed_edit") has every op, every field and the road recipe; layout_check
-    reports how the result reads."""
-    return placed_ops.placed_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file), verbose)
+    reports how the result reads. clamp_scale=true clamps doodad and destructible scales to their type's range (the
+    World Editor does it on save anyway); otherwise a warning names the objects outside it."""
+    return placed_ops.placed_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file), verbose,
+                                  clamp_scale)
 
 
 @_tool
@@ -995,6 +1026,28 @@ def asset_preview(source: dict, size: int = 256) -> Image:
     return Image(data=assets_ops.asset_preview(source, _project, _storage_for_assets(), size), format="png")
 
 
+@_tool
+def image_crop(path: str, rect: list[int], scale: int = 4) -> list:
+    """Look closely at part of a picture on disk (a game_test screenshot, a render): rect [x, y, width, height] in
+    its pixels, enlarged scale times without smoothing. The crop is saved beside the source as
+    <name>_crop_<x>_<y>.png; the text after the picture names that file."""
+    from PIL import Image as PILImage
+
+    source = Path(path)
+    if not source.is_file():
+        raise ToolError("not_found", f"no file {path}", path="path")
+    if not (isinstance(rect, list) and len(rect) == 4 and all(isinstance(v, int) for v in rect)) or min(rect[2:]) < 1:
+        raise ToolError("bad_value", "rect must be [x, y, width, height] in whole pixels", path="rect")
+    if not 1 <= scale <= 16:
+        raise ToolError("bad_value", "scale must be 1 to 16", path="scale")
+    x, y, w, h = rect
+    with PILImage.open(source) as im:
+        crop = im.crop((x, y, x + w, y + h)).resize((w * scale, h * scale), PILImage.NEAREST)
+    target = source.with_name(f"{source.stem}_crop_{x}_{y}.png")
+    crop.save(target)
+    return [Image(data=target.read_bytes(), format="png"), f"saved {target}"]
+
+
 # ---- AI Editor -------------------------------------------------------------------------------------------------
 def _ai_source(path: str):
     """An open map (its war3map.wai) or a .wai file."""
@@ -1069,7 +1122,19 @@ def editor_map(action: Literal["open", "save", "close", "reload", "compile", "qu
             raise ToolError("bad_value", "open needs map_path")
         return editor.open(map_path, discard=discard)
     if action in ("save", "compile"):
+        try:
+            target = editor.status().get("map")
+        except ToolError:
+            target = None
+        before = _object_files(target) if target else {}
         saved = editor.save()
+        if before and saved.get("saved"):
+            dropped = _editor_dropped(before, _object_files(target), _catalog("enUS", None, False))
+            if dropped:
+                saved["editor_dropped"] = dropped[:100]
+                saved["editor_dropped_note"] = ("object data fields the map had before this save and the World Editor "
+                                                "left out when it saved (seen: destructible bmis/bmas); set them again "
+                                                "with objdata_edit after the last editor save")
         shown = _projects.get(_key(saved.get("map") or ""))
         if saved.get("saved") and shown is not None:   # the editor recomputed pathing, shadows and the minimap
             shown.note("terrain_edited", False)
@@ -1078,7 +1143,12 @@ def editor_map(action: Literal["open", "save", "close", "reload", "compile", "qu
     if action == "save_campaign":
         return editor.save_campaign()
     if action == "close":
-        return editor.close(discard=discard)
+        try:
+            return editor.close(discard=discard)
+        except ToolError as e:
+            if e.code != "editor_not_running":
+                raise
+            return {"closed": False, "running": False}   # nothing to close is not a failure
     if action == "reload":
         return editor.reload(discard=discard)
     return editor.quit(discard=discard, force=force)
@@ -1138,7 +1208,8 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
               probe_script: str | None = None, probe_script_file: str | None = None,
               probe_functions: str | None = None, wait: bool = True, screenshots: int = 0,
               screenshot_every: float = 3.0, login: Literal["auto", "battlenet", "wait", "stop"] = "auto",
-              login_wait: float = 120, probe_init: str | None = None) -> dict:
+              login_wait: float = 120, probe_init: str | None = None,
+              probe_functions_file: str | None = None) -> dict:
     """Run a map in Warcraft III (windowed; the window needs to be in front while loading) and collect what it
     reports. The map writes result files with PreloadGenEnd and the run ends as soon as every file listed in results
     exists. probe=true runs a throwaway copy that reports the state at probe_seconds; probe_script, probe_functions
@@ -1153,7 +1224,12 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
     login_required keeps the game open and the same call continues in it; a game stuck at its main menu is started
     again (relaunched). The app route launches a copy of the map from the server's own folder and stores that path
     in the app's launch options for Warcraft III, and every run puts them back when it ends (result: launcher).
-    wc3_help("game_test") has the probe helpers and the pitfalls."""
+    probe_script_file / probe_functions_file read those from a local file. wc3_help("game_test") has the probe helpers
+    and the pitfalls."""
+    if probe_functions is not None and probe_functions_file is not None:
+        raise ToolError("bad_value", "give probe_functions or probe_functions_file, not both")
+    if probe_functions_file is not None:
+        probe_functions = triggers_ops.read_text_file(probe_functions_file, "probe_functions_file")
     target, extra = path, {}
     if probe_script is not None and probe_script_file is not None:
         raise ToolError("bad_value", "give probe_script or probe_script_file, not both")

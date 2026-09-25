@@ -411,3 +411,8 @@ def test_a_map_that_loaded_but_never_started_is_stuck_at_the_loading_screen(monk
     assert result["stuck_at"] == "loading_screen" and "Battle.net.exe" in result["hint"]
     quiet, _, _ = _fake_run(monkeypatch, tmp_path, [], foreground=55, log_lines=[])
     assert "stuck_at" not in quiet
+
+
+def test_a_login_screen_that_cleared_on_its_own_says_so(monkeypatch, tmp_path):
+    result, _, _ = _fake_run(monkeypatch, tmp_path, ["login", "login"] + [None] * 100, login="wait")
+    assert result["login"]["screen_seen"] and result["login"]["seconds"] > 0 and "cleared" in result["login"]["note"]
