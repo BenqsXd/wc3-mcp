@@ -555,7 +555,7 @@ class _Brush:
         return self.t.cliff_tiles.index(cliff)
 
 
-def terrain_edit(project, catalog, ops: list, quiet: list | None = None) -> dict:
+def terrain_edit(project, catalog, ops: list, quiet: list | None = None, verbose: bool = False) -> dict:
     t, before = _load(project)
     quiet = set(quiet or [])
     if quiet - QUIET:
@@ -605,7 +605,10 @@ def terrain_edit(project, catalog, ops: list, quiet: list | None = None) -> dict
         out["snapped_note"] = ("these areas held no corner (corners lie 128 apart), so the nearest corner line was "
                                "used")
     if cliffs:
-        out["cliffs"], out["cliffs_note"] = cliffs, CLIFFS_NOTE
+        out["cliffs"] = cliffs if verbose else {
+            "ops": len(cliffs), "corners": sum(c["corners"] for c in cliffs),
+            "blended": sum(c["blended"] for c in cliffs), "max_blended": max(c["blended"] for c in cliffs)}
+        out["cliffs_note"] = CLIFFS_NOTE
     if brush.info:
         out["water"] = brush.info
         out["water_note"] = (f"level is the stored surface z (kept in quarter units, so it can differ from the one asked "

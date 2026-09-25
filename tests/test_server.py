@@ -531,3 +531,26 @@ def test_gameplay_constants_through_the_tools(tmp_path):
         assert bad.isError and "MaxHerosLevel" in bad.content[0].text
     finally:
         call("map_close", {"path": path})
+
+
+@needs_install
+def test_compact_results_for_loops(tmp_path):
+    """data_search tells the whole count; placed_list, map_flow and terrain_edit answer only what a loop reads."""
+    found = payload(call("data_search", {"kind": "icon", "query": "*BTN*", "limit": 900, "fields": ["id"]}))
+    assert found["count"] > 500 and found["returned"] == 500 and found["capped"] and set(found["results"][0]) == {"id"}
+    err = call("data_search", {"kind": "unit", "query": "Footman", "fields": ["nope"]})
+    assert err.isError and "bad_value" in err.content[0].text
+    path = str(tmp_path / "C.w3x")
+    payload(call("map_new", {"path": path, "width": 64, "height": 64, "players": 2}))
+    payload(call("map_open", {"path": path}))
+    starts = payload(call("placed_list", {"path": path, "kind": "start_location", "fields": ["ref", "x"]}))["items"]
+    assert starts and set(starts[0]) == {"ref", "x"}
+    flow = payload(call("map_flow", {"path": path, "origins": ["start:0"], "targets": ["start:1"]}))
+    assert flow["targets"][0]["reachable"] and "route" not in flow["targets"][0]
+    assert "route" in payload(call("map_flow", {"path": path, "origins": ["start:0"], "targets": ["start:1"],
+                                                "verbose": True}))["targets"][0]
+    narrow = payload(call("map_flow", {"path": path, "origins": ["start:0"], "targets": ["start:1"], "min_gap": 64}))
+    assert narrow["targets"] == [] and narrow["hidden"] == 1
+    edit = payload(call("terrain_edit", {"path": path, "ops": [{"op": "cliff", "rect": [-512, -512, 512, 512],
+                                                                "level": 6}]}))
+    assert edit["cliffs"]["ops"] == 1 and edit["cliffs"]["blended"] > 0

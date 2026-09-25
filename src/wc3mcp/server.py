@@ -129,6 +129,19 @@ def _ops(ops: list | None, ops_file: str | None) -> list:
 MAX_IDS = 50
 
 
+def _pick(rows: list[dict], fields: list[str] | None, path: str = "fields") -> list[dict]:
+    """Only these keys of each row (a compact answer for loops that read one or two of them)."""
+    if not fields:
+        return rows
+    known = set().union(*rows) if rows else set(fields)
+    unknown = [f for f in fields if f not in known]
+    if unknown:
+        raise ToolError("bad_value", f"{path}: no such key {', '.join(unknown)}", path=path,
+                        hint=f"the rows carry {', '.join(sorted(known))}")
+    return [{k: row[k] for k in fields if k in row} for row in rows]
+
+
+
 def _many(kind: str, id, get, verbose: bool) -> dict:
     """One id or a list of them through `get`, verbose or compact (data_get / objdata_get share this)."""
     ids = [id] if isinstance(id, str) else id
@@ -473,17 +486,21 @@ def map_snapshot(path: str, action: Literal["create", "restore", "list", "diff"]
 
 @_tool
 def data_search(kind: Kind, query: str = "", limit: int = 50, offset: int = 0, locale: str = "enUS",
-                balance: str | None = "Custom_V1", hd: bool = True, tileset: str | None = None) -> dict:
+                balance: str | None = "Custom_V1", hd: bool = True, tileset: str | None = None,
+                fields: list[str] | None = None) -> dict:
     """Search the game data of the installed build: objects (unit, item, ability, buff, upgrade, doodad,
     destructible) by id, name or editor suffix; terrain and sound rows; files (model, icon, file) by path or glob;
     the World Editor's own tables (trigger_function, trigger_type, trigger_preset); and kind=native, the script API
     (common.j, Blizzard.j, common.ai) with real signatures, and kind=order, every order string with its targeting
     and the abilities that use it. tileset scopes tiles, cliffs, doodads and destructibles
     to one tileset. balance picks the gameplay data set: Custom_V1 (current), Custom_V0, Melee_V0 or null for the
-    base files. wc3_help("data_search") explains each kind and what its results carry."""
+    base files. count is every match, returned the ones in this page (limit, at most 500; capped says it was cut);
+    fields keeps only those keys per result. wc3_help("data_search") explains each kind and what its results carry."""
     catalog = _catalog(locale, balance, hd)
-    results = catalog.search(kind, query, limit=min(limit, 500), offset=offset, tileset=tileset)
-    return {"kind": kind, "query": query, "offset": offset, "count": len(results), "results": results,
+    hits = catalog.search(kind, query, limit=10**9, offset=0, tileset=tileset)
+    results = _pick(hits[offset:offset + min(limit, 500)], fields)
+    return {"kind": kind, "query": query, "offset": offset, "count": len(hits), "returned": len(results),
+            **({"capped": True} if limit > 500 else {}), "results": results,
             **({"tilesets": catalog.tilesets()} if kind in ("tile", "cliff") and not results else {})}
 
 
@@ -728,17 +745,21 @@ def elements_edit(path: str, kind: Literal["region", "camera", "sound"], ops: li
 @_tool
 def placed_list(path: str, kind: Literal["unit", "item", "start_location", "doodad", "destructible"] | None = None,
                 area: list[float] | None = None, owner: int | None = None, type_id: str | list[str] | None = None,
-                limit: int = 200, offset: int = 0, type: str | list[str] | None = None) -> dict:
+                limit: int = 200, offset: int = 0, type: str | list[str] | None = None,
+                fields: list[str] | None = None) -> dict:
     """Placed objects of an open map: units, items and start locations (war3mapUnits.doo), doodads and destructibles
     (war3map.doo). Filters: kind, area [left, bottom, right, top], owner (player 0-23, 24 neutral hostile, 27 neutral
     passive), type_id (or type: one raw code or a list). Each object has a ref ("unit:12") for placed_edit, world
     position, angle in degrees and its
     kind's fields (owner, life %, mana, hero stats, inventory, abilities, item drops, random settings, waygate region,
-    script_name gg_unit_/gg_item_/gg_dest_). bounds gives the playable area and the whole map."""
+    script_name gg_unit_/gg_item_/gg_dest_). bounds gives the playable area and the whole map. fields keeps only
+    those keys per object (e.g. ["ref", "type", "x", "y"])."""
     if type_id is not None and type is not None:
         raise ToolError("bad_value", "give type or type_id, not both (they are the same filter)", path="type")
-    return placed_ops.placed_list(_project(path), _catalog("enUS", "Custom_V1", True), kind, area, owner,
-                                  type_id if type_id is not None else type, limit, offset)
+    out = placed_ops.placed_list(_project(path), _catalog("enUS", "Custom_V1", True), kind, area, owner,
+                                 type_id if type_id is not None else type, limit, offset)
+    out["items"] = _pick(out["items"], fields)
+    return out
 
 
 @_tool
@@ -769,7 +790,8 @@ def layout_check(path: str, area: list[float] | None = None, kinds: list[str] | 
 
 @_tool
 def map_flow(path: str, area: list[float] | None = None, origins: list | None = None,
-             targets: list | None = None) -> dict:
+             targets: list | None = None, fields: list[str] | None = None, min_gap: float | None = None,
+             verbose: bool = False) -> dict:
     """How a map plays, in walking distances rather than straight lines: per start location the way to its own gold
     mine and to the nearest expansion, the walkable room around it, and how much ground it reaches; per pair of
     starts the distance between them and the narrowest choke on the way, with where that choke is; plus the walkable
@@ -778,11 +800,21 @@ def map_flow(path: str, area: list[float] | None = None, origins: list | None = 
     deeper than about 53 blocks. origins and targets (each a list of [x, y] points, region names or "start:N") answer
     a different question on the game's own 32-unit cells: can a unit walk from any origin to each target, how far,
     and through what narrowest gap - sealed=true proves a wall or moat closed, and a leak comes back with the gap and
-    where it is. wc3_help("map_flow") explains the numbers, melee_check included."""
+    where it is. Target rows leave out the sampled route unless verbose=true; min_gap keeps only the unreachable
+    targets and those narrower than it; fields keeps only those keys per target. wc3_help("map_flow") explains the
+    numbers, melee_check included."""
     if (origins is None) != (targets is None):
         raise ToolError("bad_value", "give origins and targets together", path="origins" if origins is None else "targets")
     if origins is not None:
-        return flow_ops.connect(_project(path), _catalog("enUS", "Custom_V1", True), origins, targets)
+        out = flow_ops.connect(_project(path), _catalog("enUS", "Custom_V1", True), origins, targets)
+        rows = out["targets"]
+        if min_gap is not None:
+            kept = [t for t in rows if not t["reachable"] or t.get("gap", 0) < min_gap]
+            out["hidden"], rows = len(rows) - len(kept), kept
+        if not verbose and "route" not in (fields or []):
+            rows = [{k: v for k, v in t.items() if k != "route"} for t in rows]
+        out["targets"] = _pick(rows, fields)
+        return out
     return flow_ops.flow_report(_project(path), _catalog("enUS", "Custom_V1", True), area)
 
 
@@ -814,7 +846,7 @@ def terrain_get(path: str, area: list[float] | None = None,
 
 @_tool
 def terrain_edit(path: str, ops: list[dict] | None = None, ops_file: str | None = None,
-                 quiet: list[Literal["tile_pathing", "derived_files"]] | None = None) -> dict:
+                 quiet: list[Literal["tile_pathing", "derived_files"]] | None = None, verbose: bool = False) -> dict:
     """Shape and paint terrain with all-or-nothing brushes, each {"op": <brush>, <area>, <settings>}; areas
     are a circle ("x"/"y"/"radius"), a "rect", a "path" with "width", or nothing at all for the whole map. Brushes:
     raise, lower, plateau, smooth, noise, paint, cliff, ramp, water, blight, boundary; the landscape brushes river,
@@ -823,13 +855,14 @@ def terrain_edit(path: str, ops: list[dict] | None = None, ops_file: str | None 
     is built once); and heightmap, which reads a picture over an area. The result reports the tile
     palette and what the ops added to it, and warns when a batch paints an unbuildable or unwalkable tile widely.
     Cliff levels of neighbouring corners stay at most 2 apart, as the World Editor requires: an op's own corners
-    keep their level and the ground around them steps (cliffs in the result).
+    keep their level and the ground around them steps (cliffs in the result: totals, per op with verbose=true).
     Only a World Editor save recomputes pathing, shadows and minimap icons from new terrain. Water ops answer
     under water with the stored level and the depth range they made (deeper than about 53 stops ground units).
     quiet drops warnings a scenery map does not need: tile_pathing (unbuildable tiles painted widely) and
     derived_files. wc3_help("terrain_edit") has every brush and its settings, wc3_help("terrain_landscape") the
     landscape ones."""
-    return terrain_ops.terrain_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file), quiet)
+    return terrain_ops.terrain_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file), quiet,
+                                    verbose)
 
 
 @_tool

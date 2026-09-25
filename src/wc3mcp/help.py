@@ -541,7 +541,8 @@ ORIGINS AND TARGETS (the 32-unit cells the game paths on)
   map_flow(path, origins=[...], targets=[...]) with [x, y] points, region names or "start:N": can a ground unit walk
   from any origin to each target? A place on a building, a mine or a tree counts from the ground around it; an origin
   with no walkable ground within 768 units is refused. Per target: reachable, distance, gap (the narrowest free width across the shortest
-  walk) and gap_at, plus a sample of the route. sealed=true when no target is reachable - the proof that a tree wall,
+  walk) and gap_at; the sampled route only with verbose=true. min_gap=N keeps only the unreachable targets and those
+  narrower than N (hidden counts the rest), fields keeps only those keys per target. sealed=true when no target is reachable - the proof that a tree wall,
   a moat or a cliff ring is closed; a leak comes back with the hole it goes through. Terrain comes from war3map.wpm when
   the editor saved it after the last terrain and doodad edit, else it is derived (tiles, cliffs, water depth, boundary, the area
   outside the playable area); every placed object's pathing texture is added, turned with the object in quarter turns.

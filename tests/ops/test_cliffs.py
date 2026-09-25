@@ -28,7 +28,7 @@ def _steep(project) -> int:
 
 def test_a_carved_corridor_keeps_its_level_and_the_rock_steps_down_outside(tmp_path, catalog):
     p = _map(tmp_path, catalog)
-    result = terrain_edit(p, catalog, [{"op": "cliff", "level": 7},
+    result = terrain_edit(p, catalog, verbose=True, ops=[{"op": "cliff", "level": 7},
                                        {"op": "cliff", "rect": [-896, -2048, 896, 2048], "level": 2}])
     row = terrain_get(p, [-1408, 0, 1408, 0], ["cliff_level"])["layers"]["cliff_level"][0]
     assert row == [7, 7, 6, 4] + [2] * 15 + [4, 6, 7, 7]
