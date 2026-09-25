@@ -106,3 +106,7 @@ Everything here was observed in a real run (mostly through `game_test probe_scri
 - Create leaderboards, multiboards and timer dialogs from a short timer (for example 0.1 seconds) after map start, not directly at initialization, where they may not display.
 - Adding ability `Abun` (Cargo Hold) to a unit is a common way to remove its attack, for example so that creeps walk a path without fighting.
 - Client-side UI changes (`BlzSetAbilityPosX/Y`, `BlzSetAbilityResearchTooltip`) go inside `GetLocalPlayer()` blocks, on the assumption that they do not desync a multiplayer game. Not tested with several players.
+
+- The buff bar's order cannot be set from script: the same auras came out in a different order from run to run. Name buffs in their tooltips instead.
+- `BlzGetFrameByName("ConsoleUIBackdrop", 0)` lets a frame sit beyond the 4:3 area; the client's right edge in frame units is `0.4 + 0.3 * width / height`. The command card draws over it: text below about y 0.15 at the right edge is hidden.
+- StringList `%%`: in the stock strings a literal percent is `%%` only inside strings that also carry format arguments (`"(%d%% income)"`); strings without arguments write a bare `%`. An override must follow the same rule per key.

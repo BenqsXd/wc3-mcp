@@ -132,6 +132,7 @@ class _V:
         self.check_ability_orders()
         self.check_heroes()
         self.check_channel_targets()
+        self.check_levels_unset()
         self.check_waygates()
         self.check_shops()
         self.check_icons()
@@ -534,6 +535,28 @@ class _V:
                          f"ability {oid}: Ncl2 asks for a {'/'.join(sorted(need))} target but its order {order!r} is "
                          f"a {'/'.join(sorted(have))} order, so casting it does nothing; pick an order of that "
                          "targeting (data_search kind=order)")
+
+    def check_levels_unset(self):
+        """A copy extended past its base's levels keeps the stock cooldown and mana cost on every level the map does
+        not write (seen: levels 2-3 of a 4-level copy kept the base's values between two written ranks)."""
+        files = [om for name, om in self.objects.items() if name.endswith(".w3a")]
+        for oid, (base, fields, _custom) in sorted(self._mods("ability").items()):
+            try:
+                top = int(float(fields.get("alev") or 0))
+                stock = int(float(self.catalog.field("ability", base, "alev") or 0))
+            except (TypeError, ValueError):
+                continue
+            if top <= stock:
+                continue
+            merged = objdata_ops._merged(objdata_ops._entries(files, oid))
+            for rid in ("acdn", "amcs"):
+                written = {level for (r, level) in merged if r == rid}
+                gaps = [lv for lv in range(min(written, default=1), max(written, default=0)) if lv not in written]
+                if gaps:
+                    self.add(False, "levels_unset", "war3map.w3a",
+                             f"ability {oid}: {rid} is written at levels {sorted(written)} but not at "
+                             f"{objdata_ops._ranks(gaps)}, which keep the stock value of {base} (alev {top} is above "
+                             f"its {stock}); set every level")
 
     def check_waygates(self):
         """A waygate whose destination region holds the gate itself sends a unit back onto the gate."""

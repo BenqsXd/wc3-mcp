@@ -331,3 +331,14 @@ def test_learn_menu_entries_on_one_cell_or_one_hotkey(tmp_path):
     objdata_edit(p, c, "ability", [{"op": "set", "id": f"A00{i}", "set": {"arpx": i, "arpy": 0, "arhk": "QWER"[i]}}
                                    for i in range(4)])
     assert "learn_card" not in _checks(p)
+
+
+def test_an_extended_ability_with_stock_values_between_written_levels(tmp_path):
+    from wc3mcp.ops.objdata import objdata_edit
+
+    p = _fresh(tmp_path)
+    c = Catalog(_storage(), balance="Custom_V1")
+    objdata_edit(p, c, "ability", [{"op": "create", "base": "AHtb", "id": "A000", "set": {"alev": 5}}])
+    assert "levels_unset" not in _checks(p)      # the new ranks got the last stock values
+    objdata_edit(p, c, "ability", [{"op": "set", "id": "A000", "set": {"acdn": {"1": 5}}}])
+    assert "levels_unset" in _checks(p)          # levels 2-3 keep the stock cooldown between written ones

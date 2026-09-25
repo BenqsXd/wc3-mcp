@@ -95,6 +95,14 @@ NOTES = {
                        "IssueTargetOrder(u, \"smart\", gate) uses the gate",
     "BlzSetAbilityResearchTooltip": "set per ability code, so the same for every player; inside a GetLocalPlayer block "
                                     "each player sees their own text without a desync (tooltips are only drawn)",
+    "BlzSetUnitAbilityCooldown": "the level is 0-based: index 0 is rank 1 (a rank-1 8 s spell set through index 0 read "
+                                 "5 s and started a 5 s cooldown on cast)",
+    "GroupEnumUnitsInRect": "skips units hidden with ShowUnit(false); keep their handles to count or find them",
+    "EnumDestructablesInRect": "also returns every tree and sapling in the rect: filter by GetDestructableTypeId, or "
+                               "a script that opens gates kills the scenery too",
+    "MultiboardGetTitleText": "reads a board title back, so a probe can check a clock or countdown as text",
+    "SetCameraTargetController": "follows a walking unit exactly (0 units off), where a 300 Hz PanCameraToTimed(0.10) "
+                                 "trailed by 22 and SetCameraPosition by 1.35",
 }
 
 

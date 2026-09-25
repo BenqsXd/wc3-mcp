@@ -126,3 +126,11 @@ point at each entry and marking the ones nothing refers to any more. `strings_ed
 imports a translated table in one go, and `replace` renames one thing everywhere the map shows it. Object data, map
 info and GUI triggers all point at these entries, so they follow; the map script keeps its own copy, so `map_save`
 (or `script_build`) has to regenerate it afterwards.
+
+- A tree model used as a doodad draws black (trees take their texture from the destructible's replaceable texture, which a doodad does not set). Walk-through tree scenery works as a custom destructible based on `NTtw` with `bptx` "_", `btar` "" and `boch` 0.
+- A doodad tint does not recolour a green model (`ZPsh` at tint 150/190/255 still reads green).
+- One dummy caster for many targets in one loop needs `ucpt` 0, `ucbs` 0 and no `Amov` (`UnitRemoveAbility(d, 'Amov')`); with the default cast point each order replaced the one before. `SetUnitX/Y` still moves it.
+- An ability copy extended past its base's levels keeps the stock values on every level the map does not write, between written ones too: write every per-level field for every level (`map_validate` warns `levels_unset` for cooldown and mana cost).
+- Icy Gate `ITg1`/`ITg3` (`Gate1Path.tga`, 20 x 4 cells) closes a 512-wide cliff notch alone: `ITg1` at 270 for a north/south way, `ITg3` at 0 for east/west.
+- A recipe item bought as a PowerUp fires crafting three times (sell, pickup and the drop as it is used up): do not build recipes on PowerUps.
+- The World Editor drops a custom destructible's `bmis`/`bmas` on save; `editor_map save` reports it under `editor_dropped` - set them again after the last editor save.
