@@ -166,7 +166,8 @@ def test_screen_state_reads_login_and_waiting_loading_screens():
 
 
 def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False, runner=None, map_bytes=b"",
-              launches=None, wait=True, login="stop", app=None, alerts=None, raised=None, **options):
+              launches=None, wait=True, login="stop", app=None, alerts=None, raised=None, foreground=7,
+              app_windows=None, minimized=None, log_lines=None, **options):
     clock = {"now": 1000.0}
     fake_time = type("T", (), {"time": staticmethod(lambda: clock["now"]),
                                "sleep": staticmethod(lambda s: clock.__setitem__("now", clock["now"] + s))})
@@ -180,10 +181,16 @@ def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False, runne
                         if launches is not None else process)
     monkeypatch.setattr(game.Game, "exe", staticmethod(lambda: exe))
     monkeypatch.setattr(game.Game, "window", lambda self, pid: 7)
-    monkeypatch.setattr(game.win32gui, "GetForegroundWindow", lambda: 7)
+    monkeypatch.setattr(game.win32gui, "GetForegroundWindow", lambda: foreground)
     monkeypatch.setattr(game.win32gui, "IsWindow", lambda h: True)
     monkeypatch.setattr(game.win, "activate", lambda h: raised.append(h) if raised is not None else None)
     monkeypatch.setattr(game.win, "client_image", lambda h: None)
+    monkeypatch.setattr(game.win, "owner", lambda h: {"exe": "Battle.net.exe", "title": "Battle.net", "pid": 900})
+    monkeypatch.setattr(game.battlenet, "processes", lambda: [900] if app_windows else [])
+    monkeypatch.setattr(game.win, "windows", lambda pid: list(app_windows or []) if pid == 900 else [])
+    monkeypatch.setattr(game.win, "minimize", lambda h: minimized.append(h) if minimized is not None else None)
+    if log_lines is not None:
+        monkeypatch.setattr(game.Game, "_log_lines", staticmethod(lambda since=None: list(log_lines)))
     closed, keys, shown = [], [], iter(states)
     monkeypatch.setattr(game.Game, "_close", lambda self, p: closed.append(p) or True)
     monkeypatch.setattr(game, "screen_state", lambda image: next(shown, None))
@@ -387,3 +394,20 @@ def test_every_run_gives_the_launcher_back_even_when_it_fails(monkeypatch, tmp_p
     job = {"result": None, "error": None}
     g._run(job, tmp_path / "Map.w3x", 10, [], True, False)
     assert job["result"]["launcher"] == {"restored": True} and restored == [1, 1]
+
+
+def test_the_foreground_holder_is_reported_and_the_launcher_minimised(monkeypatch, tmp_path):
+    minimized = []
+    result, _, _ = _fake_run(monkeypatch, tmp_path, [], foreground=55, app_windows=[81, 82], minimized=minimized)
+    focus = result["focus"]
+    assert focus["raised"] >= 1 and focus["lost_to"][0] == {"exe": "Battle.net.exe", "title": "Battle.net",
+                                                             "count": focus["raised"]}
+    assert minimized[:2] == [81, 82] and result["launcher_minimized"] == len(minimized)
+
+
+def test_a_map_that_loaded_but_never_started_is_stuck_at_the_loading_screen(monkeypatch, tmp_path):
+    lines = ["9/24 22:29:38.797  Opening map - C:/x/map.w3x"]
+    result, _, _ = _fake_run(monkeypatch, tmp_path, [], foreground=55, log_lines=lines)
+    assert result["stuck_at"] == "loading_screen" and "Battle.net.exe" in result["hint"]
+    quiet, _, _ = _fake_run(monkeypatch, tmp_path, [], foreground=55, log_lines=[])
+    assert "stuck_at" not in quiet

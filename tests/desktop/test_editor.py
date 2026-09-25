@@ -223,6 +223,7 @@ def test_save_clicks_away_the_default_name_reminder(monkeypatch, tmp_path):
     monkeypatch.setattr(ed.win, "find_command", lambda menu, path: 99)
     def posted(h, cmd):
         target.write_bytes(b"after")
+        __import__("os").utime(target, (1, 1))   # a write in the same clock tick keeps the old mtime
         shown.append("Reminder")
 
     monkeypatch.setattr(ed.win, "post_command", posted)

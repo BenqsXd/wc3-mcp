@@ -133,6 +133,16 @@ def running(pid: int) -> bool:
         kernel32.CloseHandle(handle)
 
 
+def owner(hwnd: int) -> dict:
+    """Who a window belongs to: the process's exe name, the window title and the pid."""
+    pid = win32process.GetWindowThreadProcessId(hwnd)[1]
+    return {"exe": image(pid).rsplit("\\", 1)[-1], "title": win32gui.GetWindowText(hwnd), "pid": pid}
+
+
+def minimize(hwnd: int) -> None:
+    win32gui.ShowWindow(hwnd, win32con.SW_MINIMIZE)
+
+
 def windows(pid: int, visible_only: bool = True) -> list[int]:
     found = []
 

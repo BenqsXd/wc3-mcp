@@ -219,6 +219,12 @@ BACKGROUND AND PICTURES
   looked at in the game. A frame that could not be taken is listed in screenshots_failed with the reason. The run
   ends when its results are written, so put ProbeCamera stops before the last ProbeReport.
 
+FOCUS
+  The game only loads while its window is in front. focus.raised counts how often the run raised it and
+  focus.lost_to names the windows that held the foreground meanwhile. The Battle.net app's windows are minimised once
+  the game window exists (launcher_minimized). stuck_at="loading_screen": the map loaded (the log has "Opening map")
+  but the key that leaves the loading screen never reached the game.
+
 LOGIN
   A game started directly ("Warcraft III.exe -launch -loadfile ...") has no Battle.net session and shows the login
   panel; "Keep me logged in" there lasts about an hour, and signing the Battle.net app in does not help a direct

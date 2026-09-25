@@ -6,6 +6,7 @@ import re
 import subprocess
 import threading
 import time
+from collections import Counter
 from pathlib import Path, PureWindowsPath
 
 import win32gui
@@ -323,6 +324,9 @@ class Game:
                 process = self._launch(target)
         found: dict[str, list[str]] = {}
         focused_at, raised, keys = 0.0, 0, 0
+        holders: Counter = Counter()   # (exe, title) of whatever held the foreground when the game was raised
+        holder_pids: dict[tuple, int] = {}
+        launcher, minimized = None, 0   # the Battle.net app's pids; its windows get minimised once the game shows
         checked_at, state = 0.0, None
         login_since, menu_since, map_since = None, None, None
         outcome, relaunches, asked_user, login_seen = None, [], False, False
@@ -341,6 +345,26 @@ class Game:
             if (map_since is None or marker is None) and now - focused_at > 5:
                 window = self.window(process.pid)
                 if window:
+                    fg = win32gui.GetForegroundWindow()
+                    holder = None
+                    if fg and fg != window:
+                        try:
+                            who = win.owner(fg)
+                        except win32gui.error:
+                            who = None
+                        if who:
+                            holder = (who["exe"], who["title"])
+                            holders[holder] += 1
+                            holder_pids[holder] = who["pid"]
+                    # the restarted Battle.net app takes the foreground from the loading game: minimise it
+                    if launcher is None or (holder and holder_pids[holder] in launcher):
+                        first = launcher is None
+                        launcher = battlenet.processes()
+                        if first or (holder and holder_pids[holder] in launcher):
+                            for pid in launcher:
+                                for h in win.windows(pid):
+                                    win.minimize(h)
+                                    minimized += 1
                     win.activate(window)
                     focused_at, raised = now, raised + 1
             window = self.window(process.pid) if now - checked_at > 3 else None
@@ -412,7 +436,8 @@ class Game:
             grace += time.time() - login_since
             if outcome is None and process.poll() is None and not self.cancelled:
                 outcome = "login_required"   # the run ended on the login screen: keep the game for the user
-        log, benign, missing_files = split_log(self._log_lines(launched_at - 5))
+        raw_log = self._log_lines(launched_at - 5)
+        log, benign, missing_files = split_log(raw_log)
         result = {"seconds": round(time.time() - started, 1), "pid": process.pid, "results": found,
                   "missing": [n for n in wanted if n not in found], "exited_early": process.poll() is not None,
                   "log": log[-200:], "benign_log": {"count": len(benign), "examples": benign[:3], "note": BENIGN_NOTE},
@@ -474,6 +499,15 @@ class Game:
             result["stuck_at"] = "main_menu"
             result["hint"] = ("the game stayed at its main menu instead of loading the map, also after starting it "
                               "again: take a screenshot (screenshot=true) and tell the user")
+        elif map_since is None and not self.cancelled and any(
+                "Opening map - " in line or "already encountered" in line for line in raw_log):
+            # every map writes "Opening map - <path>" when it loads (checked in War3Log.txt)
+            top = holders.most_common(1)
+            result["stuck_at"] = "loading_screen"
+            result["hint"] = ("the map loaded but the key press that leaves the loading screen never reached the "
+                              "game; the foreground belonged to "
+                              + (f"{top[0][0][0]} ({top[0][0][1]!r})" if top else "another window")
+                              + ". Leave the game window in front")
         elif result["missing"]:
             result["hint"] = ("no result file was written: the map script failed (script_validate), the game stayed on "
                               f"a login screen, the map did not get that far before timeout, or {PAUSE_NOTE}")
@@ -487,8 +521,13 @@ class Game:
             result["closed"] = process.poll() is not None
         if focused_at and previous and win32gui.IsWindow(previous):
             win.activate(previous)
-        result["focus"] = (f"the game window was brought to the front {raised} time(s) while loading" if raised
-                           else "no game window appeared to bring to the front")
+        result["focus"] = {
+            "raised": raised,
+            "lost_to": [{"exe": exe, "title": title, "count": n} for (exe, title), n in holders.most_common(3)],
+            "note": (f"the game window was brought to the front {raised} time(s) while loading" if raised
+                     else "no game window appeared to bring to the front")}
+        if minimized:
+            result["launcher_minimized"] = minimized
         return result
 
     def _close(self, process: subprocess.Popen) -> str:
