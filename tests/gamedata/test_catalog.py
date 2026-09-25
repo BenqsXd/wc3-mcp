@@ -229,3 +229,10 @@ def test_natives_carry_what_the_game_was_seen_to_do(cat):
     assert "200" in cat.get("native", "SetUnitAcquireRange")["observed"]
     assert "observed" in cat.search("native", "IssueNeutralImmediateOrderById")[0]
     assert set(NOTES) <= set(cat.natives), sorted(set(NOTES) - set(cat.natives))   # every note names a real native
+
+
+def test_data_get_says_which_graphics_draw_an_icon(cat):
+    fire = cat.get("icon", r"ReplaceableTextures\CommandButtons\BTNFire.blp")
+    assert fire["classic"] and fire["hd"] and "base" in fire["layers"]
+    hydra = cat.get("icon", "BTNAncientHydra")
+    assert hydra["classic"] is False and hydra["hd"] is True and "base" not in hydra["layers"]

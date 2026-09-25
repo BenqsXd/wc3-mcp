@@ -495,7 +495,8 @@ def data_get(kind: Kind, id: str | list[str], fields: list[str] | None = None, v
     type around its value, which is about ten times the size. Doodads, destructibles and units also list their model
     files and the ones the installed game cannot load in HD or classic graphics (model.missing). An ability carries
     orders: its own order fields (data) and the World Editor's presets for it with their targeting (editor); for a few
-    abilities they disagree and only one of them works."""
+    abilities they disagree and only one of them works. An icon says classic / hd (which graphics draw it) and its
+    storage layers; one only in HD draws as a green square in classic graphics."""
     catalog = _catalog(locale, balance, hd)
     return _many(kind, id, lambda one: catalog.get(kind, one, fields), verbose)
 

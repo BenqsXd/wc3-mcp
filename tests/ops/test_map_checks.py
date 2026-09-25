@@ -280,6 +280,20 @@ def test_an_icon_the_game_does_not_have(tmp_path):
     assert "icon" not in _checks(p)
 
 
+def test_an_icon_only_the_hd_graphics_have(tmp_path):
+    from wc3mcp.ops.objdata import objdata_edit
+
+    p = _fresh(tmp_path)
+    c = Catalog(_storage(), balance="Custom_V1")
+    objdata_edit(p, c, "item", [{"op": "create", "base": "gcel", "id": "I000",
+                                 "set": {"iico": r"ReplaceableTextures\CommandButtons\BTNAncientHydra.blp"}}])
+    checks = _checks(p)
+    assert "icon_hd_only" in checks and "icon" not in checks
+    objdata_edit(p, c, "item", [{"op": "set", "id": "I000",
+                                 "set": {"iico": r"ReplaceableTextures\CommandButtons\BTNFire.blp"}}])
+    assert "icon_hd_only" not in _checks(p)
+
+
 def test_a_channel_on_an_order_the_game_does_not_know(tmp_path):
     from wc3mcp.ops.objdata import objdata_edit
 

@@ -612,8 +612,15 @@ class _V:
                     if not path or TRIGSTR_ANY.fullmatch(path):
                         continue
                     stem = path.rsplit(".", 1)[0] if "." in path.rsplit("\\", 1)[-1] else path
-                    if any(self.has_file(stem + ext) for ext in (".blp", ".dds", ".tga")) \
-                            or self.catalog.icon_exists(path):
+                    if any(self.has_file(stem + ext) for ext in (".blp", ".dds", ".tga")):
+                        continue
+                    drawn = self.catalog.icon_layers(path)
+                    if drawn["classic"]:
+                        continue
+                    if drawn["hd"]:
+                        self.add(False, "icon_hd_only", files[kind], f"{kind} {oid}: {rid} {path!r} exists only in "
+                                 "the HD graphics, so it draws as a green square in classic graphics (data_get "
+                                 "kind=icon says classic/hd per icon)")
                         continue
                     self.add(False, "icon", files[kind], f"{kind} {oid}: {rid} {path!r} is neither in the game data "
                              "nor imported, so the game draws a blank green square (data_search kind=icon finds real "

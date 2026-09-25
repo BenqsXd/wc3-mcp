@@ -8,7 +8,7 @@
 
 ## objdata_edit
 
-- Icons and models: `data_search kind=icon` / `kind=model` take globs (`*BTN*Scroll*`, `*MassTeleport*`, no layer prefix needed) and return storage paths (`War3.w3mod:ReplaceableTextures/CommandButtons/BTNSkillz.dds`); in object data write `ReplaceableTextures\CommandButtons\BTNSkillz.blp`, which loads in the game. `kind=file` results carry that form as `ref`.
+- Icons and models: `data_search kind=icon` / `kind=model` take globs (`*BTN*Scroll*`, `*MassTeleport*`, no layer prefix needed) and return storage paths (`War3.w3mod:ReplaceableTextures/CommandButtons/BTNSkillz.dds`); in object data write `ReplaceableTextures\CommandButtons\BTNSkillz.blp`, which loads in the game. `kind=file` results carry that form as `ref`. About 800 command-button icons exist only in the HD graphics (`BTNAncientHydra`, `BTNAntonidas`, ...): they draw as the green square in classic graphics. `data_get kind=icon` answers `classic` and `hd` per icon, and `map_validate` warns `icon_hd_only` for object data that uses one (`icon` when no graphics has it).
 
 - `create` takes an explicit `id` (`"h000"`) or allocates one like the editor. `set` also works on stock ids (`hgtw`), which makes modified standard objects. `base` may be one of the map's custom objects (`{"op": "create", "id": "u001", "base": "u000", "set": {...}}`): the copy gets its stock base and all its modifications, then `set`.
 - Fields take raw codes, field names or display names. Per-level ability fields take level keys: `{"aran": {"1": 620}}`, `{"acdn": {"1": 20}}`. Other fields take plain values (`"aher": 0`, `"alev": 1`); Channel's animation names `aani` has no levels. A unit's `uabi`, `uhab`, `usei` and an item's `iabi` are comma-separated id strings (`"A003,A004"`).

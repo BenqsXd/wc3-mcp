@@ -371,12 +371,17 @@ class Catalog:
         layer = {**self.layer, "hd": hd and self.layer["hd"]}
         return any(self.storage.resolve(stem + ext, **layer) for ext in (".mdx", ".mdl"))
 
-    def icon_exists(self, path: str) -> bool:
-        """Whether the game data has an icon (or any texture object data names) in either graphics mode: object data
-        says .blp, and the game loads the .dds beside it in HD."""
+    def icon_layers(self, path: str) -> dict:
+        """Which graphics modes can draw an icon (or any texture object data names): classic reads the base layers
+        only, HD reads _HD first and falls back to them. Object data says .blp; the game loads the .dds beside it."""
         stem = path.replace("/", "\\").rsplit(".", 1)[0] if path.lower().endswith((".blp", ".dds", ".tga")) else path
-        return any(self.storage.resolve(stem + ext, **{**self.layer, "hd": hd})
-                   for hd in {self.layer["hd"], False} for ext in (".blp", ".dds", ".tga"))
+        found = {hd: any(self.storage.resolve(stem + ext, **{**self.layer, "hd": hd}) for ext in (".blp", ".dds", ".tga"))
+                 for hd in (False, True)}
+        return {"classic": found[False], "hd": found[True] or found[False]}
+
+    def icon_exists(self, path: str) -> bool:
+        """Whether the game data has an icon in either graphics mode."""
+        return any(self.icon_layers(path).values())
 
     def missing_models(self, kind: str, obj_id: str, variation: int | None = None) -> tuple[list[str], list[str]] | None:
         """(model paths, the ones the game cannot load in HD or classic graphics) of a base doodad, destructible or
@@ -555,6 +560,32 @@ class Catalog:
         row = self._row("tile", tile) or {}
         return {k: row.get(k, "1") != "0" for k in ("buildable", "walkable", "flyable")}
 
+    def _path_get(self, kind: str, obj_id: str) -> dict:
+        """A storage path by its exact name, the way object data names it, or its bare file name."""
+        if self.storage.norm(obj_id) in self.storage.names():
+            return {"kind": kind, "id": obj_id, "local": self.storage.is_local(obj_id)}
+        # the way object data names a file (Units\...\X.mdl, ...\BTNX.blp): the game loads the .mdx / .dds
+        # beside it, and so does objdata_get's model check - answer the same
+        stem = obj_id.replace("/", "\\").rsplit(".", 1)[0] if "." in obj_id.rsplit("\\", 1)[-1] else None
+        exts = {"model": (".mdx", ".mdl"), "icon": (".blp", ".dds", ".tga")}.get(kind, ())
+        for hd in (True, False) if stem and exts else ():
+            for ext in exts:
+                found = self.storage.resolve(stem + ext, **{**self.layer, "hd": hd and self.layer["hd"]})
+                if found:
+                    return {"kind": kind, "id": found, "ref": obj_id, "resolved_from": obj_id,
+                            "local": self.storage.is_local(found)}
+        # a bare name ("BTNChainLightning") or a path with the other extension names one file often enough
+        stem = obj_id.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        hits = self.search(kind, f"*/{stem}.*", limit=20)
+        if len(hits) == 1:
+            path = hits[0]["id"]
+            return {"kind": kind, "id": path, "ref": hits[0].get("ref"), "resolved_from": obj_id,
+                    "local": self.storage.is_local(path)}
+        raise ToolError("not_found", f"no {kind} {obj_id!r}",
+                        hint='the id is a storage path (data_search kind=icon query="*ChainLightning*" finds '
+                             "them); a bare name like BTNChainLightning works when it names one file",
+                        candidates=[h["id"] for h in hits[:10]])
+
     def get(self, kind: str, obj_id: str, fields: list[str] | None = None) -> dict:
         self._check(kind)
         missing = ToolError("not_found", f"no {kind} with id {obj_id!r}", hint="data_search finds ids")
@@ -566,29 +597,14 @@ class Catalog:
                 raise missing
             return {"kind": kind, **found}
         if kind in PATH_KINDS:
-            if self.storage.norm(obj_id) in self.storage.names():
-                return {"kind": kind, "id": obj_id, "local": self.storage.is_local(obj_id)}
-            # the way object data names a file (Units\...\X.mdl, ...\BTNX.blp): the game loads the .mdx / .dds
-            # beside it, and so does objdata_get's model check - answer the same
-            stem = obj_id.replace("/", "\\").rsplit(".", 1)[0] if "." in obj_id.rsplit("\\", 1)[-1] else None
-            exts = {"model": (".mdx", ".mdl"), "icon": (".blp", ".dds", ".tga")}.get(kind, ())
-            for hd in (True, False) if stem and exts else ():
-                for ext in exts:
-                    found = self.storage.resolve(stem + ext, **{**self.layer, "hd": hd and self.layer["hd"]})
-                    if found:
-                        return {"kind": kind, "id": found, "ref": obj_id, "resolved_from": obj_id,
-                                "local": self.storage.is_local(found)}
-            # a bare name ("BTNChainLightning") or a path with the other extension names one file often enough
-            stem = obj_id.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0]
-            hits = self.search(kind, f"*/{stem}.*", limit=20)
-            if len(hits) == 1:
-                path = hits[0]["id"]
-                return {"kind": kind, "id": path, "ref": hits[0].get("ref"), "resolved_from": obj_id,
-                        "local": self.storage.is_local(path)}
-            raise ToolError("not_found", f"no {kind} {obj_id!r}",
-                            hint='the id is a storage path (data_search kind=icon query="*ChainLightning*" finds '
-                                 "them); a bare name like BTNChainLightning works when it names one file",
-                            candidates=[h["id"] for h in hits[:10]])
+            doc = self._path_get(kind, obj_id)
+            if kind == "icon":   # an icon only in _HD draws as a green square in classic graphics
+                doc.update(self.icon_layers(doc.get("ref") or doc["id"].split(".w3mod:")[-1]))
+                stem = doc["id"].replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+                doc["layers"] = sorted({layer for h in self.search(kind, f"*/{stem}.*", limit=20)
+                                        if h["ref"].replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+                                        == stem for layer in h["layers"]})
+            return doc
         if kind in ROW_KINDS:
             row = self._row(kind, obj_id)
             if row is None:
