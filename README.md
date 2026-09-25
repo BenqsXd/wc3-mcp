@@ -68,6 +68,26 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.6
+
+- **`game_test` says why a map never started.** `focus` names the windows that took the foreground while the game
+  loaded (`lost_to`), the Battle.net app's windows are minimised once the game shows (`launcher_minimized`), and a
+  map whose log says it loaded but never started comes back `stuck_at: "loading_screen"`. A login screen that
+  cleared on its own says so (`login.seconds`, `login.note`). `probe_functions_file` reads the probe's functions
+  from a file.
+- **Icons in classic graphics.** `data_get kind=icon` answers `classic`, `hd` and the storage `layers`;
+  `map_validate` warns `icon_hd_only` for object data that names an icon only the HD graphics have (about 800
+  command buttons) - it draws as the green square in classic graphics.
+- **Compact results for loops.** `data_search` reports the whole `count` (and `capped` past 500) and takes
+  `fields`; `placed_list` takes `fields`; `map_flow` targets drop the sampled route unless `verbose`, and `min_gap`
+  keeps only the narrow or unreachable ones; `terrain_edit` answers cliff totals (per op with `verbose`).
+- **Generators can run twice.** Deletes in `elements_edit`, `objdata_edit` and `placed_edit` take `missing_ok`;
+  `placed_edit` deletes everything of a kind in an `area` (optionally some `types`).
+- **Smaller things.** `placed_edit clamp_scale`; new tool `image_crop` to look closely at part of a screenshot;
+  `editor_map save` reports object data fields the editor dropped (`editor_dropped`); `editor_map close` with no
+  editor is not an error; `map_validate levels_unset` for extended abilities that keep stock values between written
+  levels; more measured notes on natives and in the skill.
+
 ## What's new in 1.5
 
 - **`game_test` gives the user's launcher back.** Every run - however it ends - puts the Battle.net app's launch
