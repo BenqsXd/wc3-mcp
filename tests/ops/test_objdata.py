@@ -258,3 +258,10 @@ def test_null_clears_a_field_and_one_of_its_levels(project, catalog):
     objdata_edit(project, catalog, "ability", [{"op": "set", "id": "A097", "set": {"aran": {"2": None}}}])
     doc = objdata_get(project, catalog, "ability", "A097")
     assert doc["fields"]["aran"]["modified"] == [1] and doc["fields"]["aran"]["values"][0] == 100
+
+
+def test_a_delete_with_missing_ok_can_run_twice(plain_project, catalog):
+    objdata_edit(plain_project, catalog, "unit", [{"op": "create", "base": "hfoo", "id": "h0ZZ"}])
+    ops = [{"op": "delete", "id": "h0ZZ", "missing_ok": True}]
+    assert "skipped" not in objdata_edit(plain_project, catalog, "unit", ops)
+    assert objdata_edit(plain_project, catalog, "unit", ops)["skipped"] == ["h0ZZ"]

@@ -223,6 +223,8 @@ class _Edit(_Map, layout.LayoutOps, symmetry.PlacedMirror):
         self.region_list = None
         self.created: list[str] = []
         self.warnings: list[str] = []
+        self.skipped: list[str] = []   # ref deletes with missing_ok whose object was not there
+        self.deleted = 0                # objects an area delete removed
         self.notes: list[str] = []       # what a layout op built, in op order
         self.streets: list[list] = []    # town streets, for terrain_edit to pave
         self.starts: list = []   # start locations placed or moved: war3map.w3i keeps its own copy of the position
@@ -676,9 +678,38 @@ class _Edit(_Map, layout.LayoutOps, symmetry.PlacedMirror):
         self.op_set(op, path)
 
     def op_delete(self, op: dict, path: str) -> None:
-        if set(op) != {"op", "ref"}:
-            raise ToolError("bad_op", f"{path}: delete takes only ref", hint=_HINT)
-        kind, o = self._find(op["ref"], f"{path}.ref")
+        if "ref" not in op:
+            return self._delete_area(op, path)
+        if set(op) - {"missing_ok"} != {"op", "ref"}:
+            raise ToolError("bad_op", f"{path}: delete takes ref (and missing_ok), or kind + area (+ types)",
+                            hint=_HINT)
+        try:
+            kind, o = self._find(op["ref"], f"{path}.ref")
+        except ToolError as e:
+            if e.code == "not_found" and op.get("missing_ok"):
+                self.skipped.append(op["ref"])
+                return None
+            raise
+        self._delete(kind, o, path)
+
+    def _delete_area(self, op: dict, path: str) -> None:
+        """Everything of a kind inside [left, bottom, right, top] (only some types with types): the way a generator
+        clears its own ground before it builds again."""
+        if set(op) - {"op", "kind", "area", "types"} or "kind" not in op or "area" not in op:
+            raise ToolError("bad_op", f"{path}: delete takes ref, or kind + area [l, b, r, t] (+ types)", hint=_HINT)
+        area = op["area"]
+        if not isinstance(area, list) or len(area) != 4:
+            raise _bad(f"{path}.area", "expected [left, bottom, right, top]")
+        left, bottom, right, top = (_num(v, f"{path}.area[{i}]") for i, v in enumerate(area))
+        types = op.get("types")
+        types = {types} if isinstance(types, str) else set(types) if types is not None else None
+        hits = [(k, o) for k, o in self.placed() if k == op["kind"] and left <= o.x <= right and bottom <= o.y <= top
+                and (types is None or _id(o.id) in types)]
+        for k, o in hits:
+            self._delete(k, o, path)
+        self.deleted += len(hits)
+
+    def _delete(self, kind: str, o, path: str) -> None:
         if kind in SCRIPT_PREFIX:
             script = f"{SCRIPT_PREFIX[kind]}{_id(o.id)}_{o.editor_id:04d}"
             try:
@@ -737,6 +768,10 @@ class _Edit(_Map, layout.LayoutOps, symmetry.PlacedMirror):
             result["streets"] = self.streets
         if synced:
             result["synced"] = synced
+        if self.deleted:
+            result["deleted"] = self.deleted
+        if self.skipped:
+            result["skipped"] = self.skipped
         return result
 
 

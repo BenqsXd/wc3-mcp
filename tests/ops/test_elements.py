@@ -156,3 +156,11 @@ def test_referenced_region_rename_updates_triggers(warchasers, catalog):
     names = referenced()
     assert "gg_rct_Renamed_By_Test" in names and region["script_name"] not in names
     assert "Renamed By Test" in [g.name for g in w3r.parse(warchasers.read("war3map.w3r")).regions]
+
+
+def test_a_generator_can_delete_its_regions_again(melee, catalog):
+    ops = [{"op": "upsert", "name": "Gen", "left": 0, "bottom": 0, "right": 256, "top": 256}]
+    elements_edit(melee, catalog, "region", ops)
+    gone = [{"op": "delete", "name": "Gen", "missing_ok": True}]
+    assert "skipped" not in elements_edit(melee, catalog, "region", gone)
+    assert elements_edit(melee, catalog, "region", gone)["skipped"] == ["Gen"]

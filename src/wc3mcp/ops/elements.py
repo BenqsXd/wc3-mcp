@@ -159,6 +159,7 @@ class _Edit:
         self.regions = None  # war3map.w3r loaded when a sound rename touches region ambient sounds
         self.created: list[str] = []
         self.warnings: list[str] = []
+        self.skipped: list[str] = []   # deletes with missing_ok whose element was not there
 
     # names and references
     def _name(self, value, path: str) -> str:
@@ -348,8 +349,12 @@ class _Edit:
     def op_delete(self, op: dict, path: str) -> None:
         name = self._name(op.get("name"), f"{path}.name")
         item = self._find(name)
+        if item is None and op.get("missing_ok"):
+            self.skipped.append(name)
+            return
         if item is None:
-            raise ToolError("not_found", f"{path}: no {self.kind} named {name!r}", hint="elements_list lists them")
+            raise ToolError("not_found", f"{path}: no {self.kind} named {name!r}",
+                            hint='elements_list lists them; "missing_ok": true skips a delete of one that is not there')
         script = _script(self.kind, item.name)
         users = self._users(script)
         if users:
@@ -400,13 +405,14 @@ class _Edit:
             changed = True
         if changed:
             self.warnings.append(SCRIPT_WARNING)
-        return {"changed": changed, "created": self.created, "warnings": self.warnings}
+        return {"changed": changed, "created": self.created, "warnings": self.warnings,
+                **({"skipped": self.skipped} if self.skipped else {})}
 
 
 def elements_edit(project, catalog, kind: str, ops: list) -> dict:
     _kind(kind)
     edit = _Edit(project, catalog, kind)
-    allowed = {"upsert": {"name", "new_name"} | ALLOWED[kind], "delete": {"name"}}
+    allowed = {"upsert": {"name", "new_name"} | ALLOWED[kind], "delete": {"name", "missing_ok"}}
     for i, op in enumerate(ops):
         path = f"ops[{i}]"
         try:

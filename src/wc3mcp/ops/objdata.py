@@ -278,7 +278,7 @@ _HINT = ('ops: {"op": "create", "base": "hfoo", "set": {"Name": "Guard"}}, {"op"
          '{"uhpm": 500}}, {"op": "upsert", "id": "h000", "base": "hfoo", "set": {...}}, {"op": "reset", "id": "h000", '
          '"fields": ["uhpm"]}, {"op": "delete", "id": "h000"}')
 OP_KEYS = {"create": {"op", "base", "id", "set"}, "set": {"op", "id", "set"}, "reset": {"op", "id", "fields"},
-           "delete": {"op", "id"}, "upsert": {"op", "base", "id", "set"}}
+           "delete": {"op", "id", "missing_ok"}, "upsert": {"op", "base", "id", "set"}}
 QUIET = {"extended_levels"}
 # button positions below 0 put a button off the card: the long-standing way to hide one, and the game accepts it
 BUTTON_FIELDS = frozenset({"abpx", "abpy", "arpx", "arpy", "ubpx", "ubpy", "gbpx", "gbpy"})
@@ -583,6 +583,7 @@ def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = No
     warnings: list[str] = []
     touched: set[str] = set()
     upserted: dict[str, str] = {}
+    skipped: list[str] = []   # deletes with missing_ok whose object the map did not have
     for i, op in enumerate(ops):
         path = f"ops[{i}]"
         try:
@@ -617,7 +618,8 @@ def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = No
                 elif not (isinstance(new, str) and len(new) == 4 and all(33 <= ord(c) < 127 for c in new)):
                     raise ToolError("bad_value", f"{path}: id must be 4 printable ASCII characters", path=f"{path}.id")
                 elif new in taken:
-                    raise ToolError("id_taken", f"{path}: id {new!r} is already used", hint="omit id to allocate one")
+                    raise ToolError("id_taken", f"{path}: id {new!r} is already used",
+                                    hint="omit id to allocate one, or use op upsert to create it or change it")
                 taken.add(new)
                 created.append(new)
                 touched.add(new)
@@ -655,6 +657,9 @@ def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = No
                 for _, _, entry in _entries(files, op["id"]):
                     entry.mods = [m for m in entry.mods if rawcodes is not None and m.id not in rawcodes]
             elif action == "delete":
+                if op.get("missing_ok") and isinstance(op.get("id"), str) and not _entries(files, op["id"]):
+                    skipped.append(op["id"])   # nothing of the map's own to delete: done already
+                    continue
                 custom, base_b, new_b = _locate(files, base_ids, kind, op.get("id"), path)
                 _remove(files, custom, new_b if custom else base_b)
             else:
@@ -716,6 +721,8 @@ def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = No
         project.write(strings_file(project), wts_after)
         changed = True
     out = {"changed": changed, "created": created, "warnings": warnings}
+    if skipped:
+        out["skipped"] = skipped
     if upserted:
         out["upserted"] = upserted
     if extended and "extended_levels" in quiet:

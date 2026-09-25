@@ -31,6 +31,9 @@ CHANGING AND REMOVING
   {"op": "set", "ref": "unit:12", ...fields}          changes fields, "type" included
   {"op": "move", "ref": "start_location:0", "x", "y"} also moves the player's start in war3map.w3i (result: synced)
   {"op": "delete", "ref": "doodad:3"}                 refused while a trigger uses its gg_ name
+  {"op": "delete", "ref": "doodad:3", "missing_ok": true}   skipped (result skipped) when the ref is gone
+  {"op": "delete", "kind": "doodad", "area": [l, b, r, t], "types": ["LTlt"]}   everything of a kind in an area
+                                                      (types optional); result deleted: n. Run twice, it deletes 0
 
 FIELDS (the same names placed_list gives back)
   angle, scale (a number or [x, y, z]), variation, skin, owner, life (unit %, null for the default; destructible %),

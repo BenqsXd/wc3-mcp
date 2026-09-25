@@ -625,7 +625,7 @@ def objdata_edit(path: str, kind: ObjectKind, ops: list[dict] | None = None, bal
     "HP": 500}} (id optional, allocated like the editor; base may be one of the map's custom objects, which copies its
     stock base and all its modifications, like the editor's copy and paste), {"op": "set", "id": "h000", "set": {"Hbz1":
     {"1": 7, "2": 9}}} (per-level fields take level keys; stock ids such as hgtw work too), {"op": "reset", "id":
-    "h000", "fields": ["uhpm"]}, {"op": "delete", "id": "h000"}, {"op": "upsert", "id": "h000", "base": "hfoo", "set":
+    "h000", "fields": ["uhpm"]}, {"op": "delete", "id": "h000"} ("missing_ok": true skips a gone id), {"op": "upsert", "id": "h000", "base": "hfoo", "set":
     {...}} (creates when missing, sets when there; result: upserted). Fields accept raw codes, field names or display
     names.
     A per-level field also takes a list (levels 1..n), {"from": a, "step": s} or {"from": a, "to": b} (optional
@@ -736,7 +736,8 @@ def elements_edit(path: str, kind: Literal["region", "camera", "sound"], ops: li
                   ops_file: str | None = None) -> dict:
     """All-or-nothing region/camera/sound changes. {"op": "upsert", "name", ...fields} creates (regions need
     left/bottom/right/top, cameras x/y, sounds path) or changes the named element; "new_name" renames it and updates
-    GUI trigger references. {"op": "delete", "name"} refuses while triggers, region ambient sounds or waygates use it.
+    GUI trigger references. {"op": "delete", "name"} refuses while triggers, region ambient sounds or waygates use it;
+    "missing_ok": true skips a name that is not there (result skipped).
     Fields match elements_list; weather ids come from data_search kind=weather, sound labels from kind=sound.
     ops_file takes the ops array from a local JSON file (dozens of regions stay out of the conversation)."""
     return elements_ops.elements_edit(_project(path), _catalog("enUS", "Custom_V1", True), kind, _ops(ops, ops_file))
@@ -770,7 +771,8 @@ def placed_edit(path: str, ops: list[dict] | None = None, ops_file: str | None =
     deterministic and off water, cliffs and the boundary - and mirror, which copies objects onto the other side of an
     axis with their facing turned and, with owner_map, another player's colours. Refs are "<kind>:<editor id>", angles degrees, positions
     world units; created comes back as ref ranges (verbose=true lists every ref), and ops_file takes the ops array
-    from a local JSON file. wc3_help("placed_edit") has every op, every field and the road recipe; layout_check
+    from a local JSON file. delete takes a ref (missing_ok skips a gone one) or kind + area (+ types), so a
+    generator can clear its ground and run again. wc3_help("placed_edit") has every op, every field and the road recipe; layout_check
     reports how the result reads."""
     return placed_ops.placed_edit(_project(path), _catalog("enUS", "Custom_V1", True), _ops(ops, ops_file), verbose)
 

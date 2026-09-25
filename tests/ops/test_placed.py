@@ -288,3 +288,13 @@ def test_placed_list_filters_by_one_type_or_several(melee, catalog):
     both = placed_list(melee, catalog, kind="unit", type_id=[first, second], limit=5000)
     assert {u["type"] for u in one["items"]} == {first}
     assert {u["type"] for u in both["items"]} == {first, second} and both["total"] > one["total"]
+
+
+def test_an_area_delete_clears_a_generators_ground_and_can_run_twice(melee, catalog):
+    placed_edit(melee, catalog, [{"op": "add", "kind": "destructible", "type": "LTlt", "x": x, "y": 0}
+                                 for x in (-3000, -2900, -2800)])
+    clear = [{"op": "delete", "kind": "destructible", "area": [-3050, -50, -2850, 50], "types": ["LTlt"]}]
+    assert placed_edit(melee, catalog, clear)["deleted"] == 2
+    assert "deleted" not in placed_edit(melee, catalog, clear)
+    assert placed_edit(melee, catalog, [{"op": "delete", "ref": "unit:99999", "missing_ok": True}])["skipped"] == [
+        "unit:99999"]
