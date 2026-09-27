@@ -66,7 +66,7 @@ def test_data_tools():
     assert wide["fields"]["Hbz1"]["values"] == ["6", "8", "10"] and wide["fields"]["Hbz1"]["field"] == "Data"
     both = payload(call("data_get", {"kind": "ability", "id": ["AHbz", "AHtb"], "fields": ["aord"], "balance": None}))
     assert [o["id"] for o in both["objects"]] == ["AHbz", "AHtb"]
-    assert both["objects"][1]["orders"]["data"] == {"aord": "thunderbolt"}
+    assert both["objects"][1]["fields"] == {"aord": "thunderbolt"} and "orders" not in both["objects"][1]
     common = payload(call("data_file", {"path": "Scripts/common.j", "length": 200}))
     assert common["path"] == "War3.w3mod:Scripts/common.j" and common["truncated"]
 

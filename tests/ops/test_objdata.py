@@ -265,3 +265,21 @@ def test_a_delete_with_missing_ok_can_run_twice(plain_project, catalog):
     ops = [{"op": "delete", "id": "h0ZZ", "missing_ok": True}]
     assert "skipped" not in objdata_edit(plain_project, catalog, "unit", ops)
     assert objdata_edit(plain_project, catalog, "unit", ops)["skipped"] == ["h0ZZ"]
+
+
+def test_an_upsert_onto_an_id_of_another_base_names_the_clash(plain_project, catalog):
+    objdata_edit(plain_project, catalog, "unit", [{"op": "create", "base": "hfoo", "id": "h0ZY"}])
+    with pytest.raises(ToolError) as e:
+        objdata_edit(plain_project, catalog, "unit", [{"op": "upsert", "id": "h0ZY", "base": "hkni", "set": {}}])
+    assert e.value.code == "base_mismatch" and "exists with base hfoo" in e.value.message
+    assert objdata_edit(plain_project, catalog, "unit", [{"op": "upsert", "id": "h0ZY", "base": "hfoo",
+                                                         "set": {"uhpm": 500}}])["upserted"] == {"h0ZY": "set"}
+
+
+def test_curse_extended_past_its_levels_skips_the_three_letter_field(plain_project, catalog):
+    result = objdata_edit(plain_project, catalog, "ability", [{"op": "create", "base": "Acrs", "id": "A0ZZ",
+                                                               "set": {"alev": 10}}])
+    assert result["changed"]
+    with pytest.raises(ToolError) as e:
+        objdata_edit(plain_project, catalog, "ability", [{"op": "set", "id": "A0ZZ", "set": {"Crs": {"1": 0.5}}}])
+    assert e.value.code == "bad_field" and "ops[0]" in e.value.message

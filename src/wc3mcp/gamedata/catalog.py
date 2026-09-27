@@ -642,9 +642,11 @@ class Catalog:
         unknown = [f for f in fields if f.lower() not in matched] if fields else []
         if unknown:
             doc["unknown_fields"] = unknown
-        if kind == "ability":
+        # a filtered read answers only the fields asked for (the model check goes with the model field)
+        if kind == "ability" and not fields:
             doc["orders"] = self.ability_orders(obj_id)
-        models = self.missing_models(kind, obj_id) if kind in MODEL_FIELDS else None
+        wants_model = kind in MODEL_FIELDS and (not fields or MODEL_FIELDS[kind][0] in {f.lower() for f in fields})
+        models = self.missing_models(kind, obj_id) if wants_model else None
         if models is not None:
             doc["model"] = {"files": models[0], "missing": models[1]}
         return doc

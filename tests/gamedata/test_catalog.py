@@ -128,7 +128,7 @@ def test_models_must_load_in_classic_graphics(cat):
 
 def test_ability_orders_name_the_data_and_the_editor_string(cat):
     """For a few abilities the two disagree and only one of them works in the game (tested by issuing it)."""
-    lava = cat.get("ability", "ANlm", ["aord"])["orders"]
+    lava = cat.get("ability", "ANlm")["orders"]
     assert lava["data"] == {"aord": "slimemonster"} and lava["disagree"] is True
     assert lava["editor"] == [{"order": "lavamonster", "targets": "immediate", "preset": "UnitOrderLavaMonster",
                                "name": "Neutral Fire Lord - Summon Lava Spawn"}]

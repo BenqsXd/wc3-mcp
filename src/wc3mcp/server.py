@@ -641,9 +641,14 @@ def objdata_get(path: str, kind: ObjectKind, id: str | list[str], fields: list[s
     this map's modifications. modified lists the raw codes the map changes; verbose=true instead gives each field its
     name, type and which levels are modified, at about ten times the size. levels and the per-level lists follow the
     map's own level count (alev, glvl); values the map stores for levels beyond it are listed under unused_levels.
-    fields filters by raw code, field name or display-name substring."""
+    fields filters by raw code, field name or display-name substring, and then only those fields come back (no
+    orders, models or value_refs)."""
     project, catalog = _project(path), _catalog("enUS", balance, True)
-    return _many(kind, id, lambda one: objdata_ops.objdata_get(project, catalog, kind, one, fields), verbose)
+    out = _many(kind, id, lambda one: objdata_ops.objdata_get(project, catalog, kind, one, fields), verbose)
+    if fields and not verbose:
+        for doc in out.get("objects", [out]):
+            doc.pop("value_refs", None)
+    return out
 
 
 @_tool

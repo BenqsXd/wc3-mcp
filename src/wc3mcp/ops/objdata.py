@@ -309,6 +309,9 @@ def _field(catalog, kind: str, base: str, key, path: str):
         meta = candidates[0]
     if not catalog.applies(kind, base, meta):
         raise ToolError("field_not_applicable", f"{path}: field {meta.id} does not apply to {base}")
+    if len(meta.id) != 4:   # AbilityMetaData lists Curse's miss chance as "Crs"; object data needs 4-byte ids
+        raise ToolError("bad_field", f"{path}: field {meta.id} ({meta.display_name}) has a {len(meta.id)}-letter id in "
+                        "the game's metadata, which object data cannot store", hint="leave that field at its default")
     return meta
 
 
@@ -452,8 +455,8 @@ def _extend_levels(files, catalog, kind: str, custom: bool, base: bytes, new: by
     written = []
     for rawcode, entry in doc["fields"].items():
         meta = metas.get(rawcode)
-        if "values" not in entry or meta is None or meta.repeat <= 0:
-            continue
+        if "values" not in entry or meta is None or meta.repeat <= 0 or len(rawcode) != 4:
+            continue   # a field without a 4-byte id (Curse's Crs) cannot be stored: the new ranks keep its default
         defined = [level for (rid, level) in mods if rid == rawcode and 1 <= level <= before]
         last = max(defined) if defined else min(before, len(entry["values"]))
         if last < 1:
@@ -601,6 +604,13 @@ def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = No
                 if not exists and "base" not in op:
                     raise ToolError("bad_op", f"{path}: {oid} does not exist yet, so upsert needs a base to create it "
                                     "from", hint=_HINT)
+                if exists and "base" in op:
+                    had = next((e.base_id.decode("latin-1") for _, custom, e in _entries(files, oid) if custom),
+                               oid if oid in base_ids else None)
+                    if had is not None and had != op["base"]:
+                        raise ToolError("base_mismatch", f"{path}: {oid} exists with base {had}; this upsert names "
+                                        f"{op['base']}", hint="two generators (or a renumbered one) claim the same id: "
+                                        "pick another id, or delete the object first to rebuild it from the new base")
                 action = "set" if exists else "create"
                 upserted[oid] = "set" if exists else "created"
                 op = {k: v for k, v in op.items() if k != "base" or not exists}
