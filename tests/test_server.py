@@ -641,3 +641,12 @@ def test_game_status_shows_what_a_long_probe_reported_so_far(monkeypatch, tmp_pa
     monkeypatch.setattr(server.desktop_game.GAME, "status", lambda: {"run": {"state": "running"}})
     run = payload(call("game_status", {}))["run"]
     assert run["partial"]["reports"] == ["duel 3 of 24"]
+
+
+def test_a_round_trip_can_end_with_the_editor_closed(monkeypatch):
+    editor = server.desktop_editor.EDITOR
+    monkeypatch.setattr(editor, "status", lambda: {"map": None})
+    monkeypatch.setattr(editor, "save", lambda: {"saved": True, "map": None})
+    monkeypatch.setattr(editor, "quit", lambda discard=False, force=False: {"quit": True})
+    out = payload(call("editor_map", {"action": "save", "quit_after": True}))
+    assert out["saved"] and out["quit"] == {"quit": True}

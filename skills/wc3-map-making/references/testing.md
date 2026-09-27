@@ -56,7 +56,7 @@
 `editor_launch`, `editor_status`, `editor_map` (open/save/reload/close/quit), `editor_menu`, `editor_dialogs`, `editor_dialog_act`, `editor_input`, `editor_screenshot`, `editor_log`.
 
 - Take turns with the user: never discard unsaved work in the editor. `map_save` refuses while the editor has the same map with unsaved changes; ask the user first.
-- The editor holds a lock on the map file whenever it shows the map, even with no unsaved changes, so `map_save` cannot replace it (`editor_holds_map`). The safe round trip is: **MCP edits → `editor_map action=close` → `map_save` → `editor_map action=open` → `editor_map action=save`**. That save recomputes pathing, shadows and minimap icons and compiles the script.
+- The editor holds a lock on the map file whenever it shows the map, even with no unsaved changes, so `map_save` cannot replace it (`editor_holds_map`). The safe round trip is: **MCP edits → `editor_map action=close` → `map_save` → `editor_map action=open` → `editor_map action=save quit_after=true`**. Without `quit_after` (or a final `editor_map action=quit`) an empty World Editor window stays open. That save recomputes pathing, shadows and minimap icons and compiles the script.
 - `editor_map action=save` returns per-trigger script errors and the triggers the editor disabled. Empty `errors` and `disabled_triggers` mean the script compiled.
 - `editor_map action=open` starts the editor with the map: an editor that shows another map, or none after `close`, is quit and relaunched (`previous_instance: "relaunched"`). Only an editor already showing that map is reused.
 - `map_open` of a map whose working copy has no unsaved edits reloads it after an editor save (`source_changed` becomes `false`).

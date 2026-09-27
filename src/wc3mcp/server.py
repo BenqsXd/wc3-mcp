@@ -1112,7 +1112,8 @@ def editor_status() -> dict:
 
 @_tool
 def editor_map(action: Literal["open", "save", "close", "reload", "compile", "quit", "save_campaign"],
-               map_path: str | None = None, discard: bool = False, force: bool = False) -> dict:
+               map_path: str | None = None, discard: bool = False, force: bool = False,
+               quit_after: bool = False) -> dict:
     """Map actions in the World Editor. open (map_path; shows that map, or a .w3n campaign in the Campaign Editor, and
     reports previous_instance: reused when the running editor already showed it, relaunched when it was quit and started
     again, none when no editor ran; an editor showing another map or none is always relaunched, because starting it with
@@ -1121,7 +1122,8 @@ def editor_map(action: Literal["open", "save", "close", "reload", "compile", "qu
     campaign), close, reload (reopen from disk after map_save), quit. Anything that would drop unsaved editor changes
     refuses with unsaved_changes unless discard=true: ask the user first. quit force=true kills an editor that does
     not exit (after discard rules). File/Calculate Shadows and Save Map can run for an hour on a big map: a plain save
-    recomputes pathing and minimap icons in a second."""
+    recomputes pathing and minimap icons in a second. quit_after=true (save, compile, close) quits the editor
+    afterwards, so a round trip does not leave an empty World Editor open."""
     editor = desktop_editor.EDITOR
     if action == "open":
         if not map_path:
@@ -1145,16 +1147,21 @@ def editor_map(action: Literal["open", "save", "close", "reload", "compile", "qu
         if saved.get("saved") and shown is not None:   # the editor recomputed pathing, shadows and the minimap
             shown.note("terrain_edited", False)
             shown.note("objects_edited", False)
+        if quit_after and saved.get("saved"):
+            saved["quit"] = editor.quit(discard=False)
         return saved
     if action == "save_campaign":
         return editor.save_campaign()
     if action == "close":
         try:
-            return editor.close(discard=discard)
+            closed = editor.close(discard=discard)
         except ToolError as e:
             if e.code != "editor_not_running":
                 raise
             return {"closed": False, "running": False}   # nothing to close is not a failure
+        if quit_after:
+            closed = {**closed, "quit": editor.quit(discard=discard)}
+        return closed
     if action == "reload":
         return editor.reload(discard=discard)
     return editor.quit(discard=discard, force=force)

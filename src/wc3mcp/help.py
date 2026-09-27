@@ -320,7 +320,8 @@ When the original changed on disk since it was opened (a World Editor save), the
 unless merge_external=true, which takes every file this working copy has not changed from the map on disk - the
 pathing, shadows and minimap the editor recomputed - and keeps the working copy's own changes; force=true instead
 overwrites the map with the working copy. The editor holds the file open while it shows the map, so the round trip is
-edits here -> editor_map close -> map_save -> editor_map open -> editor_map save.
+edits here -> editor_map close -> map_save -> editor_map open -> editor_map save quit_after=true (quit_after ends
+the round trip with the editor closed; without it an empty World Editor stays open).
 """)
 
 page("map_validate", """
