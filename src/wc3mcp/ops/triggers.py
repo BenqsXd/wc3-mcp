@@ -113,7 +113,7 @@ COUNTER = {CATEGORY: 2, TRIGGER: 3, COMMENT: 4, wtg.VARIABLE_ELEMENT: 6}   # ind
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 ALLOWED = {
     "category": {"name", "new_name", "parent", "comment"},
-    "variable": {"name", "new_name", "type", "array_size", "initial", "category"},
+    "variable": {"name", "new_name", "type", "array_size", "initial", "category", "existing_ok"},
     "trigger": {"name", "new_name", "category", "description", "enabled", "initially_on", "run_on_init", "events",
                 "conditions", "actions", "script", "after", "index"},
     "delete": {"what", "name"},
@@ -251,6 +251,24 @@ class _Edit:
     def _trigger(self, name) -> Trigger | None:
         return next((e for e in _triggers(self.tf) if e.name == name), None)
 
+    def _existing_variable(self, v, op: dict, path: str) -> None:
+        """A variable op on a name the map already has: two parts of a map sharing one global by accident overwrite
+        each other at run time, so refuse a different type and say who uses it otherwise."""
+        wanted_type = op.get("type")
+        wanted_array = bool(op["array_size"]) if "array_size" in op else None
+        shape = f"{v.type}{' array' if v.is_array else ''}"
+        users = sorted(set(self._users(v.name)) | set(script_users(self.tf, self.ct, f"udg_{v.name}")))
+        if (wanted_type is not None and wanted_type != v.type) or (wanted_array is not None
+                                                                   and wanted_array != bool(v.is_array)):
+            raise ToolError("name_taken", f"{path}: variable {v.name!r} exists as {shape}"
+                            + (f", used by {', '.join(users[:5])}" if users else ""),
+                            hint="pick another name; to really change it, delete it first or rename it (new_name)")
+        if "type" in op and not op.get("existing_ok"):   # a declaration, not a change to the variable
+            self.warnings.append(f"{path}: variable {v.name} already exists ({shape})"
+                                 + (f", used by {', '.join(users[:5])}" if users else "")
+                                 + '; if this op meant a new variable, pick another name ("existing_ok": true '
+                                   "silences this for a generator that re-declares its own)")
+
     def _users(self, variable_name: str, skip=None) -> list[str]:
         return [t.name for t in _triggers(self.tf) if t is not skip
                 and any(p.type == VARIABLE and p.value == variable_name for p in _all_params(t.ecas))]
@@ -359,12 +377,14 @@ class _Edit:
             self.tf.variables.append(v)
             self._place([VariableElement(v.id, name, category.id)], category.id)
             self.created.append(name)
-        elif "category" in op:
-            category = self._category(op["category"], f"{path}.category")
-            v.parent = category.id
-            element = self._variable_element(v)
-            if element is not None:
-                self._move(element, category.id, path)
+        else:
+            self._existing_variable(v, op, path)
+            if "category" in op:
+                category = self._category(op["category"], f"{path}.category")
+                v.parent = category.id
+                element = self._variable_element(v)
+                if element is not None:
+                    self._move(element, category.id, path)
         if "type" in op:
             t = self.td.types.get(op["type"]) if isinstance(op["type"], str) else None
             if t is None or not t.global_ok:

@@ -293,3 +293,17 @@ def test_deleting_the_last_trigger_warns(tmp_path):
     p = new_map(str(tmp_path / "D.w3x"), c, width=64, height=64, players=2)
     out = triggers_edit(p, c, [{"op": "delete", "what": "trigger", "name": "Melee Initialization"}])
     assert any("no trigger left" in w for w in out["warnings"])
+
+
+def test_declaring_a_variable_that_exists_warns_or_refuses(melee, catalog):
+    triggers_edit(melee, catalog, [{"op": "variable", "name": "MemX", "type": "real", "array_size": 8},
+                                   {"op": "trigger", "name": "Camps", "actions": [
+                                       {"fn": "SetVariable", "args": [{"var": "MemX", "index": 1}, 5.0]}]}])
+    again = triggers_edit(melee, catalog, [{"op": "variable", "name": "MemX", "type": "real", "array_size": 8}])
+    assert any("MemX already exists (real array), used by Camps" in w for w in again["warnings"])
+    quiet = triggers_edit(melee, catalog, [{"op": "variable", "name": "MemX", "type": "real", "array_size": 8,
+                                            "existing_ok": True}])
+    assert not any("already exists" in w for w in quiet["warnings"])
+    with pytest.raises(ToolError) as e:
+        triggers_edit(melee, catalog, [{"op": "variable", "name": "MemX", "type": "integer"}])
+    assert e.value.code == "name_taken" and "Camps" in e.value.message
