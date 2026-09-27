@@ -68,6 +68,25 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.7
+
+- **Long game tests are safe to watch.** Every `game_test` run has its own thread, so an interrupted waiting call no
+  longer loses the run: it finishes and `game_status` holds the result. A JASS probe rewrites what it reported so far
+  every 30 s of game time, shown in `game_status` as `run.partial`. `probe.message_to` says whom each message was
+  shown to, `screenshot_times` gives each picture's game time, and every result carries `server_version`.
+- **Probe helpers stay with their probe.** A `.j` path given as `probe_functions` is read, and `<probe>.functions.j`
+  beside a `probe_script_file` is picked up.
+- **`map_flow areas=true`** labels every walkable area (largest first, rect, a walkable sample point) and, with
+  `grid_step`, gives a run-length label grid - the data for keeping blinks and spawns on reachable ground.
+- **Clashes are named.** `objdata_edit` upsert onto an id with another base refuses with `base_mismatch`;
+  `triggers_edit` warns when a variable op declares a name that exists (who uses it) and refuses another type.
+- **New checks.** Lint: real literals of 2^31 or more, `R2I` of a product without `+ 0.5`, unknown string escapes
+  (also flagged when `triggers_edit` writes the script). `map_validate`: `shop_select` (a shop without Select
+  User lists nothing), `shop_slots` (12 items show 11), `model_missing` / `model_hd_only` for model paths in object
+  data, and `locked_ability` now covers abilities the script adds.
+- **Smaller.** `data_get` / `objdata_get` with `fields` return only those fields. Curse's 3-letter `Crs` field no
+  longer breaks a level extension. `editor_map save quit_after=true` ends a round trip with the editor closed.
+
 ## What's new in 1.6
 
 - **`game_test` says why a map never started.** `focus` names the windows that took the foreground while the game
