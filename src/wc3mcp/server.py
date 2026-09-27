@@ -973,7 +973,8 @@ def script_validate(path: str, lint: bool = False) -> dict:
     compiler cannot see (JASS only), each with its line, function and trigger: leaked locations, groups, forces, rects
     and boolexprs, event data read after a TriggerSleepAction, a trigger with an action but no event, a loop without
     exitwhen or over the operation limit, a handle used after it was destroyed, a local or parameter named after a
-    JASS type, and game state changed inside a GetLocalPlayer() block (a multiplayer desync). They are heuristics, so
+    JASS type, game state changed inside a GetLocalPlayer() block (a multiplayer desync), real literals of 2^31 or
+    more (the game does not hold them), R2I of a product without + 0.5, and string escapes JASS does not know. They are heuristics, so
     each names what to check; a firing rule is usually a game run saved."""
     return script_ops.script_validate(_project(path), _catalog("enUS", "Custom_V1", True), lint=lint)
 

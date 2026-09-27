@@ -165,3 +165,18 @@ def test_guarded_code_is_quiet():
                         "call TriggerAddCondition( gg_trg_Hits, Condition(function OnHit) )"))
     rules = [h["rule"] for h in lint(guarded)]
     assert "corpse_enum" not in rules and "item_reentry" not in rules and "damage_action" not in rules
+
+
+def test_big_reals_truncating_r2i_and_bad_escapes_are_found():
+    text = (
+        "function F takes nothing returns integer\n"
+        "    local real bd = 1000000000000.0\n"
+        "    local real ok = 99999999.0\n"
+        "    local string m = \"war3mapImported\\AFShieldBar.mdx\"\n"
+        "    local string fine = \"war3mapImported\\\\AFShieldBar.mdx \\\" \\n\"\n"
+        "    call BJDebugMsg(I2S(R2I(I2R(300) * 0.5 + 0.5)))\n"
+        "    return R2I(I2R(300) * 1.10)\n"
+        "endfunction\n")
+    hits = {(h["rule"], h["line"]) for h in lint(text)}
+    assert hits == {("big_real", 2), ("bad_escape", 4), ("r2i_truncates", 7)}
+

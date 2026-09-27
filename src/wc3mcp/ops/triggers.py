@@ -224,6 +224,7 @@ class _Edit:
         self.text = {t.id: s for t, s in zip(_triggers(self.tf), self.ct.texts)}
         self.created: list[str] = []
         self.warnings: list[str] = []
+        self.touched_scripts: set = set()   # text triggers this batch wrote
         self.scripts: dict[str, str] = {}   # scripts submitted in this batch, for validate=true
         self.lua = _is_lua(project)
 
@@ -471,6 +472,7 @@ class _Edit:
                 self.warnings.append(f"{name}: the script also defines InitTrig_{other[0]}, which the editor never "
                                      f"calls (it calls InitTrig_{script_name(name)})")
             t.custom_text, t.ecas, self.text[t.id] = 1, [], _editor_lines(text)
+            self.touched_scripts.add(t.id)
             self.scripts[name] = (text, above)
         elif sections:
             variables = {v.name: v for v in self.tf.variables}
@@ -577,6 +579,16 @@ class _Edit:
 
     def finish(self) -> dict:
         self.ct.texts = [self.text.get(t.id) for t in _triggers(self.tf)]
+        if not self.lua:   # an unknown escape passes the write and fails the next script build
+            from ..script.lint import bad_escapes
+
+            for t in _triggers(self.tf):
+                text = self.text.get(t.id)
+                found = bad_escapes(text.replace("\r\n", "\n")) if text and t.id in self.touched_scripts else []
+                if found:
+                    self.warnings.append(f"trigger {t.name}: line {found[0][0]} has the string escape {found[0][1]}, "
+                                         "which JASS does not know (a path needs doubled backslashes); the script "
+                                         "will not compile")
         data, text = wtg.serialize(self.tf), wct.serialize(self.ct)
         if data != self.before[0]:
             self.project.write("war3map.wtg", data)

@@ -286,7 +286,53 @@ def _hooked_rules(name: str, first_line: int, body: str, hooked: dict) -> list[d
     return out
 
 
-RULES = (_leaks, _event_after_wait, _dead_trigger, _loops, _after_destroy, _desync, _discarded_effects, _corpse_enum)
+STRING = re.compile(r'"(?:\\.|[^"\\\n])*"')
+VALID_ESCAPES = frozenset('btnfr"\\')
+BIG_REAL = re.compile(r"(?<![\w$.])(\d+)\.\d*")
+R2I_PRODUCT = re.compile(r"\bR2I\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)")
+
+
+def bad_escapes(text: str) -> list[tuple[int, str]]:
+    """(line, escape) for every backslash in a string literal that JASS does not know: a single backslash in a path
+    ("war3mapImported" + backslash + "Shield.mdx") makes an unknown escape, which pjass refuses. Paths in strings
+    need doubled backslashes."""
+    out = []
+    for m in STRING.finditer(text):
+        for e in re.finditer(r"\\(.)", m.group(0)):
+            if e.group(1) not in VALID_ESCAPES:
+                out.append((text.count("\n", 0, m.start()) + 1, "\\" + e.group(1)))
+    return out
+
+
+def _escapes(name: str, first_line: int, body: str, text: str) -> list[dict]:
+    return [_hit("bad_escape", first_line + line - 1, name,
+                 f"string escape {esc} is not a JASS escape (valid: \\b \\t \\n \\f \\r \\\" \\\\): a path in a "
+                 "string needs doubled backslashes")
+            for line, esc in bad_escapes(body)]
+
+
+def _big_reals(name: str, first_line: int, body: str, text: str) -> list[dict]:
+    """A real literal of 2^31 or more passes pjass, but the game does not hold it: every comparison with it came out
+    false in a game run. (1.0e12 is a pjass syntax error.)"""
+    code = STRING.sub('""', body)
+    return [_hit("big_real", _line(code, m.start(), first_line), name,
+                 f"real literal {m.group(0)} is 2^31 or more, which the game does not hold (comparisons with it "
+                 "were false in a game run): use a smaller sentinel such as 99999999.0, or a flag")
+            for m in BIG_REAL.finditer(code) if int(m.group(1)) >= 2 ** 31]
+
+
+def _r2i_products(name: str, first_line: int, body: str, text: str) -> list[dict]:
+    """R2I truncates: R2I(I2R(300) * 1.10) is 329, not 330 (measured in the game)."""
+    code = STRING.sub('""', body)
+    return [_hit("r2i_truncates", _line(code, m.start(), first_line), name,
+                 f"R2I({m.group(1).strip()}) truncates a product with a real (329.99 becomes 329): add 0.5 "
+                 "inside the R2I to round")
+            for m in R2I_PRODUCT.finditer(code)
+            if "*" in m.group(1) and re.search(r"\d\.\d|\bI2R\b|\breal\b", m.group(1)) and "0.5" not in m.group(1)]
+
+
+RULES = (_leaks, _event_after_wait, _dead_trigger, _loops, _after_destroy, _desync, _discarded_effects, _corpse_enum,
+         _escapes, _big_reals, _r2i_products)
 
 
 def lint(text: str) -> list[dict]:

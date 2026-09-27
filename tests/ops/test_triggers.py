@@ -307,3 +307,11 @@ def test_declaring_a_variable_that_exists_warns_or_refuses(melee, catalog):
     with pytest.raises(ToolError) as e:
         triggers_edit(melee, catalog, [{"op": "variable", "name": "MemX", "type": "integer"}])
     assert e.value.code == "name_taken" and "Camps" in e.value.message
+
+
+def test_a_script_with_an_unknown_escape_is_flagged_when_written(melee, catalog):
+    script = ('function Trig_Bar_Actions takes nothing returns nothing\n'
+              '    call BJDebugMsg("war3mapImported\\AFShieldBar.mdx")\nendfunction\n')
+    result = triggers_edit(melee, catalog, [{"op": "trigger", "name": "Bar", "script": script}])
+    assert any("trigger Bar" in w and "does not know" in w for w in result["warnings"])
+
