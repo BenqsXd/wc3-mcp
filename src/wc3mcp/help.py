@@ -338,7 +338,10 @@ WARNINGS
   command_card      two buttons of one unit on the same position (unless its stock base has the same clash)
   learn_card        two hero abilities (uhab) of one hero on the same learn-menu cell or hotkey (arpx/arpy, arhk)
   inherited_builds  a copied unit with its own uabi that kept its base's build list
-  locked_ability    an ability whose required research nothing in the map offers
+  locked_ability    an ability whose required research nothing in the map offers (in uabi/uhab or added by script)
+  shop_select       a unit that sells items or units without Select User (Aneu/Ane2): its shop lists nothing
+  shop_slots        a shop selling 12 items: it shows 11, Select User keeps a cell
+  model_missing / model_hd_only   a model path in object data (umdl, ifil, ability art) no graphics / only HD has
   order_string      an order a unit will refuse, or one where the ability data and the editor disagree
   ability_order     two abilities of one unit sharing an order string
   reachable         start locations cut off from each other, or a preplaced unit its own player cannot walk to

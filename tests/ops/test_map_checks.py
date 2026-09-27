@@ -199,6 +199,12 @@ def _fresh(tmp_path, name="V.w3x"):
     return new_map(str(tmp_path / name), Catalog(_storage(), balance="Custom_V1"), width=64, height=64, players=2)
 
 
+def _warnings(project) -> list:
+    from wc3mcp.ops.script import map_validate
+
+    return map_validate(project, Catalog(_storage(), balance="Custom_V1"))["warnings"]
+
+
 def _checks(project) -> set:
     from wc3mcp.ops.script import map_validate
 
@@ -342,3 +348,48 @@ def test_an_extended_ability_with_stock_values_between_written_levels(tmp_path):
     assert "levels_unset" not in _checks(p)      # the new ranks got the last stock values
     objdata_edit(p, c, "ability", [{"op": "set", "id": "A000", "set": {"acdn": {"1": 5}}}])
     assert "levels_unset" in _checks(p)          # levels 2-3 keep the stock cooldown between written ones
+
+
+def test_model_paths_in_object_data_must_load_in_classic_graphics(tmp_path):
+    from wc3mcp.ops.objdata import objdata_edit
+
+    p = _fresh(tmp_path)
+    c = Catalog(_storage(), balance="Custom_V1")
+    objdata_edit(p, c, "unit", [{"op": "create", "base": "hfoo", "id": "h000",
+                                 "set": {"umdl": r"Units\Creeps\AncientHydra\AncientHydra.mdl"}},
+                                {"op": "create", "base": "hfoo", "id": "h001",
+                                 "set": {"umdl": r"Units\Nowhere\Nothing.mdl"}},
+                                {"op": "create", "base": "hfoo", "id": "h002",
+                                 "set": {"umdl": r"Units\Human\Knight\Knight.mdl"}}])
+    found = [w for w in _warnings(p) if w["check"].startswith("model_")]
+    assert {(w["check"], w["message"].split(":")[0]) for w in found} == {("model_hd_only", "unit h000"),
+                                                                        ("model_missing", "unit h001")}
+
+
+def test_a_shop_without_select_user_or_with_twelve_items(tmp_path):
+    from wc3mcp.ops.objdata import objdata_edit
+
+    p = _fresh(tmp_path)
+    c = Catalog(_storage(), balance="Custom_V1")
+    twelve = ",".join(["bspd", "rde1", "pghe", "pman", "stwp", "shea", "sman", "ssan", "tsct", "plcl", "dust", "phea"])
+    objdata_edit(p, c, "unit", [{"op": "create", "base": "ngme", "id": "n000", "set": {"uabi": "Apit"}},
+                                {"op": "create", "base": "ngme", "id": "n001", "set": {"usei": twelve}}])
+    checks = {(w["check"], w["message"].split(" ")[1]) for w in _warnings(p)}
+    assert ("shop_select", "n000") in checks and ("shop_slots", "n001") in checks
+    assert ("shop_select", "n001") not in checks
+
+
+
+def test_an_ability_the_script_adds_that_keeps_an_unresearchable_requirement(tmp_path):
+    from wc3mcp.ops.objdata import objdata_edit
+    from wc3mcp.ops.triggers import triggers_edit
+
+    p = _fresh(tmp_path)
+    c = Catalog(_storage(), balance="Custom_V1")
+    objdata_edit(p, c, "ability", [{"op": "create", "base": "Aens", "id": "A000"}])
+    triggers_edit(p, c, [{"op": "delete", "what": "trigger", "name": "Melee Initialization"},
+                         {"op": "trigger", "name": "Web", "script": "function Trig_Web_Actions takes nothing returns "
+                          "nothing\n    call UnitAddAbility(null, 'A000')\nendfunction\n"}])
+    p.write("war3map.j", b"function main takes nothing returns nothing\nendfunction\n")   # no melee start
+    locked = [w for w in _warnings(p) if w["check"] == "locked_ability"]
+    assert locked and "script (A000)" in locked[0]["message"]

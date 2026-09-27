@@ -136,6 +136,7 @@ class _V:
         self.check_waygates()
         self.check_shops()
         self.check_icons()
+        self.check_object_models()
         self.check_reachable()
         return {"errors": self.errors, "warnings": self.warnings}
 
@@ -624,6 +625,28 @@ class _V:
                          f"{key} on its card, so the key buys only one of them (a copy keeps its base's uhot: give "
                          "each entry its own, QWER/ASDF/ZXCV by card cell)")
 
+    def check_object_models(self):
+        """A model path in object data that classic graphics cannot load draws nothing there (HD-only) or nowhere."""
+        fields = {"unit": ("umdl",), "item": ("ifil",), "ability": ("amat", "acat", "atat", "aeat", "asat", "aaea")}
+        files = {"item": "war3map.w3t", "ability": "war3map.w3a", "unit": "war3map.w3u"}
+        for kind, rids in fields.items():
+            for oid, (_base, values, _custom) in sorted(self._mods(kind).items()):
+                for rid in rids:
+                    for path in str(values.get(rid) or "").split(","):
+                        path = path.strip()
+                        if not path or path == "_" or TRIGSTR_ANY.fullmatch(path):
+                            continue
+                        stem = path[:-4] if path.lower().endswith((".mdl", ".mdx")) else path
+                        if self.has_file(stem + ".mdx") or self.has_file(stem + ".mdl"):
+                            continue
+                        if self.catalog.model_exists(stem + ".mdl"):
+                            continue
+                        hd = self.catalog.model_exists(stem + ".mdl", hd=True)
+                        self.add(False, "model_hd_only" if hd else "model_missing", files[kind],
+                                 f"{kind} {oid}: {rid} {path!r} " + ("exists only in the HD graphics, so classic "
+                                 "graphics draw nothing" if hd else "is neither in the game data nor imported, so "
+                                 "nothing is drawn") + " (data_search kind=model finds real ones)")
+
     def check_icons(self):
         """An icon path the game cannot load draws a blank green square and nothing else says so."""
         fields = {"item": ("iico",), "ability": ("aart", "arar"), "unit": ("uico", "ussi")}
@@ -678,7 +701,7 @@ class _V:
         """Object data pitfalls no single edit shows: command-card buttons on one slot, a copied worker that keeps its
         build list, an ability locked behind a research nobody can get."""
         mods = {kind: self._mods(kind) for kind in ("unit", "ability", "upgrade")}
-        if not mods["unit"]:
+        if not mods["unit"] and not mods["ability"]:
             return
         name = "war3map.w3u"
 
@@ -749,10 +772,24 @@ class _V:
                         what = f"learn-menu hotkey {key[1]}" if key[0] == "key" else f"learn-menu cell {key[1:]}"
                         self.add(False, "learn_card", name, f"hero {oid}: {', '.join(labels)} share the {what}, so "
                                  "only one of them can be learned that way (arpx/arpy and arhk are set per ability)")
+            sold = ids("unit", oid, "usei") + ids("unit", oid, "useu")
+            if sold and not {"Aneu", "Ane2"} & set(ids("unit", oid, "uabi")):
+                self.add(False, "shop_select", name, f"unit {oid} sells {', '.join(sold[:6])} but has no Select User "
+                         "ability (Aneu or Ane2 in uabi), so its shop lists nothing in the game")
+            if len(ids("unit", oid, "usei")) >= 12:
+                self.add(False, "shop_slots", name, f"unit {oid} sells {len(ids('unit', oid, 'usei'))} items, but a "
+                         "shop shows 11 (Select User keeps a command-card cell; moving its button did not free it)")
             for ability in [] if melee else ids("unit", oid, "uabi") + ids("unit", oid, "uhab"):
                 for research in ids("ability", ability, "areq"):   # melee races can build the research buildings
                     if research in upgrades and research not in offered and research not in script:
                         locked.setdefault(research, []).append(f"{oid} ({ability})")
+        # abilities the script gives (a dummy caster's copy of Ensnare kept areq Roen and its order was refused)
+        added = "\n".join([script] + [text for _, text in (self._emitted() if self.ct is not None else [])])
+        for ability in [] if melee else sorted(set(re.findall(r"\bUnitAddAbility\w*\s*\([^,]+,\s*'(\w{4})'",
+                                                                  added))):
+            for research in ids("ability", ability, "areq"):
+                if research in upgrades and research not in offered and research not in script:
+                    locked.setdefault(research, []).append(f"script ({ability})")
         for research, users in sorted(locked.items()):
             self.add(False, "locked_ability", name, f"research {research} is required by {', '.join(users)}, but no "
                      "unit of the map researches it (ures) and the script never mentions it (SetPlayerTechResearched), "
