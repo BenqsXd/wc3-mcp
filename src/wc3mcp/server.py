@@ -12,7 +12,7 @@ from typing import Literal
 from mcp.server.fastmcp import FastMCP, Image
 from mcp.server.fastmcp.exceptions import ToolError as McpToolError
 
-from . import config
+from . import __version__, config
 from .casc.storage import open_storage
 from .mpq.reader import Archive as MpqArchive
 from .desktop import editor as desktop_editor
@@ -1230,17 +1230,28 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
     login_required keeps the game open and the same call continues in it; a game stuck at its main menu is started
     again (relaunched). The app route launches a copy of the map from the server's own folder and stores that path
     in the app's launch options for Warcraft III, and every run puts them back when it ends (result: launcher).
-    probe_script_file / probe_functions_file read those from a local file. wc3_help("game_test") has the probe helpers
+    probe_script_file / probe_functions_file read those from a local file (a .j path given as probe_functions is read
+    too, and <probe>.functions.j beside a probe_script_file is picked up). A run longer than a minute or two is safer
+    with wait=false: game_status then shows the probe's report lines so far (partial). A waiting call that is
+    interrupted leaves the run going; game_status has its result. Every result carries server_version. wc3_help("game_test") has the probe helpers
     and the pitfalls."""
     if probe_functions is not None and probe_functions_file is not None:
         raise ToolError("bad_value", "give probe_functions or probe_functions_file, not both")
+    if probe_functions is not None and "\n" not in probe_functions and probe_functions.strip().lower().endswith(
+            (".j", ".lua", ".txt")) and Path(probe_functions.strip()).is_file():
+        probe_functions_file, probe_functions = probe_functions.strip(), None   # a path, not JASS: read the file
     if probe_functions_file is not None:
         probe_functions = triggers_ops.read_text_file(probe_functions_file, "probe_functions_file")
-    target, extra = path, {}
+    target, extra = path, {"server_version": __version__}
     if probe_script is not None and probe_script_file is not None:
         raise ToolError("bad_value", "give probe_script or probe_script_file, not both")
     if probe_script_file is not None:
         probe_script = triggers_ops.read_text_file(probe_script_file, "probe_script_file")
+        # <probe>.functions.j beside the probe keeps its helpers with it between runs
+        sibling = Path(probe_script_file).with_suffix(".functions" + Path(probe_script_file).suffix)
+        if probe_functions is None and sibling.is_file():
+            probe_functions = triggers_ops.read_text_file(str(sibling), "probe_functions_file")
+            extra["probe_functions_file"] = str(sibling)
     probe = probe or probe_script is not None or probe_functions is not None or probe_init is not None
     if probe:
         catalog = _catalog("enUS", None, True)
@@ -1257,6 +1268,8 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
                                     wait=wait, meta={"probe": probe, "extra": extra}, shots=screenshots,
                                     shot_every=screenshot_every, login=login, login_wait=login_wait,
                                     started_file=probe_ops.STARTED if probe else None)
+    if wait and desktop_game.GAME.run is not None:
+        desktop_game.GAME.run["finished"] = True   # game_status must not finish this result a second time
     return {**(_finish_test(result, probe) if wait else result), **extra}
 
 
@@ -1298,7 +1311,16 @@ def game_status() -> dict:
         job["result"] = _finish_test(job["result"], job["meta"].get("probe", False))
         job["result"].update(job["meta"].get("extra") or {})
         job["finished"] = True
-    return desktop_game.GAME.status()
+    status = desktop_game.GAME.status()
+    run = status.get("run")
+    if run and run["state"] == "running" and job["meta"].get("probe"):
+        partial = desktop_game._result_path(probe_ops.PARTIAL)
+        if partial.is_file() and partial.stat().st_mtime >= job["started"]:
+            lines = desktop_game.parse_preload(partial.read_text("utf-8", "replace"))
+            run["partial"] = probe_ops.parse(lines)
+            run["partial_note"] = ("what the probe reported so far (rewritten every 30 s of game time; JASS maps); "
+                                   "game_close ends the run early when this already answers")
+    return status
 
 
 @_tool

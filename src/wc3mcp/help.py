@@ -225,6 +225,12 @@ BACKGROUND AND PICTURES
   In probes: GroupEnumUnitsInRect (and the other GroupEnum calls) skip units hidden with ShowUnit(false) - keep their
   handles, or read placed_list. Raw codes are base-256 integers, so 'n020' + 10 is 'n02:', not 'n02A'.
 
+LONG RUNS
+  wait=false for anything over a minute or two. A JASS probe rewrites what it reported so far every 30 s of game time,
+  and game_status shows it under run.partial, so a long balance or economy run can be read (and ended with game_close)
+  before it finishes. probe.message_to says whom each message in probe.messages was shown to: "all" (BJDebugMsg), a
+  player id, or the ids of a force. screenshot_times gives the game time of each saved picture.
+
 FOCUS
   The game only loads while its window is in front. focus.raised counts how often the run raised it and
   focus.lost_to names the windows that held the foreground meanwhile. The Battle.net app's windows are minimised once

@@ -233,14 +233,17 @@ class Game:
         self.run = job
         options = {"shots": shots, "shot_every": shot_every, "login": login, "login_wait": login_wait,
                    "started_file": started_file}
-        if wait:
-            self._run(job, target, timeout, results, close, screenshot, options)
-            if job["error"] is not None:
-                raise job["error"]
-            return job["result"]
+        # the run always has its own thread: a waiting call that is interrupted loses only its answer, and the run
+        # goes on to finish under game_status
         job["thread"] = threading.Thread(target=self._run, daemon=True,
                                          args=(job, target, timeout, results, close, screenshot, options))
         job["thread"].start()
+        if wait:
+            job["waited"] = True
+            job["thread"].join()
+            if job["error"] is not None:
+                raise job["error"]
+            return job["result"]
         return {"started": True, "map": str(target), "timeout": timeout, "results": job["results"],
                 "note": "the run continues in the background: game_status reports its progress and, once it ends, its "
                         "whole result under run.result (the working copy is free meanwhile; a probe runs on a copy)"}
@@ -330,7 +333,7 @@ class Game:
         checked_at, state = 0.0, None
         login_since, menu_since, map_since = None, None, None
         outcome, relaunches, asked_user, login_seen = None, [], False, False
-        shot_at, series, missed = 0.0, [], []
+        shot_at, series, missed, shot_times = 0.0, [], [], []
         grace = 0.0   # time spent on login screens: it does not count against the timeout
         while process.poll() is None and not self.cancelled:
             now = time.time()
@@ -421,6 +424,7 @@ class Game:
                 image, of = self._screenshot(process.pid)
                 if image:
                     series.append(image)
+                    shot_times.append(round(now - map_since, 1))
                 else:
                     missed.append({"t": round(now - map_since, 1), "reason": of})
             for name, path in wanted.items():
@@ -461,6 +465,7 @@ class Game:
                                         "several Preload calls")
         if shots:
             result["screenshots"] = series
+            result["screenshot_times"] = shot_times   # seconds after the map started, per saved picture
             if missed:
                 result["screenshots_failed"] = missed
             result["screenshots_note"] = (
@@ -468,6 +473,9 @@ class Game:
                 + ("(the probe's start marker)" if marker else "(the screen left the menus and the loading screen)")
                 + "; the run ends when its results are written, so a series longer than the test is cut short. "
                   "Move the camera from the map's test code (ProbeCamera) to look at a place"
+                + (f". The pictures cover {shot_times[0]:g}-{shot_times[-1]:g} s of game time (screenshot_times); "
+                   "a capture takes about a second, so an interval shorter than that gets fewer pictures"
+                   if shot_times else "")
                 + ("" if map_since is not None else ". The map never started, so there are none"))
         if attached:
             result["continued_game"] = True
@@ -558,7 +566,7 @@ class Game:
         alive = job["thread"] is not None and job["thread"].is_alive()
         out = {"state": "running" if alive else "failed" if job["error"] is not None else "done",
                "map": job["map"], "seconds": round(time.time() - job["started"], 1), "timeout": job["timeout"],
-               "results": job["results"], "written": job["written"], "background": job["thread"] is not None}
+               "results": job["results"], "written": job["written"], "background": not job.get("waited")}
         if alive:
             out["note"] = ("the run is still going: call game_status again for its result (the map's own working copy "
                            "is free while it runs)")
@@ -594,7 +602,8 @@ class Game:
         closed = [pid for pid, p in list(self.launched.items()) if self._close(p)]
         self.waiting = None
         job = self.run
-        if job is not None and job["thread"] is not None and job["thread"].is_alive():
+        if job is not None and job["thread"] is not None and job["thread"].is_alive() \
+                and job["thread"] is not threading.current_thread():
             job["thread"].join(30)   # closing the game ends its loop; then the run can report what it collected
         launcher = battlenet.restore()   # also after a crashed server left the app pointing at a test map
         return {"closed": closed, "running": self.status()["running"], "launcher": launcher,

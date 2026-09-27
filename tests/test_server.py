@@ -602,3 +602,42 @@ def test_closing_an_editor_that_does_not_run_is_not_an_error(monkeypatch):
 def test_probe_functions_come_from_one_place():
     err = call("game_test", {"path": "x.w3x", "probe_functions": "a", "probe_functions_file": "b.j"})
     assert err.isError and "not both" in err.content[0].text
+
+
+def test_game_test_reads_probe_helpers_from_a_path_or_the_probe_file_beside_it(monkeypatch, tmp_path):
+    seen = {}
+
+    def build(path, run, catalog, opened, seconds, script, functions, init):
+        seen["functions"] = functions
+        return tmp_path / "probe.w3x"
+
+    monkeypatch.setattr(server.probe_ops, "build", build)
+    monkeypatch.setattr(server.desktop_game.GAME, "test", lambda target, **kw: {"results": {}, "pid": 1})
+    helpers = tmp_path / "helpers.j"
+    helpers.write_text("function H takes nothing returns nothing\nendfunction\n")
+    out = payload(call("game_test", {"path": str(tmp_path / "m.w3x"), "probe_functions": str(helpers)}))
+    assert seen["functions"].startswith("function H") and out["server_version"] == server.__version__
+    probe = tmp_path / "duel.j"
+    probe.write_text("call ProbeReport(\"x\")\n")
+    (tmp_path / "duel.functions.j").write_text("function G takes nothing returns nothing\nendfunction\n")
+    out = payload(call("game_test", {"path": str(tmp_path / "m.w3x"), "probe_script_file": str(probe)}))
+    assert seen["functions"].startswith("function G") and out["probe_functions_file"].endswith("duel.functions.j")
+
+
+def test_probe_messages_say_whom_they_were_for():
+    from wc3mcp.ops.probe import parse
+
+    doc = parse(["message0=hello", "messageto0=all", "message1=for the bot", "messageto1=3"])
+    assert doc["messages"] == ["hello", "for the bot"] and doc["message_to"] == ["all", "3"]
+
+
+def test_game_status_shows_what_a_long_probe_reported_so_far(monkeypatch, tmp_path):
+    monkeypatch.setenv("WC3MCP_DOCUMENTS", str(tmp_path))
+    partial = server.desktop_game._result_path(server.probe_ops.PARTIAL)
+    partial.parent.mkdir(parents=True)
+    partial.write_text('function PreloadFiles takes nothing returns nothing\n\tcall Preload( "report=duel 3 of 24" )\n'
+                       "endfunction\n")
+    monkeypatch.setattr(server.desktop_game.GAME, "run", {"result": None, "meta": {"probe": True}, "started": 0.0})
+    monkeypatch.setattr(server.desktop_game.GAME, "status", lambda: {"run": {"state": "running"}})
+    run = payload(call("game_status", {}))["run"]
+    assert run["partial"]["reports"] == ["duel 3 of 24"]

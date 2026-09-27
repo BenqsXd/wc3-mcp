@@ -71,3 +71,6 @@
 
 - `GroupEnumUnitsInRect` and the other `GroupEnum...` calls skip units hidden with `ShowUnit(false)`: a probe that counts them must keep their handles or read `placed_list`. Raw codes are base-256 integers, so `'n020' + 10` is `'n02:'`, not `'n02A'`.
 - `image_crop` enlarges part of a screenshot (`rect` [x, y, width, height], `scale`), for reading a tooltip or a buff icon in a `game_test` picture.
+- Runs over a minute or two: use `wait=false` and poll `game_status`. A JASS probe rewrites its report lines so far every 30 s of game time, shown under `run.partial`; end the run with `game_close` once it answers. A waiting call that gets interrupted no longer loses the run: it finishes in the background and `game_status` holds the result.
+- Keep a probe's helper functions in `<probe>.functions.j` next to its `probe_script_file`: they are picked up automatically, so a probe and its helpers never drift apart. `probe.message_to` says who saw each message; every result carries `server_version`, so a stale server process shows at once.
+

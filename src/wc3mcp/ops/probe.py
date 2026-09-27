@@ -12,11 +12,13 @@ from .triggers import triggers_edit
 
 NAME = "wc3mcpProbe"
 REPORT = "wc3mcp\\probe.txt"
+PARTIAL = "wc3mcp\\partial.txt"   # the lines reported so far, rewritten every 30 s (JASS maps)
 STARTED = "wc3mcp\\started.txt"   # written the moment the map runs: game_test starts its screenshot series there
 MAX_MESSAGES = 50
 # JASS maps: the probe copy routes BJDebugMsg and the text display functions through these, which keep the text for
 # the report
 JASS_GLOBALS = """    string array wc3mcpProbe_messages
+    string array wc3mcpProbe_to
     integer wc3mcpProbe_count = 0
     hashtable wc3mcpProbe_table = null
     string array wc3mcpProbe_lines
@@ -41,35 +43,52 @@ function ProbeHandleCount takes nothing returns integer
     return id
 endfunction
 
-function wc3mcpProbe_Keep takes string s returns nothing
+function wc3mcpProbe_Keep takes string s, string to returns nothing
     if wc3mcpProbe_count < {limit} then
         set wc3mcpProbe_messages[wc3mcpProbe_count] = SubString(s, 0, 200)
+        set wc3mcpProbe_to[wc3mcpProbe_count] = to
         set wc3mcpProbe_count = wc3mcpProbe_count + 1
     endif
 endfunction
 
+function wc3mcpProbe_ForceIds takes force f returns string
+    local integer i = 0
+    local string ids = ""
+    loop
+        exitwhen i > 23
+        if IsPlayerInForce(Player(i), f) then
+            if ids != "" then
+                set ids = ids + ","
+            endif
+            set ids = ids + I2S(i)
+        endif
+        set i = i + 1
+    endloop
+    return ids
+endfunction
+
 function wc3mcpProbe_Msg takes string s returns nothing
-    call wc3mcpProbe_Keep(s)
+    call wc3mcpProbe_Keep(s, "all")
     call BJDebugMsg(s)
 endfunction
 
 function wc3mcpProbe_DisplayTextToPlayer takes player p, real x, real y, string s returns nothing
-    call wc3mcpProbe_Keep(s)
+    call wc3mcpProbe_Keep(s, I2S(GetPlayerId(p)))
     call DisplayTextToPlayer(p, x, y, s)
 endfunction
 
 function wc3mcpProbe_DisplayTimedTextToPlayer takes player p, real x, real y, real d, string s returns nothing
-    call wc3mcpProbe_Keep(s)
+    call wc3mcpProbe_Keep(s, I2S(GetPlayerId(p)))
     call DisplayTimedTextToPlayer(p, x, y, d, s)
 endfunction
 
 function wc3mcpProbe_DisplayTextToForce takes force f, string s returns nothing
-    call wc3mcpProbe_Keep(s)
+    call wc3mcpProbe_Keep(s, wc3mcpProbe_ForceIds(f))
     call DisplayTextToForce(f, s)
 endfunction
 
 function wc3mcpProbe_DisplayTimedTextToForce takes force f, real d, string s returns nothing
-    call wc3mcpProbe_Keep(s)
+    call wc3mcpProbe_Keep(s, wc3mcpProbe_ForceIds(f))
     call DisplayTimedTextToForce(f, d, s)
 endfunction
 
@@ -128,11 +147,33 @@ function Trig_{name}_Actions takes nothing returns nothing
     loop
         exitwhen i >= wc3mcpProbe_count
         call Preload("message" + I2S(i) + "=" + wc3mcpProbe_messages[i])
+        call Preload("messageto" + I2S(i) + "=" + wc3mcpProbe_to[i])
         set i = i + 1
     endloop
     call PreloadGenEnd("{report}")
     call DestroyGroup(g)
     set g = null
+endfunction
+
+// every 30 s the lines reported so far go to a partial file, which game_status shows while a long run goes
+function Trig_{name}_Partial takes nothing returns nothing
+    local integer i = 0
+    call PreloadGenClear()
+    call PreloadGenStart()
+    call Preload("partial.seconds=" + I2S(R2I(TimerGetElapsed(wc3mcpProbe_clock))))
+    loop
+        exitwhen i >= wc3mcpProbe_lineCount
+        call Preload(wc3mcpProbe_lines[i])
+        set i = i + 1
+    endloop
+    set i = 0
+    loop
+        exitwhen i >= wc3mcpProbe_count
+        call Preload("message" + I2S(i) + "=" + wc3mcpProbe_messages[i])
+        call Preload("messageto" + I2S(i) + "=" + wc3mcpProbe_to[i])
+        set i = i + 1
+    endloop
+    call PreloadGenEnd("{partial}")
 endfunction
 
 function Trig_{name}_Started takes nothing returns nothing
@@ -144,6 +185,7 @@ function Trig_{name}_Started takes nothing returns nothing
     call Preload("started")
     call PreloadGenEnd("{started}")
     call DestroyTimer(GetExpiredTimer())
+    call TimerStart(CreateTimer(), 30.0, true, function Trig_{name}_Partial)
 endfunction
 
 function InitTrig_{name} takes nothing returns nothing
@@ -385,7 +427,8 @@ def script(language: str, seconds: float, user: str | None = None, functions: st
     call = ("" if user is None else f"    Trig_{NAME}_User()\n" if lua else f"    call Trig_{NAME}_User()\n")
     call_init = ("" if init is None else f"    Trig_{NAME}_Init()\n" if lua else f"    call Trig_{NAME}_Init()\n")
     text = template.format(name=NAME, seconds=f"{float(seconds):.2f}", report=REPORT.replace("\\", "\\\\"),
-                           started=STARTED.replace("\\", "\\\\"), limit=MAX_MESSAGES, call_user=call,
+                           started=STARTED.replace("\\", "\\\\"), partial=PARTIAL.replace("\\", "\\\\"),
+                           limit=MAX_MESSAGES, call_user=call,
                            call_init=call_init)
     if user is None:
         return text
@@ -454,6 +497,8 @@ def parse(lines: list[str]) -> dict:
         key, sep, value = line.partition("=")
         if re.fullmatch(r"message\d+", key) and sep:
             out["messages"].append(value)
+        elif re.fullmatch(r"messageto\d+", key) and sep:
+            out.setdefault("message_to", []).append(value)   # "all", a player id, or the ids of a force
         elif key == "report" and sep:
             out["reports"].append(value)
         elif key == "report+" and sep and out["reports"]:
