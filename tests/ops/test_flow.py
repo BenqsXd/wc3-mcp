@@ -81,3 +81,22 @@ def test_melee_check_marks_an_empty_map_as_unlike_the_shipped_ones(tmp_path, cat
     with pytest.raises(ToolError) as e:
         melee_check(single, catalog, sample=2)
     assert e.value.code == "bad_value" and "two start locations" in e.value.message
+
+
+def test_areas_label_the_ground_a_unit_can_walk_between(tmp_path):
+    from corpus import _storage
+    from wc3mcp.gamedata.catalog import Catalog
+    from wc3mcp.ops.flow import areas
+    from wc3mcp.ops.newmap import new_map
+    from wc3mcp.ops.terrain import terrain_edit
+
+    catalog = Catalog(_storage(), balance="Custom_V1")
+    p = new_map(str(tmp_path / "A.w3x"), catalog, width=64, height=64, tileset="L", players=2, fill_tile="Lgrs")
+    terrain_edit(p, catalog, [{"op": "cliff", "rect": [-4096, -256, 4096, 256], "level": 6}])   # a wall across
+    doc = areas(p, catalog, grid_step=8)
+    # south of the wall, north of it, and the wall's own flat top (a plateau is ground too)
+    assert doc["count"] == 3 and doc["areas"][0]["cells"] > 1000
+    south, top, north = sorted(doc["areas"], key=lambda a: a["sample"][1])
+    assert south["rect"][3] < top["rect"][1] and top["rect"][3] < north["rect"][1]
+    labels = {v for row in doc["grid"]["rows"] for v, _ in row}
+    assert labels == {0, 1, 2, 3}

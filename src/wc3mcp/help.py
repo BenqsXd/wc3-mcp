@@ -553,6 +553,12 @@ how many of them the starts reach, and the pockets they do not - on a melee map 
 which open when the trees come down. A choke under about 400 world units is a one-unit pass, 400-900 a lane, above
 1500 open ground. Water deeper than about 53 blocks, like a cliff.
 
+AREAS
+  map_flow(path, areas=true) labels every walkable area on the same 32-unit cells: area number (largest first),
+  cells, rect and one walkable sample point; min_cells hides pockets (counted in smaller_hidden). grid_step=N adds a
+  label grid every N cells as run-length rows ([area, count], 0 = not walkable) - the data for keeping blinks,
+  spawns and teleports on ground a unit can reach. A raised plateau is an area of its own.
+
 ORIGINS AND TARGETS (the 32-unit cells the game paths on)
   map_flow(path, origins=[...], targets=[...]) with [x, y] points, region names or "start:N": can a ground unit walk
   from any origin to each target? A place on a building, a mine or a tree counts from the ground around it; an origin

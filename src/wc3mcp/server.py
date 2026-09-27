@@ -829,7 +829,8 @@ def layout_check(path: str, area: list[float] | None = None, kinds: list[str] | 
 @_tool
 def map_flow(path: str, area: list[float] | None = None, origins: list | None = None,
              targets: list | None = None, fields: list[str] | None = None, min_gap: float | None = None,
-             verbose: bool = False) -> dict:
+             verbose: bool = False, areas: bool = False, min_cells: int = 16,
+             grid_step: int | None = None) -> dict:
     """How a map plays, in walking distances rather than straight lines: per start location the way to its own gold
     mine and to the nearest expansion, the walkable room around it, and how much ground it reaches; per pair of
     starts the distance between them and the narrowest choke on the way, with where that choke is; plus the walkable
@@ -839,8 +840,12 @@ def map_flow(path: str, area: list[float] | None = None, origins: list | None = 
     a different question on the game's own 32-unit cells: can a unit walk from any origin to each target, how far,
     and through what narrowest gap - sealed=true proves a wall or moat closed, and a leak comes back with the gap and
     where it is. Target rows leave out the sampled route unless verbose=true; min_gap keeps only the unreachable
-    targets and those narrower than it; fields keeps only those keys per target. wc3_help("map_flow") explains the
-    numbers, melee_check included."""
+    targets and those narrower than it; fields keeps only those keys per target. areas=true instead labels every
+    walkable area (largest first, with its rect and one walkable sample point; areas under min_cells cells are
+    counted, not listed), and grid_step=N adds a label grid every N cells as run-length rows - where to keep blinks
+    and spawns on reachable ground. wc3_help("map_flow") explains the numbers, melee_check included."""
+    if areas:
+        return flow_ops.areas(_project(path), _catalog("enUS", "Custom_V1", True), min_cells, grid_step)
     if (origins is None) != (targets is None):
         raise ToolError("bad_value", "give origins and targets together", path="origins" if origins is None else "targets")
     if origins is not None:

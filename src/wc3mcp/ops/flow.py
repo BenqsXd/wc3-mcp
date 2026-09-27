@@ -420,3 +420,84 @@ def melee_check(project, catalog, sample: int = SAMPLE) -> dict:
             "reading": ("p10 and p90 are the shipped maps' range for maps with the same number of players, so "
                         '"inside" means this map looks like them on that measure; units are world units, and '
                         "density is objects per 1000 terrain corners")}
+
+
+def areas(project, catalog, min_cells: int = 16, grid_step: int | None = None) -> dict:
+    """The walkable areas of the map: ground cells a unit can walk between, each area labelled, largest first.
+    grid_step (in 32-unit cells) adds a label grid at that resolution as run-length rows, south to north."""
+    from .pathing import cells
+
+    scene, _grid_unused, blockers, _starts = _grid(project, catalog, corners=False)
+    terrain = scene.terrain
+    free, width, height, source = cells(project, terrain, catalog, blockers)
+    # union-find over the free runs of each row (4-connected, as units path on the cells)
+    parent: list[int] = []
+
+    def find(a: int) -> int:
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    runs, previous = [], []
+    for y in range(height):
+        row, x, base = [], 0, y * width
+        while x < width:
+            if free[base + x]:
+                start = x
+                while x < width and free[base + x]:
+                    x += 1
+                label = len(parent)
+                parent.append(label)
+                for s, e, other in previous:   # a run above that overlaps joins this one
+                    if s < x and start < e:
+                        ra, rb = find(label), find(other)
+                        if ra != rb:
+                            parent[rb] = ra
+                row.append((start, x, label))
+            else:
+                x += 1
+        runs.append(row)
+        previous = row
+    sizes: dict[int, list] = {}
+    for y, row in enumerate(runs):
+        for s, e, label in row:
+            root = find(label)
+            entry = sizes.setdefault(root, [0, s, y, e - 1, y, s, y])
+            entry[0] += e - s
+            entry[1], entry[2] = min(entry[1], s), min(entry[2], y)
+            entry[3], entry[4] = max(entry[3], e - 1), max(entry[4], y)
+    ranked = sorted((r for r in sizes.items() if r[1][0] >= min_cells), key=lambda r: -r[1][0])
+    number = {root: i + 1 for i, (root, _) in enumerate(ranked)}
+
+    def world(cx: float, cy: float) -> list[int]:
+        return [round(terrain.offset_x + cx * CELL), round(terrain.offset_y + cy * CELL)]
+
+    out = {"cell_units": CELL, "terrain_source": source, "count": len(ranked),
+           "smaller_hidden": sum(1 for v in sizes.values() if v[0] < min_cells),
+           "areas": [{"area": number[root], "cells": v[0], "square_units": v[0] * CELL * CELL,
+                      "rect": world(v[1], v[2]) + world(v[3] + 1, v[4] + 1),
+                      "sample": world(v[5] + 0.5, v[6] + 0.5)} for root, v in ranked[:50]],
+           "note": "areas are the ground a unit can walk between (32-unit cells, terrain plus every placed object's "
+                   "footprint); area numbers go by size, and sample is one walkable point inside each"}
+    if grid_step:
+        step = max(1, int(grid_step))
+        label_of = [0] * (width * height)
+        for y, row in enumerate(runs):
+            for s, e, label in row:
+                n = number.get(find(label), 0)
+                if n:
+                    label_of[y * width + s:y * width + e] = [n] * (e - s)
+        rows = []
+        for y in range(step // 2, height, step):
+            values = [label_of[y * width + x] for x in range(step // 2, width, step)]
+            packed: list[list[int]] = []
+            for v in values:
+                if packed and packed[-1][0] == v:
+                    packed[-1][1] += 1
+                else:
+                    packed.append([v, 1])
+            rows.append(packed)
+        out["grid"] = {"step_units": step * CELL, "origin": world(step / 2, step / 2), "rows": rows,
+                       "format": "rows south to north, each [area, count] pairs west to east; 0 is not walkable"}
+    return out
