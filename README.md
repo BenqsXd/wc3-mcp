@@ -68,6 +68,23 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.8
+
+- **`map_protect`** writes a copy of a saved map that plays in the game but that the World Editor refuses to open
+  ("Level Info data missing or invalid", and "Unit data missing or invalid" if someone repairs w3i). The copy has
+  no editable sources: GUI triggers, trigger text, placed units, regions, cameras, sounds, the import list and the
+  listfile are left out, and war3map.w3i ends after the forces. The script is obfuscated: every JASS function,
+  global, local and parameter gets a random look-alike name (`lIl1I1...`), including literal `ExecuteFunc` targets,
+  and comments and layout are removed. Lua maps get their own global functions and `udg_`/`gg_`/`Trig_` names renamed.
+  Checked live: the editor refuses the copy, and JASS and Lua copies run in the game.
+- **`map_unprotect`** restores the original byte for byte. At protection time the original goes into a vault in
+  `WC3MCP_HOME\protected`, keyed by the protected file's SHA-256. A restore reads that vault and never reverses the
+  protection. Maps protected on another machine, or changed since, are refused with `not_ours`.
+- Limits: the game has to read terrain, object data, strings and imported assets, so MPQ tools can still extract
+  them. The protection removes the editable sources and makes the code unreadable. It cannot hide assets.
+- `editor_map open` fails at once with `load_failed` and the editor's message when the editor cannot load a map,
+  instead of waiting 120 s behind the error box.
+
 ## What's new in 1.7
 
 - **Long game tests are safe to watch.** Every `game_test` run has its own thread, so an interrupted waiting call no

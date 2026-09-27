@@ -150,8 +150,27 @@ class Editor:
             if s["ready"] and not s["busy"] and (_shows(s, target) if target else s["untitled"]):
                 time.sleep(1.0)
                 return self.status()
+            if target and "Error" in s["dialogs"]:
+                self._refuse_load()
             time.sleep(0.5)
         raise ToolError("timeout", f"the World Editor was not ready after {timeout} s", status=self.status())
+
+    def _refuse_load(self) -> None:
+        """An 'Unable to load file' box (a damaged or protected map): close it and fail instead of waiting."""
+        h = self.find_window("Error")
+        controls = win.controls(h) if h else []
+        text = next((c["text"] for c in controls if c["class"] == "Static" and "Unable to load file" in c["text"]), None)
+        if text is None:
+            return
+        button = next((c for c in controls if c["class"] == "Button"), None)
+        for _ in range(3):   # the first click sometimes only focuses the box
+            if not button or not self.find_window("Error"):
+                break
+            win.click(button["hwnd"])
+            time.sleep(0.5)
+        raise ToolError("load_failed", " ".join(text.split()),
+                        hint="the World Editor cannot open this map (a map_protect copy is meant to fail here); "
+                             "the editor stays open without a map", status=self.status())
 
     def _loaded(self) -> dict:
         s = self.status()

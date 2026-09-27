@@ -26,6 +26,7 @@ If a parameter or op named here is missing from the tool definitions you see (fo
 4. **Check.** `script_build` regenerates `war3map.j`/`war3map.lua`; `script_validate lint=true` runs pjass/JassHelper or the Lua checker plus the runtime traps; `map_validate` checks cross-file consistency; `layout_check`, `map_flow` and `melee_check` say whether the map reads and plays. `triggers_edit validate=true` does the build and check in one call.
 5. **Save.** `map_save` rebuilds the script and minimap image when needed, validates, writes a timestamped backup of the previous file (named in `backup`) and replaces the map atomically. `map_snapshot` makes a restore point before risky changes; `map_close` ends the session.
 6. **Test in the game.** `game_test` (see `references/testing.md`).
+7. **Release.** `map_protect` writes `<name>_protected.w3x` next to the original. That copy plays in the game, but the World Editor refuses to open it: it has no editor sources and an obfuscated script. Keep the original for further work. `map_unprotect` restores only maps protected on this machine, from the vault. Test the protected copy with `game_test` before you publish it.
 
 ## Reference files
 

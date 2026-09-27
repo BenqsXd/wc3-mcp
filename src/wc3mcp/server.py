@@ -37,6 +37,7 @@ from .ops import newmap as newmap_ops
 from .ops import objdata as objdata_ops
 from .ops import placed as placed_ops
 from .ops import probe as probe_ops
+from .ops import protect as protect_ops
 from .ops import recipes as recipe_ops
 from .ops import script as script_ops
 from .ops import terrain as terrain_ops
@@ -462,6 +463,32 @@ def map_save(path: str, dest: str | None = None, format: Literal["mpq", "folder"
         if compiled is not None:
             result["validation"]["script"] = {k: compiled[k] for k in ("ok", "file", "tool", "seconds") if k in compiled}
     return result
+
+
+@_tool
+def map_protect(path: str, dest: str | None = None) -> dict:
+    """Write a protected copy of a saved map file (.w3x/.w3m) that plays in the game but that the World Editor refuses
+    to open: the editor-only files (GUI triggers, trigger text, placed units, regions, cameras, sounds, import list)
+    and the listfile are left out, war3map.w3i ends after the forces, and the map script is obfuscated (every JASS
+    function, global, local and parameter gets a random name; comments and layout go; Lua maps get their own global
+    functions and udg_/gg_/Trig_ names renamed). The original is not changed; the copy goes to dest or
+    <name>_protected.w3x beside it. The original is also kept in this server's vault, keyed by the protected file's
+    hash, for map_unprotect. Game-read data (terrain, object data, imports, strings) must stay readable for the game,
+    so it can still be extracted with MPQ tools: the protection removes the editable sources, it cannot hide assets."""
+    for p in _projects.values():
+        if _key(str(p.source)) == _key(path) and (p.m["dirty"] or p.m["deleted"]):
+            raise ToolError("unsaved_changes", f"{Path(path).name} has unsaved edits in its working copy",
+                            hint="map_save first: map_protect reads the map file")
+    return protect_ops.protect(path, _catalog("enUS", "Custom_V1", True), dest)
+
+
+@_tool
+def map_unprotect(path: str, dest: str | None = None) -> dict:
+    """Restore the original of a map that map_protect protected on this machine, byte for byte, to dest or beside
+    the protected file under the original's name (an existing file there is backed up first). It restores from the
+    vault kept at protection time, identified by the protected file's hash: it does not reverse the protection, and
+    maps protected elsewhere (or changed since) are refused with not_ours."""
+    return protect_ops.unprotect(path, dest)
 
 
 @_tool
