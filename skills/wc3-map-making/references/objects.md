@@ -134,3 +134,9 @@ info and GUI triggers all point at these entries, so they follow; the map script
 - Icy Gate `ITg1`/`ITg3` (`Gate1Path.tga`, 20 x 4 cells) closes a 512-wide cliff notch alone: `ITg1` at 270 for a north/south way, `ITg3` at 0 for east/west.
 - A recipe item bought as a PowerUp fires crafting three times (sell, pickup and the drop as it is used up): do not build recipes on PowerUps.
 - The World Editor drops a custom destructible's `bmis`/`bmas` on save; `editor_map save` reports it under `editor_dropped` - set them again after the last editor save.
+
+- A unit ability copied for a dummy or a creep keeps its tech requirement: a copy of Ensnare (`Aens`) keeps `areq` `Roen` and its order is refused until `areq` is cleared (`map_validate` `locked_ability` also covers abilities the script adds).
+- Curse (`Acrs`) has a 3-letter data field `Crs` in the game's metadata, which object data cannot store: leave it at its default (extending the copy's levels skips it).
+- Status icons: one hidden Devotion Aura copy (area small, self target) per status, each with its own buff, coexist on one unit and show their buffs.
+- An `upsert` onto an id that exists with another base is refused (`base_mismatch`): check `objdata_list` for a free id before choosing one.
+- Turning off the engine's hero and creep experience (`constants_edit` GrantHeroXP / GrantNormalXP tables and formulas to 0) leaves every point of experience to the scripts.

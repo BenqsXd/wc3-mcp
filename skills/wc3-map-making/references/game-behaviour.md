@@ -110,3 +110,24 @@ Everything here was observed in a real run (mostly through `game_test probe_scri
 - The buff bar's order cannot be set from script: the same auras came out in a different order from run to run. Name buffs in their tooltips instead.
 - `BlzGetFrameByName("ConsoleUIBackdrop", 0)` lets a frame sit beyond the 4:3 area; the client's right edge in frame units is `0.4 + 0.3 * width / height`. The command card draws over it: text below about y 0.15 at the right edge is hidden.
 - StringList `%%`: in the stock strings a literal percent is `%%` only inside strings that also carry format arguments (`"(%d%% income)"`); strings without arguments write a bare `%`. An override must follow the same rule per key.
+
+- `UnitDamageTarget(..., attack=true, ...)` does not make `BlzGetEventIsAttack()` true in a damage event; only a real swing does. Test on-hit effects keyed on the attack flag with a real attack.
+- `IsUnitType(u, UNIT_TYPE_STUNNED)` stays false under a dummy-cast stun; read the stun buff (`GetUnitAbilityLevel(u, 'BPSE') > 0`) instead.
+- Moving the caster (`SetUnitPosition`) inside `EVENT_PLAYER_UNIT_SPELL_EFFECT` skips the ability's cooldown (the mana is still spent). Restart it from a 0 s timer with `BlzStartUnitAbilityCooldown(u, a, BlzGetUnitAbilityCooldown(u, a, level - 1))` when the remaining cooldown is 0; do not take the mana again.
+- Heroes keep all their items through death and revive when every item has `idrp` 0 (`idro` 0 also stops players dropping them; selling still works).
+- One very large fog modifier circle (1760) left points near its rim fogged; tile an area with smaller circles.
+- Minimap creep-camp colours come from the summed creep levels of a camp: below 10 green, 10-19 orange, 20+ red (`MinimapMiddleCampThreshold` / `MinimapToughCampThreshold` in `UI/MiscData.txt`).
+- A fixed race for a slot: `info_edit` `players[i].race` plus `use_custom_forces` and `fixed_player_settings_for_custom_forces`; the lobby then shows the race and does not let it change.
+- `SetUnitPathing(u, false)` units stay where they were created; Ghost (`Aeth`) added by script is "no unit collision, terrain still blocks".
+- `GetUnitAcquireRange` reads back the type's value after `SetUnitAcquireRange(u, 1)`, but the set works; `SetUnitAcquireRange(u, 0)` does not stop acquiring (use 1).
+- Re-sending an order every tick freezes a unit (a channel restarts before it fires): compare `GetUnitCurrentOrder` first and give a spell order a deadline.
+- Permanent Invisibility needs its fade time: a paused unit given it stayed visible; unpaused, it was gone after about 3.5 s.
+- Hiding and showing a Locust unit (`ShowUnit`) gives it a life bar; park pooled dummies out of sight with `SetUnitX/Y` instead.
+- `ReviveHero` fails (returns false) on a hero still in its death animation: check the return value and retry a second later.
+- `BlzGetUnitBaseDamage` is the weapon only; the primary attribute is added on top by the game.
+- A neutral shop sells a normal item to a hero with a full inventory by dropping it on the ground; a power-up (tome) is bought with a full inventory and fires the same sell event.
+- A shop's Select User button keeps one of its 12 command-card cells, so a shop sells at most 11 items. Removing `Aneu` makes the shop list nothing; moving or hiding its button, or `Aall` instead, does not help (`map_validate` warns `shop_select` / `shop_slots`).
+- Special effects: `BlzSetSpecialEffectPosition` left a model invisible where `BlzSetSpecialEffectX/Y/Z` did not; `BlzSetSpecialEffectScale` scales the z offset too; `BlzSetSpecialEffectTimeScale` 0 plus `BlzSetSpecialEffectTime` freezes an animation at a frame.
+- Effects only some players may see: create the effect on every client with an empty model string on the screens that should not see it (same handles, no desync); per-screen `BlzSetSpecialEffectAlpha` does the same for a lasting effect.
+- The engine's life bar draws over world models at its height, and no native reports that height; a UI frame cannot follow a unit reliably (the 3D viewport centre is not the screen centre), a world model attached to it can. `SetTextTagPos` keeps a number next to such a model at any zoom.
+- Two blended NoDepthTest materials have no fixed draw order; `PriorityPlane` fixes it.

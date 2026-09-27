@@ -100,3 +100,12 @@ has regenerated the script; a 3D sound is heard where it is played, so attach it
 - Loops that fit regions: `Sound\Ambient\DoodadEffects\WaterStreamLoop1.ogg`, `WaterLakeLoop1.ogg`, `WaterWaterFallLoop1.ogg`, `LordaeronSummerFliesLoop1.ogg`, `CityscapeFountainLoop1.ogg`, `CityScapeMagicRunesLoop1.ogg`; each tileset has day and night ambience too (`Sound\Ambient\SunkenRuins\WetlandsDay.ogg`).
 
 - A custom-script trigger runs through `InitTrig_<name>`, which the tools add. It registers `Trig_<name>_Actions` when the script defines it, else the first function that **takes nothing**; a script of helpers that all take parameters is treated as a library and gets an `InitTrig` that only creates the trigger (registering a function with parameters fails pjass).
+
+- A real literal of 2^31 or more compiles but is not held by the game (comparisons with it come out false); `1.0e12` is a pjass error. Seed a search with -1 instead (lint rule `big_real`).
+- `R2I` truncates float error: `R2I(300 * 1.10)` is 329. Round with `R2I(x + 0.5)` wherever a multiplier meets an integer (lint rule `r2i_truncates`).
+- Ids built by arithmetic stay inside one character run: `'AV0A' + k` works for k 0..25, `'AF01' + k` breaks after 8 (`'AF0:'`).
+- JASS cannot pass an array to a function (`takes boolean array` is not a parameter type); use a global array for shared scratch state.
+- A function started with `ExecuteFunc` may sleep and runs in its own thread with its own op limit: use it for long searches and for a scripted ending with `TriggerSleepAction` between steps.
+- Per-unit state for a unit indexer that never recycles belongs in a hashtable, not in `index * k + j` arrays: those pass the 32768 array limit in a long game.
+- A variable op on a name the map already has changes that variable: `triggers_edit` now warns (and refuses a different type), and `created` lists only the new ones. Two generators must never share a global name.
+- Generated object ids must be stable: number new combinations at the end of an id table instead of in catalogue order, or a regenerated batch moves ids onto other bases (`objdata_edit` upsert refuses that with `base_mismatch`).
