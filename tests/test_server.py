@@ -643,6 +643,17 @@ def test_game_status_shows_what_a_long_probe_reported_so_far(monkeypatch, tmp_pa
     assert run["partial"]["reports"] == ["duel 3 of 24"]
 
 
+def test_game_status_keeps_a_long_partial_report_small():
+    partial = {"reports": [f"event {i}" for i in range(1000)] + ["death 7"],
+               "messages": ["a", "b", "death c"], "message_to": ["all", "0", "3"]}
+    out = server._trim_partial(partial, 5, None)
+    assert out["reports"] == ["event 996", "event 997", "event 998", "event 999", "death 7"]
+    assert out["left_out"] == {"reports": 996} and out["messages"] == ["a", "b", "death c"]
+    out = server._trim_partial({"reports": ["x", "death 1"], "messages": ["a", "death c"],
+                                "message_to": ["all", "3"]}, 100, "death")
+    assert out["reports"] == ["death 1"] and out["messages"] == ["death c"] and out["message_to"] == ["3"]
+
+
 def test_a_round_trip_can_end_with_the_editor_closed(monkeypatch):
     editor = server.desktop_editor.EDITOR
     monkeypatch.setattr(editor, "status", lambda: {"map": None})

@@ -230,12 +230,24 @@ LONG RUNS
   and game_status shows it under run.partial, so a long balance or economy run can be read (and ended with game_close)
   before it finishes. probe.message_to says whom each message in probe.messages was shown to: "all" (BJDebugMsg), a
   player id, or the ids of a force. screenshot_times gives the game time of each saved picture.
+  run.partial keeps the last 100 report lines and messages (game_status tail=N, grep="regex" to pick others;
+  left_out counts the rest).
+  probe.user_input lists what a person did in the game during the run: chat lines ("<player id>:<text>") and a count
+  of mouse clicks by human players (JASS maps). A failed check next to it may be the person's doing: keep hands off
+  the game window during probes.
+  A run without results (no probe, no results listed) ends once the map runs and its screenshots are taken
+  (ended="screenshots_done" or "map_started") instead of idling until the timeout.
 
 FOCUS
   The game only loads while its window is in front. focus.raised counts how often the run raised it and
   focus.lost_to names the windows that held the foreground meanwhile. The Battle.net app's windows are minimised once
-  the game window exists (launcher_minimized). stuck_at="loading_screen": the map loaded (the log has "Opening map")
-  but the key that leaves the loading screen never reached the game.
+  the game window exists (launcher_minimized). stuck_at="loading_screen": the game opened the map (it holds the map
+  file) but the key that leaves the loading screen never reached the game.
+  Whether the map loads is read from the map file the game holds open, not from pixels: a map's own loading screen
+  model or teal ground can look like the main menu, and a run only starts the game again (relaunched
+  "stuck_at_main_menu") while the game has not opened the map. A full loading bar (PRESS ANY KEY) is found at any
+  height, so a custom loading screen gets its key too.
+  Blizzard's LOGIN QUEUE dialog is waited out, not counted against the timeout and reported as login_queue.seconds.
 
 LOGIN
   A game started directly ("Warcraft III.exe -launch -loadfile ...") has no Battle.net session and shows the login

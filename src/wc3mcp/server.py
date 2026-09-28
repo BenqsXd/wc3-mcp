@@ -4,6 +4,7 @@ import functools
 import inspect
 import json
 import logging
+import re
 import shutil
 import time
 from pathlib import Path
@@ -1339,12 +1340,34 @@ def _finish_test(result: dict, probe: bool) -> dict:
     return result
 
 
+def _trim_partial(partial: dict, tail: int, grep: str | None) -> dict:
+    """A long probe reports thousands of lines: keep the last `tail` report lines and messages (those matching grep)
+    and say how many were left out."""
+    try:
+        match = re.compile(grep).search if grep else (lambda text: True)
+    except re.error as e:
+        raise ToolError("bad_value", f"grep: {e}", path="grep")
+    left_out = {}
+    for key, paired in (("reports", None), ("messages", "message_to")):
+        rows = partial.get(key) or []
+        keep = [i for i, text in enumerate(rows) if match(text)][-tail:] if tail > 0 else []
+        if len(keep) < len(rows):
+            left_out[key] = len(rows) - len(keep)
+            partial[key] = [rows[i] for i in keep]
+            if paired in partial:   # message_to[i] names who saw messages[i]
+                partial[paired] = [partial[paired][i] for i in keep if i < len(partial[paired])]
+    if left_out:
+        partial["left_out"] = left_out
+    return partial
+
+
 @_tool
-def game_status() -> dict:
+def game_status(tail: int = 100, grep: str | None = None) -> dict:
     """Game processes (and which this server launched), their windows and the useful War3Log.txt lines. A game_test
     run started with wait=false is reported under run: while it goes, how long it has taken and which result files
     it has; when it ends, its whole result (probe reports included) under run.result. launcher says what a Play in
-    the Battle.net app would start today."""
+    the Battle.net app would start today. A running probe's report so far (run.partial) keeps its last `tail`
+    report lines and messages, only those matching the regex `grep` when given."""
     job = desktop_game.GAME.run
     if job is not None and job["result"] is not None and not job.get("finished"):
         job["result"] = _finish_test(job["result"], job["meta"].get("probe", False))
@@ -1356,7 +1379,7 @@ def game_status() -> dict:
         partial = desktop_game._result_path(probe_ops.PARTIAL)
         if partial.is_file() and partial.stat().st_mtime >= job["started"]:
             lines = desktop_game.parse_preload(partial.read_text("utf-8", "replace"))
-            run["partial"] = probe_ops.parse(lines)
+            run["partial"] = _trim_partial(probe_ops.parse(lines), tail, grep)
             run["partial_note"] = ("what the probe reported so far (rewritten every 30 s of game time; JASS maps); "
                                    "game_close ends the run early when this already answers")
     return status

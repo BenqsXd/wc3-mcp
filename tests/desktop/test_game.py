@@ -167,7 +167,7 @@ def test_screen_state_reads_login_and_waiting_loading_screens():
 
 def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False, runner=None, map_bytes=b"",
               launches=None, wait=True, login="stop", app=None, alerts=None, raised=None, foreground=7,
-              app_windows=None, minimized=None, log_lines=None, **options):
+              app_windows=None, minimized=None, log_lines=None, held=False, results=(r"t\r.txt",), **options):
     clock = {"now": 1000.0}
     fake_time = type("T", (), {"time": staticmethod(lambda: clock["now"]),
                                "sleep": staticmethod(lambda s: clock.__setitem__("now", clock["now"] + s))})
@@ -196,6 +196,9 @@ def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False, runne
     monkeypatch.setattr(game, "screen_state", lambda image: next(shown, None))
     monkeypatch.setattr(game.battlenet, "exe", lambda: tmp_path / "Battle.net.exe" if app else None)
     monkeypatch.setattr(game.battlenet, "forget_map", lambda: None)
+    monkeypatch.setattr(game.battlenet, "launch_copy", lambda: tmp_path / "launch.w3x")
+    # whether the game holds the map file: a bool, or a callable of the fake clock's seconds since the start
+    monkeypatch.setattr(game, "holds", lambda path: held(clock["now"] - 1000.0) if callable(held) else held)
 
     def launch_app(self, found, target):
         if callable(app):
@@ -215,7 +218,7 @@ def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False, runne
             out.write_text('function PreloadFiles takes nothing returns nothing\n\tcall Preload( "ok" )\nendfunction\n')
 
     monkeypatch.setattr(game.win, "send_input", press)
-    result = (runner or game.Game()).test(tmp_path / "map.w3x", timeout=300, results=[r"t\r.txt"], wait=wait,
+    result = (runner or game.Game()).test(tmp_path / "map.w3x", timeout=300, results=list(results), wait=wait,
                                           login=login, **options)
     return result, keys, closed
 
@@ -343,7 +346,7 @@ def test_the_screenshot_series_starts_when_the_map_runs(monkeypatch, tmp_path):
     assert result["screenshots"] == [b"png"] * 3 and result["map_started_after"] > 0
     assert "from the moment the map ran" in result["screenshots_note"]
     monkeypatch.setattr(game.Game, "_screenshot", lambda self, pid: (None, "game_window_not_in_front"))
-    result, _, _ = _fake_run(monkeypatch, tmp_path, [None] * 200, shots=2, shot_every=5)
+    result, _, _ = _fake_run(monkeypatch, tmp_path, [None] * 200, shots=2, shot_every=5, held=True)
     assert result["screenshots"] == [] and result["screenshots_failed"][0]["reason"] == "game_window_not_in_front"
 
 
@@ -406,13 +409,59 @@ def test_the_foreground_holder_is_reported_and_the_launcher_minimised(monkeypatc
 
 
 def test_a_map_that_loaded_but_never_started_is_stuck_at_the_loading_screen(monkeypatch, tmp_path):
+    # the game opens every map of the Maps folder at start, so a log line says nothing; the held map file does
     lines = ["9/24 22:29:38.797  Opening map - C:/x/map.w3x"]
-    result, _, _ = _fake_run(monkeypatch, tmp_path, [], foreground=55, log_lines=lines)
+    result, _, _ = _fake_run(monkeypatch, tmp_path, [], foreground=55, held=True)
     assert result["stuck_at"] == "loading_screen" and "Battle.net.exe" in result["hint"]
-    quiet, _, _ = _fake_run(monkeypatch, tmp_path, [], foreground=55, log_lines=[])
+    quiet, _, _ = _fake_run(monkeypatch, tmp_path, [], foreground=55, log_lines=lines)
     assert "stuck_at" not in quiet
 
 
 def test_a_login_screen_that_cleared_on_its_own_says_so(monkeypatch, tmp_path):
-    result, _, _ = _fake_run(monkeypatch, tmp_path, ["login", "login"] + [None] * 100, login="wait")
+    result, _, _ = _fake_run(monkeypatch, tmp_path, ["login", "login"] + [None] * 100, login="wait", held=True)
     assert result["login"]["screen_seen"] and result["login"]["seconds"] > 0 and "cleared" in result["login"]["note"]
+
+
+def test_a_custom_loading_screen_that_looks_like_the_menu_is_not_restarted(monkeypatch, tmp_path):
+    """A map's own loading screen model can read as the main menu for its whole load; once the game holds the map
+    file it is loading the map, so the run waits for its PRESS ANY KEY instead of starting the game again."""
+    launches = []
+    result, keys, _ = _fake_run(monkeypatch, tmp_path, ["menu"] * 12 + ["press_key"], write_result_after_key=True,
+                                launches=launches, held=lambda t: t >= 5)
+    assert "relaunched" not in result and len(launches) == 1 and keys and result["results"]
+    assert "PRESS ANY KEY" in result["loading_screen_note"] and "title" not in result["loading_screen_note"]
+
+
+def test_the_login_queue_is_waited_out_not_restarted(monkeypatch, tmp_path):
+    launches = []
+    result, _, _ = _fake_run(monkeypatch, tmp_path, ["queue"] * 15 + [None, "press_key"],
+                             write_result_after_key=True, launches=launches)
+    assert "relaunched" not in result and len(launches) == 1 and result["results"]
+    assert result["login_queue"]["seconds"] > 0 and "stuck_at" not in result
+
+
+def test_a_plain_run_without_results_ends_once_its_pictures_are_taken(monkeypatch, tmp_path):
+    monkeypatch.setattr(game.Game, "_screenshot", lambda self, pid: (b"png", "Warcraft III"))
+    result, _, _ = _fake_run(monkeypatch, tmp_path, [None, "press_key"] + [None] * 400, results=(), shots=2,
+                             shot_every=8, held=lambda t: t >= 2)
+    assert result["ended"] == "screenshots_done" and result["screenshots"] == [b"png"] * 2
+    assert result["seconds"] < 60 and result["closed"]
+    # no pictures asked for either: it ends as soon as the map runs
+    result, _, _ = _fake_run(monkeypatch, tmp_path, [None, "press_key"] + [None] * 400, results=(),
+                             held=lambda t: t >= 2)
+    assert result["ended"] == "map_started" and result["seconds"] < 30
+
+
+def test_screen_state_reads_the_login_queue_and_a_lower_loading_bar():
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (1440, 774), (20, 14, 10))
+    draw = ImageDraw.Draw(image)
+    w, h = image.size
+    left, wide = w / 2 - h * 2 / 3, h * 4 / 3
+    draw.rectangle((left + 0.39 * wide, 0.62 * h, left + 0.61 * wide, 0.665 * h), fill=(0, 44, 40))   # CANCEL
+    draw.rectangle((left + 0.43 * wide, 0.265 * h, left + 0.57 * wide, 0.295 * h), fill=(240, 200, 40))   # title
+    assert game.screen_state(image) == "queue"
+    low = Image.new("RGB", (1440, 774), (10, 20, 40))
+    ImageDraw.Draw(low).rectangle((left + 0.12 * wide, 0.87 * h, left + 0.88 * wide, 0.91 * h), fill=(30, 120, 230))
+    assert game.screen_state(low) == "press_key"

@@ -10,13 +10,16 @@ HAVE_INSTALL = (INSTALL / ".build.info").is_file()
 needs_install = pytest.mark.skipif(not HAVE_INSTALL, reason="Warcraft III install not found")
 
 
+@functools.cache
 def ladder_maps() -> list[Path]:
+    """Downloaded maps with their editor data: a protected map someone saved there (no war3map.wtg) is left out."""
     from wc3mcp import config
+    from wc3mcp.mpq.reader import Archive
 
     root = config.documents() / "Maps" / "Download"
     seen, out = set(), []
     for p in sorted(root.rglob("*.w3x")) if root.is_dir() else []:
-        if p.name.lower() not in seen:
+        if p.name.lower() not in seen and Archive.open(p).find("war3map.wtg") is not None:
             seen.add(p.name.lower())
             out.append(p)
     return out

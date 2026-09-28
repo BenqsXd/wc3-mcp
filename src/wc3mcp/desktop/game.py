@@ -122,19 +122,67 @@ def _menu_buttons(image) -> float:
     return sum(map(_teal, pixels)) / len(pixels)
 
 
+def _gold(p) -> bool:
+    return p[0] > 180 and p[1] > 140 and p[2] < 90
+
+
+def _button_teal(p) -> bool:
+    return p[1] > p[0] + 25 and p[2] > p[0] + 20 and p[1] > 35
+
+
+def _dark(p) -> bool:
+    return max(p) < 70
+
+
+def _queue(image) -> bool:
+    """Blizzard's LOGIN QUEUE dialog: a gold title and a teal CANCEL button centred on a dark screen (measured on 10
+    saved frames of it: button 0.52, title 0.33, sides 0.98+; no other saved frame passes)."""
+    return (_share(image, 0.40, 0.625, 0.60, 0.66, _button_teal) > 0.4
+            and _share(image, 0.44, 0.27, 0.56, 0.29, _gold) > 0.2
+            and min(_share(image, 0.0, 0.0, 0.3, 1.0, _dark), _share(image, 0.7, 0.0, 1.0, 1.0, _dark)) > 0.9)
+
+
+def _press_key(image) -> bool:
+    """A full loading bar: the default loading screen draws it at 0.815-0.84 of the height, a map's own loading
+    screen model can move it lower (0.87-0.91 on one), so the band is searched for."""
+    for k in range(16):
+        v = 0.78 + k * 0.01
+        ends = (_share(image, 0.17, v, 0.23, v + 0.025, _bright_blue), _share(image, 0.78, v, 0.84, v + 0.025, _bright_blue))
+        if min(ends) > 0.8 and _share(image, 0.45, v, 0.55, v + 0.025, _bright_blue) > 0.25 \
+                and _share(image, 0.15, v - 0.115, 0.85, v - 0.065, _bright_blue) < 0.1:
+            return True
+    return False
+
+
 def screen_state(image) -> str | None:
-    """"login" when the game window shows the Battle.net login panel, "press_key" when a loading screen has finished
-    and waits for a key (its bar is full and says PRESS ANY KEY TO CONTINUE), "menu" at the main menu, else None."""
+    """"login" when the game window shows the Battle.net login panel, "queue" for Blizzard's login queue dialog,
+    "press_key" when a loading screen has finished and waits for a key (its bar is full and says PRESS ANY KEY TO
+    CONTINUE), "menu" when it may be the main menu, else None. "menu" is only a hint: a map's own art (teal ground, a
+    custom loading screen) can read as it too, so a run checks that the game has not opened the map before it acts."""
     # ponytail: fixed boxes measured on a 1440x774 window; retune if other window sizes misread
     if _share(image, 0.15, 0.15, 0.85, 0.80, _blue) > 0.7 and _share(image, -0.05, 0.2, 0.05, 0.8, _blue) < 0.2:
         return "login"
-    ends = (_share(image, 0.17, 0.815, 0.23, 0.84, _bright_blue), _share(image, 0.78, 0.815, 0.84, 0.84, _bright_blue))
-    if min(ends) > 0.8 and _share(image, 0.45, 0.815, 0.55, 0.84, _bright_blue) > 0.25 \
-            and _share(image, 0.15, 0.70, 0.85, 0.75, _bright_blue) < 0.1:
+    if _queue(image):
+        return "queue"
+    if _press_key(image):
         return "press_key"
-    if _menu_buttons(image) > 0.2:   # 0.32 at the main menu, at most 0.05 on every other saved frame
+    if _menu_buttons(image) > 0.2:   # 0.32 at the main menu
         return "menu"
     return None
+
+
+def holds(path: Path) -> bool:
+    """True while another process has the file open: the game keeps the map it loads open for as long as the map
+    runs, so this tells a loading or running map from a game at its menus without reading pixels."""
+    import pywintypes
+    import win32file
+
+    try:
+        handle = win32file.CreateFile(str(path), win32file.GENERIC_READ, 0, None, win32file.OPEN_EXISTING, 0, None)
+    except pywintypes.error as e:
+        return e.winerror == 32   # ERROR_SHARING_VIOLATION
+    handle.Close()
+    return False
 
 
 def truncated_lines(found: dict[str, list[str]]) -> dict[str, list[int]]:
@@ -332,17 +380,25 @@ class Game:
         launcher, minimized = None, 0   # the Battle.net app's pids; its windows get minimised once the game shows
         checked_at, state = 0.0, None
         login_since, menu_since, map_since = None, None, None
+        queue_since, queued = None, 0.0   # Blizzard's login queue: waited out, never a reason to start again
+        # the file the game loads: while it holds it open the map is loading or running (holds())
+        loaded = battlenet.launch_copy() if through_app else target
+        opened_since, ended = None, None
         outcome, relaunches, asked_user, login_seen = None, [], False, False
         shot_at, series, missed, shot_times = 0.0, [], [], []
         grace = 0.0   # time spent on login screens: it does not count against the timeout
         while process.poll() is None and not self.cancelled:
             now = time.time()
-            if now - started >= timeout + grace + (now - login_since if login_since else 0):
-                break   # time at a login screen never counts against the timeout: login_wait bounds that
-            # the map runs: the probe's start marker is there, or (no marker) the screen has shown neither the login,
-            # the main menu nor a finished loading screen for a while - good enough to start the screenshots
+            waiting_since = login_since or queue_since
+            if now - started >= timeout + grace + (now - waiting_since if waiting_since else 0):
+                break   # time at a login screen or in the queue never counts against the timeout
+            if opened_since is None and holds(loaded):
+                opened_since = now
+            # the map runs: the probe's start marker is there, or (no marker) the game holds the map file and has
+            # left its loading screen (a key was pressed there, or 20 s passed with none shown)
             if map_since is None and ((marker is not None and marker.exists()) or (
-                    marker is None and state is None and checked_at and now - launched_at >= 20)):
+                    marker is None and opened_since and state not in ("press_key", "login", "queue")
+                    and (keys or (checked_at and now - opened_since >= 20)))):
                 map_since = now
             # the game only loads the map while its window is in front: keep it there until the map surely runs
             if (map_since is None or marker is None) and now - focused_at > 5:
@@ -383,8 +439,13 @@ class Game:
                     keys += 1
                 if login_since and state != "login":
                     grace += now - login_since   # the user (or a remembered login) signed in meanwhile
+                if queue_since and state != "queue":
+                    grace += now - queue_since
+                    queued += now - queue_since
                 login_since = (login_since or now) if state == "login" else None
-                menu_since = (menu_since or now) if state == "menu" else None
+                queue_since = (queue_since or now) if state == "queue" else None
+                # "menu" is only a hint (a map's own art can look like it): once the game holds the map it is not
+                menu_since = (menu_since or now) if state == "menu" and opened_since is None else None
                 login_seen = login_seen or state == "login"
                 if login_since:
                     # through the app this means the app itself is logged out, directly it means the game has no
@@ -415,7 +476,7 @@ class Game:
                     marker.unlink(missing_ok=True)
                 again = self._launch_app(app, target)[0] if through_app and app is not None else None
                 process, launched_at = again or self._launch(target), time.time()
-                login_since = menu_since = map_since = None
+                login_since = menu_since = map_since = queue_since = opened_since = None
                 state, checked_at, focused_at = None, 0.0, 0.0
                 relaunches.append(restart)
                 continue
@@ -435,7 +496,15 @@ class Game:
                         job["written"] = sorted(found)
             if wanted and len(found) == len(wanted):
                 break
+            # nothing to wait for: a plain run ends once the map runs and its pictures are taken, instead of idling
+            # (a dialog pauses a single-player game) until the timeout
+            if not wanted and map_since is not None and len(series) + len(missed) >= shots:
+                ended = "screenshots_done" if shots else "map_started"
+                break
             time.sleep(1)
+        if queue_since:
+            grace += time.time() - queue_since
+            queued += time.time() - queue_since
         if login_since:
             grace += time.time() - login_since
             if outcome is None and process.poll() is None and not self.cancelled:
@@ -455,8 +524,17 @@ class Game:
             result["map_started_after"] = round(map_since - started, 1)
         if keys:
             result["loading_screen_keys"] = keys
-            result["loading_screen_note"] = ("the loading screen waited for a key (the map sets loading_screen title, "
-                                             "subtitle or text), so the run pressed space to continue")
+            result["loading_screen_note"] = ("the loading screen showed PRESS ANY KEY TO CONTINUE, so the run pressed "
+                                             "space")
+        if queued:
+            result["login_queue"] = {"seconds": round(queued, 1),
+                                     "note": "Blizzard's login queue was shown and waited out (not counted against "
+                                             "the timeout); nothing about the map"}
+        if ended:
+            result["ended"] = ended
+            result["ended_note"] = ("no results were asked for, so the run ended once the map ran"
+                                    + (" and its screenshots were taken" if shots else "")
+                                    + ": list results (or use probe=true) to keep it going")
         truncated = truncated_lines(found)
         if truncated:
             result["truncated"] = truncated
@@ -470,7 +548,7 @@ class Game:
                 result["screenshots_failed"] = missed
             result["screenshots_note"] = (
                 f"{len(series)} of {shots} screenshot(s), one every {shot_every:g} s from the moment the map ran "
-                + ("(the probe's start marker)" if marker else "(the screen left the menus and the loading screen)")
+                + ("(the probe's start marker)" if marker else "(the game held the map and left its loading screen)")
                 + "; the run ends when its results are written, so a series longer than the test is cut short. "
                   "Move the camera from the map's test code (ProbeCamera) to look at a place"
                 + (f". The pictures cover {shot_times[0]:g}-{shot_times[-1]:g} s of game time (screenshot_times); "
@@ -508,11 +586,11 @@ class Game:
                                 "open instead of launching a new one")
         elif outcome == "stuck_at_menu":
             result["stuck_at"] = "main_menu"
-            result["hint"] = ("the game stayed at its main menu instead of loading the map, also after starting it "
+            result["hint"] = ("the game stayed at its main menu and never opened the map, also after starting it "
                               "again: take a screenshot (screenshot=true) and tell the user")
-        elif map_since is None and not self.cancelled and any(
-                "Opening map - " in line or "already encountered" in line for line in raw_log):
-            # every map writes "Opening map - <path>" when it loads (checked in War3Log.txt)
+        elif map_since is None and not self.cancelled and opened_since is not None:
+            # the game held the map file, so it loaded the map (War3Log's "Opening map" lines do not say this: the
+            # game opens every map in the Maps folder at start)
             top = holders.most_common(1)
             result["stuck_at"] = "loading_screen"
             result["hint"] = ("the map loaded but the key press that leaves the loading screen never reached the "

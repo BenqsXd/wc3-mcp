@@ -190,3 +190,12 @@ def test_probe_init_runs_at_map_init_and_can_keep_dialogs_shut(tmp_path):
     shutil.copyfile(maps[0], source)
     probe.build(source, tmp_path / "probe" / maps[0].name, Catalog(_storage(), balance="Custom_V1"),
                 init="call ProbeSkipDialogs()")   # compiles (build runs pjass and raises when it does not)
+
+
+def test_what_a_person_does_during_a_run_is_reported():
+    out = probe.parse(["probe=ok", "user.clicks=3", "userchat=0:-afk", "userchat=0:-lock"])
+    assert out["user_input"] == {"chat": ["0:-afk", "0:-lock"], "clicks": 3}
+    assert "user_input" not in probe.parse(["probe=ok", "user.clicks=0"])
+    routed = probe.route_messages("globals\nendglobals\nfunction A takes nothing returns nothing\nendfunction\n")
+    assert "EVENT_PLAYER_MOUSE_DOWN" in routed and "TriggerRegisterPlayerChatEvent" in routed
+    assert "call wc3mcpProbe_WatchUsers()" in probe.script("jass", 5)

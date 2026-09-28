@@ -68,6 +68,21 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.9
+
+- **Maps with their own loading screen run in `game_test`.** Whether the map loads is now read from the map file the
+  game holds open instead of from pixels: a loading screen model (or teal ground) that looked like the main menu made
+  every run start the game again and end `stuck_at: "main_menu"`. The full loading bar is found at any height, so
+  such a screen gets its key press too. Verified live on a map with a custom loading screen model.
+- **Blizzard's login queue is waited out** (`login_queue.seconds`, not counted against the timeout) instead of
+  being read as a stuck menu and restarting the game, and screenshots start only once the game has the map.
+- **Plain runs end by design.** A run with no results ends once the map runs and its screenshots are taken
+  (`ended`), instead of sitting at the map's first dialog until the timeout.
+- **Probes report a person playing along.** `probe.user_input` lists chat lines and counts mouse clicks by human
+  players during the run (JASS maps). Keep hands off the game window during probes.
+- **`game_status` stays small**: a long probe's `run.partial` keeps its last 100 report lines and messages
+  (`tail`, `grep`, `left_out`). `loading_screen_note` no longer guesses a cause.
+
 ## What's new in 1.8
 
 - **`map_protect`** writes a copy of a saved map that plays in the game but that the World Editor refuses to open

@@ -26,6 +26,7 @@ JASS_GLOBALS = """    string array wc3mcpProbe_messages
     integer wc3mcpProbe_handles0 = 0
     timer wc3mcpProbe_clock = null
     boolean wc3mcpProbe_noDialogs = false
+    integer wc3mcpProbe_clicks = 0
 """
 JASS_MESSAGES = """
 function wc3mcpProbe_Line takes string s returns nothing
@@ -65,6 +66,34 @@ function wc3mcpProbe_ForceIds takes force f returns string
         set i = i + 1
     endloop
     return ids
+endfunction
+
+// what a person does in the game during a run: chat lines and mouse clicks of the human players, so a failed check
+// can be traced to someone playing along
+function wc3mcpProbe_UserChat takes nothing returns nothing
+    call wc3mcpProbe_Line("userchat=" + I2S(GetPlayerId(GetTriggerPlayer())) + ":" + SubString(GetEventPlayerChatString(), 0, 150))
+endfunction
+
+function wc3mcpProbe_UserClick takes nothing returns nothing
+    set wc3mcpProbe_clicks = wc3mcpProbe_clicks + 1
+endfunction
+
+function wc3mcpProbe_WatchUsers takes nothing returns nothing
+    local trigger chat = CreateTrigger()
+    local trigger click = CreateTrigger()
+    local integer i = 0
+    loop
+        exitwhen i > 23
+        if GetPlayerController(Player(i)) == MAP_CONTROL_USER and GetPlayerSlotState(Player(i)) == PLAYER_SLOT_STATE_PLAYING then
+            call TriggerRegisterPlayerChatEvent(chat, Player(i), "", false)
+            call TriggerRegisterPlayerEvent(click, Player(i), EVENT_PLAYER_MOUSE_DOWN)
+        endif
+        set i = i + 1
+    endloop
+    call TriggerAddAction(chat, function wc3mcpProbe_UserChat)
+    call TriggerAddAction(click, function wc3mcpProbe_UserClick)
+    set chat = null
+    set click = null
 endfunction
 
 function wc3mcpProbe_Msg takes string s returns nothing
@@ -137,6 +166,7 @@ function Trig_{name}_Actions takes nothing returns nothing
     call Preload("handles.start=" + I2S(wc3mcpProbe_handles0))
     call Preload("handles.end=" + I2S(ProbeHandleCount()))
     call Preload("handles.seconds=" + I2S(R2I(TimerGetElapsed(wc3mcpProbe_clock))))
+    call Preload("user.clicks=" + I2S(wc3mcpProbe_clicks))
     set i = 0
     loop
         exitwhen i >= wc3mcpProbe_lineCount
@@ -161,6 +191,7 @@ function Trig_{name}_Partial takes nothing returns nothing
     call PreloadGenClear()
     call PreloadGenStart()
     call Preload("partial.seconds=" + I2S(R2I(TimerGetElapsed(wc3mcpProbe_clock))))
+    call Preload("user.clicks=" + I2S(wc3mcpProbe_clicks))
     loop
         exitwhen i >= wc3mcpProbe_lineCount
         call Preload(wc3mcpProbe_lines[i])
@@ -180,6 +211,7 @@ function Trig_{name}_Started takes nothing returns nothing
     set wc3mcpProbe_clock = CreateTimer()
     call TimerStart(wc3mcpProbe_clock, 1000000.0, false, null)
     set wc3mcpProbe_handles0 = ProbeHandleCount()
+    call wc3mcpProbe_WatchUsers()
     call PreloadGenClear()
     call PreloadGenStart()
     call Preload("started")
@@ -503,6 +535,11 @@ def parse(lines: list[str]) -> dict:
             out["reports"].append(value)
         elif key == "report+" and sep and out["reports"]:
             out["reports"][-1] += value
+        elif key == "userchat" and sep:   # "<player id>:<text>" a person typed during the run
+            out.setdefault("user_input", {}).setdefault("chat", []).append(value)
+        elif key == "user.clicks" and sep:
+            if int(value):
+                out.setdefault("user_input", {})["clicks"] = int(value)
         elif key == "camera" and sep:
             out.setdefault("camera", []).append(value)
         elif key == "ai" and sep:

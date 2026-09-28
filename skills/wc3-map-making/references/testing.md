@@ -79,3 +79,6 @@
 - A probe that creates extra heroes can make the map re-register the last one as the player's hero; test the registered hero first. A probe that removes a caster can leave its periodic effects running with no owner.
 - A hero moved out of an invulnerable zone keeps its invulnerability until the map's own tick clears it: wait a moment before damaging it in a probe.
 - Balance duels: fight in a closed arena, cap each at a fixed time, and run several; burst casters are often decided in the first second.
+- Keep hands off the game window during a probe: clicks and chat reach the map. `probe.user_input` lists chat lines and counts clicks by human players, so a failed check can be traced to someone playing along.
+- A map with its own loading screen model loads in `game_test` like any other; a plain run (no results) ends once the map runs and its screenshots are taken, instead of waiting at the map's first dialog (a dialog pauses a single-player game) until the timeout.
+
