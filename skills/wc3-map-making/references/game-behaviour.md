@@ -117,7 +117,13 @@ Everything here was observed in a real run (mostly through `game_test probe_scri
 - `BlzGetFrameByName("ConsoleUIBackdrop", 0)` lets a frame sit beyond the 4:3 area; the client's right edge in frame units is `0.4 + 0.3 * width / height`. The command card draws over it: text below about y 0.15 at the right edge is hidden.
 - StringList `%%`: in the stock strings a literal percent is `%%` only inside strings that also carry format arguments (`"(%d%% income)"`); strings without arguments write a bare `%`. An override must follow the same rule per key. An empty `StringList` value does not hide a stock line (`BONUS_ATTACK_SPEED ""` still printed the game's own line); override it with real text.
 
-- `UnitDamageTarget(..., attack=true, ...)` does not make `BlzGetEventIsAttack()` true in a damage event; only a real swing does. Test on-hit effects keyed on the attack flag with a real attack.
+- `UnitDamageTarget(..., attack=true, ...)` does not make `BlzGetEventIsAttack()` true in a damage event; only a real swing does. Test on-hit effects keyed on the attack flag with a real attack (a paused attacker does not count either: use a live one).
+- A frame dialog parented to the bare `BlzGetOriginFrame(ORIGIN_FRAME_GAME_UI, 0)` did not draw; parented to `BlzGetFrameByName("ConsoleUIBackdrop", 0)` it did.
+- `DestroyEffect(AddSpecialEffect(...))` shows only a model's death animation: buff and looping models (Inner Fire, Frost Armor, Bloodlust, auras, shields) show nothing. Keep the effect about 2 s before destroying it.
+- Texttags keep their screen size when the camera zooms out, so long labels run into each other: use short lines.
+- A rect enter event that grants True Sight beats the engine's own detection, which lags: enemies already inside stay concealed for about 0.6 s after the entrant gains it.
+- Silence and disarm both sit on `ANsi` and share the `silence` order: one dummy casting both casts the wrong one. Use a dummy caster per cast (timed life about 1 s).
+- Per-spell tables keyed `index` for one group and `100 + index` for another collide once a group passes 100 entries (basics 101-108 shared keys with ultimates, so cooldowns overwrote each other; `player * 100 + item` clashed the same way). Size the stride from the largest possible index.
 - `IsUnitType(u, UNIT_TYPE_STUNNED)` stays false under a dummy-cast stun; read the stun buff (`GetUnitAbilityLevel(u, 'BPSE') > 0`) instead.
 - Moving the caster (`SetUnitPosition`) inside `EVENT_PLAYER_UNIT_SPELL_EFFECT` skips the ability's cooldown (the mana is still spent). Restart it from a 0 s timer with `BlzStartUnitAbilityCooldown(u, a, BlzGetUnitAbilityCooldown(u, a, level - 1))` when the remaining cooldown is 0; do not take the mana again.
 - Heroes keep all their items through death and revive when every item has `idrp` 0 (`idro` 0 also stops players dropping them; selling still works).

@@ -44,7 +44,7 @@ Every tile is buildable or not, walkable or not, flyable or not: `data_search ki
 
 ## Derived files
 
-Terrain edits leave pathing (`war3map.wpm`), shadows (`war3map.shd`) and minimap icons (`war3map.mmp`) stale; only a World Editor save recomputes them. While that save is owed, `map_validate` (and so `map_save`) warns with check `derived_files`. Until then `terrain_get layers=["pathing"]` and `terrain_render pathing=true` derive pathing from the current tiles, cliffs, water and blight, without doodad, destructible or building footprints; `pathing_source` says which source was used. On the shipped maps the derived 32-unit cells disagree with the editor's in 0.2 % of cells (mostly bridges, which make water walkable).
+Terrain edits leave pathing (`war3map.wpm`), shadows (`war3map.shd`) and minimap icons (`war3map.mmp`) stale; only a World Editor save recomputes them (a stale minimap was rebuilt by `editor_map` open, then save with `quit_after`). While that save is owed, `map_validate` (and so `map_save`) warns with check `derived_files`. Until then `terrain_get layers=["pathing"]` and `terrain_render pathing=true` derive pathing from the current tiles, cliffs, water and blight, without doodad, destructible or building footprints; `pathing_source` says which source was used. On the shipped maps the derived 32-unit cells disagree with the editor's in 0.2 % of cells (mostly bridges, which make water walkable).
 
 ## terrain_render
 
