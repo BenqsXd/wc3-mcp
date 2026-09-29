@@ -199,3 +199,63 @@ def test_what_a_person_does_during_a_run_is_reported():
     routed = probe.route_messages("globals\nendglobals\nfunction A takes nothing returns nothing\nendfunction\n")
     assert "EVENT_PLAYER_MOUSE_DOWN" in routed and "TriggerRegisterPlayerChatEvent" in routed
     assert "call wc3mcpProbe_WatchUsers()" in probe.script("jass", 5)
+
+
+def test_the_report_says_when_the_script_started():
+    assert 'call wc3mcpProbe_Line("script.started=" + R2S(TimerGetElapsed(wc3mcpProbe_clock)))' in probe.script(
+        "jass", 5)
+    jass = probe.script("jass", 5, user='call ProbeReport("x")')
+    assert jass.index('"script.started="') < jass.index("call Trig_wc3mcpProbe_User()", jass.index(
+        "function Trig_wc3mcpProbe_Actions"))
+    assert '"script.started=" ..' in probe.script("lua", 5)
+    assert probe.parse(["probe=ok", "script.started=60.125"])["script_started"] == 60.125
+
+
+@pytest.mark.skipif(not HAVE_INSTALL, reason="needs the Warcraft III install")
+@pytest.mark.parametrize("language", ["jass", "lua"])
+def test_a_protected_map_can_be_probed(tmp_path, language):
+    """A protected map has no war3map.wtg: the probe goes straight into its script, before main."""
+    from wc3mcp.errors import ToolError
+    from wc3mcp.gamedata.catalog import Catalog
+    from wc3mcp.ops import newmap, protect
+
+    catalog = Catalog(_storage(), balance="Custom_V1")
+    src = tmp_path / "Arena.w3x"
+    newmap.new_map(src, catalog, 64, 64, "L", "Arena", "Tests", 2, language, "mpq", None)
+    protected = protect.protect(src, catalog)["protected"]
+    if language == "jass":
+        user, functions, init = ('local integer n = 3\ncall ProbeReport("n=" + I2S(n))\ncall BJDebugMsg("hi")',
+                                 "function Twice takes integer n returns integer\n    return n * 2\nendfunction\n",
+                                 "call ProbeSkipDialogs()")
+    else:
+        user, functions, init = ('ProbeReport("n=" .. 3)\nBJDebugMsg("hi")',
+                                 "function Twice(n)\n    return n * 2\nend\n", "ProbeSkipDialogs()")
+    # build compiles the copy (pjass / the Lua parser) and raises when it does not
+    copy = probe.build(protected, tmp_path / "probe" / "Arena.w3x", catalog, user=user, functions=functions, init=init)
+    project = MapProject.open(copy)
+    try:
+        text = project.read("war3map.j" if language == "jass" else "war3map.lua").decode("utf-8", "replace")
+    finally:
+        project.close(discard=True)
+    assert text.index("function Twice") < text.index("function Trig_wc3mcpProbe_User") < text.index("function main")
+    assert "InitTrig_wc3mcpProbe()" in text[text.index("function main"):]
+    if language == "jass":
+        assert 'call wc3mcpProbe_Msg("hi")' in text and "trigger gg_trg_wc3mcpProbe = null" in text
+    with pytest.raises(ToolError) as e:
+        probe.build(protected, tmp_path / "probe2" / "Arena.w3x", catalog,
+                    user="call NoSuchNative()" if language == "jass" else "local x = = 1")
+    assert e.value.code == "probe_script_failed"
+    if language == "jass":
+        assert "probe_script" in e.value.hint
+
+
+def test_inject_puts_the_probe_before_main_after_its_locals():
+    text = ("globals\r\ninteger x=0\r\nendglobals\r\nfunction lIl takes nothing returns nothing\r\nendfunction\r\n"
+            "function main takes nothing returns nothing\r\nlocal integer i=0\r\n// c\r\nlocal real r\r\n"
+            "call lIl()\r\nendfunction\r\n")
+    out = probe.inject(text, "jass", "function InitTrig_wc3mcpProbe takes nothing returns nothing\nendfunction\n")
+    assert out.index("trigger gg_trg_wc3mcpProbe = null") < out.index("endglobals")
+    assert out.index("function lIl") < out.index("function InitTrig_wc3mcpProbe") < out.index("function main")
+    assert "local real r\r\ncall InitTrig_wc3mcpProbe()\ncall lIl()" in out
+    lua = probe.inject("function lIl ( ) end function main ( ) lIl ( ) end\n", "lua", "function InitTrig_wc3mcpProbe() end")
+    assert "function InitTrig_wc3mcpProbe() end\nfunction main ( ) InitTrig_wc3mcpProbe() " in lua

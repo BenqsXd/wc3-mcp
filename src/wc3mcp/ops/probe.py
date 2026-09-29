@@ -6,9 +6,10 @@ from pathlib import Path
 
 from ..errors import ToolError
 from ..project.workspace import MapProject
+from ..script import validate
 from . import script as script_ops
 from . import terrain as terrain_ops
-from .triggers import triggers_edit
+from .triggers import _read, triggers_edit
 
 NAME = "wc3mcpProbe"
 REPORT = "wc3mcp\\probe.txt"
@@ -160,6 +161,8 @@ function Trig_{name}_Actions takes nothing returns nothing
         endif
         set i = i + 1
     endloop
+    // game time since the start marker: dialogs pause it, so it can lag the real time the map has run
+    call wc3mcpProbe_Line("script.started=" + R2S(TimerGetElapsed(wc3mcpProbe_clock)))
 {call_user}    // the report file is opened only now, so a PreloadGenClear() in probe code cannot wipe what was reported
     call PreloadGenClear()
     call PreloadGenStart()
@@ -260,6 +263,7 @@ function Trig_{name}_Actions()
             DestroyGroup(g)
         end
     end
+    wc3mcpProbe_Line("script.started=" .. string.format("%.3f", wc3mcpProbe_clock and TimerGetElapsed(wc3mcpProbe_clock) or 0))
 {call_user}    -- the report file is opened only now, so a PreloadGenClear() in probe code cannot wipe what was reported
     PreloadGenClear()
     PreloadGenStart()
@@ -482,6 +486,29 @@ def route_messages(script_text: str) -> str:
     return head + JASS_GLOBALS + sep + JASS_MESSAGES.format(limit=MAX_MESSAGES) + body
 
 
+JASS_MAIN = re.compile(r"^[ \t]*function[ \t]+main[ \t]+takes\b[^\n]*\n(?:[ \t]*(?:local\b[^\n]*|//[^\n]*|\r?)\n)*",
+                       re.M)
+LUA_MAIN = re.compile(r"\bfunction\s+main\s*\(\s*\)")
+
+
+def inject(script_text: str, language: str, code: str) -> str:
+    """A script without war3map.wtg (protected or script-only map) with the probe code right before main and its
+    InitTrig called first thing in main (after main's locals): there is no trigger list to add it to."""
+    lua = language == "lua"
+    head, sep, rest = ("", "", script_text) if lua else script_text.partition("endglobals")
+    if not lua and not sep:
+        raise ToolError("probe_script_failed", "the map script has no globals block", hint="script_validate")
+    m = (LUA_MAIN if lua else JASS_MAIN).search(rest)
+    if m is None:
+        raise ToolError("probe_script_failed", "the map script has no main function", hint="map_file_read the script")
+    if lua:
+        return rest[:m.start()] + code + "\n" + rest[m.start():m.end()] + f" InitTrig_{NAME}() " + rest[m.end():]
+    # the banners let script_validate tell errors in the probe code from errors in the map
+    rest = (rest[:m.start()] + f"{validate.BAR}\n// Trigger: {NAME}\n{code}\n//*\n//*  main\n" + rest[m.start():m.end()]
+            + f"call InitTrig_{NAME}()\n" + rest[m.end():])
+    return head + f"    trigger gg_trg_{NAME} = null\n" + sep + rest
+
+
 def build(source, dest, catalog, project=None, seconds: float = 10.0, user: str | None = None,
           functions: str | None = None, init: str | None = None) -> Path:
     """Write a copy of the map (the open working copy when `project` is given) with the probe trigger in it, running
@@ -496,15 +523,20 @@ def build(source, dest, catalog, project=None, seconds: float = 10.0, user: str 
     copy = MapProject.open(dest)
     try:
         language = script_ops.language(copy)
-        # in its own last category: trigger code is emitted in tree order, so probe_script can call any map function
-        triggers_edit(copy, catalog, [{"op": "category", "name": NAME},
-                                      {"op": "trigger", "name": NAME, "category": NAME,
-                                       "script": script(language, seconds, user, functions, init)}])
-        script_ops.script_build(copy, catalog)
+        code = script(language, seconds, user, functions, init)
+        if _read(copy, "war3map.wtg") is None:   # protected or script-only: no trigger list, straight into the script
+            name = script_ops._script_file(copy, language)
+            text = inject(copy.read(name).decode("utf-8", "surrogateescape"), language, code)
+        else:
+            # in its own last category: trigger code is emitted in tree order, so probe_script can call any map
+            # function
+            triggers_edit(copy, catalog, [{"op": "category", "name": NAME},
+                                          {"op": "trigger", "name": NAME, "category": NAME, "script": code}])
+            name = script_ops.script_build(copy, catalog)["file"]
+            text = copy.read(name).decode("utf-8", "surrogateescape")
         if language != "lua":
-            name = next(n for n in ("war3map.j", "scripts\\war3map.j")
-                        if any(f["name"].lower() == n for f in copy.list_files()))
-            copy.write(name, route_messages(copy.read(name).decode("utf-8", "replace")).encode("utf-8"))
+            text = route_messages(text)
+        copy.write(name, text.encode("utf-8", "surrogateescape"))
         checked = script_ops.script_validate(copy, catalog)
         if not checked["ok"]:
             first = checked["errors"][0]
@@ -544,6 +576,8 @@ def parse(lines: list[str]) -> dict:
             out.setdefault("camera", []).append(value)
         elif key == "ai" and sep:
             out.setdefault("ai", []).append(value)
+        elif key == "script.started" and sep:   # game seconds at which the probe script began
+            out["script_started"] = float(value)
         elif key == "check" and sep:
             verdict, _, name = value.partition(":")
             out.setdefault("checks", {})[name] = verdict == "pass"

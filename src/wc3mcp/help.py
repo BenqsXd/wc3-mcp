@@ -201,6 +201,20 @@ PROBES (a throwaway copy of the map, so the map itself never gets test triggers)
                              ProbeSkipDialogs() so DialogDisplay/DialogDisplayBJ show nothing (a shown dialog pauses a
                              single-player game, and the probe queued behind it never runs; the report then says
                              dialog=suppressed)
+  WHEN IT RUNS
+    probe_init       inside map initialization (main), before the map's initialization triggers and any dialog; on a
+                     map without triggers (protected / script-only) first thing in main, after its locals
+    start marker     at 0 s of game time, once the loading screen is gone (after the "press any key" of a map with
+                     its own loading screen); screenshots and the probe's clock start here
+    probe_script     after probe_seconds of unpaused game time from the start marker. A shown dialog pauses a
+                     single-player game, so a map's dialog chain delays it by as long as the dialogs stay up.
+                     probe.script_started is the clock's game time when the script began. To act earlier, call
+                     ProbeSkipDialogs() in probe_init, or start a timer from probe_init
+                     (TimerStart(CreateTimer(), 5, false, function MyFunction) with MyFunction in probe_functions)
+  PROTECTED MAPS (map_protect output: no war3map.wtg, renamed script)
+    The probe goes straight into the script: before main, its init called at the start of main. probe_script,
+    probe_functions and probe_init work as usual, but the map's own functions and globals are renamed, so they can
+    call only natives and Blizzard.j functions (BJDebugMsg and the text/dialog calls are still routed to the report).
   In the probe code:
     ProbeReport(text)                          -> probe.reports, any length
     ProbeExpect(name, condition)               -> probe.checks, checks_failed, checks_passed
