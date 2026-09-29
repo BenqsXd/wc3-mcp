@@ -167,7 +167,7 @@ def test_screen_state_reads_login_and_waiting_loading_screens():
 
 def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False, runner=None, map_bytes=b"",
               launches=None, wait=True, login="stop", app=None, alerts=None, raised=None, foreground=7,
-              app_windows=None, minimized=None, log_lines=None, held=False, results=(r"t\r.txt",), **options):
+              app_windows=None, minimized=None, log_lines=None, held=False, posted=None, processes=None, results=(r"t\r.txt",), **options):
     clock = {"now": 1000.0}
     fake_time = type("T", (), {"time": staticmethod(lambda: clock["now"]),
                                "sleep": staticmethod(lambda s: clock.__setitem__("now", clock["now"] + s))})
@@ -185,6 +185,9 @@ def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False, runne
     monkeypatch.setattr(game.win32gui, "IsWindow", lambda h: True)
     monkeypatch.setattr(game.win, "activate", lambda h: raised.append(h) if raised is not None else None)
     monkeypatch.setattr(game.win, "client_image", lambda h: None)
+    monkeypatch.setattr(game.win, "client_capture", lambda h: None)
+    monkeypatch.setattr(game.win, "post_key", lambda h, vk=0x20: posted.append(h) if posted is not None else None)
+    monkeypatch.setattr(game.win, "processes", lambda name: list(processes.get(name, [])) if processes else [])
     monkeypatch.setattr(game.win, "owner", lambda h: {"exe": "Battle.net.exe", "title": "Battle.net", "pid": 900})
     monkeypatch.setattr(game.battlenet, "processes", lambda: [900] if app_windows else [])
     monkeypatch.setattr(game.win, "windows", lambda pid: list(app_windows or []) if pid == 900 else [])
@@ -427,7 +430,10 @@ def test_the_foreground_holder_is_reported_and_the_launcher_minimised(monkeypatc
 def test_a_map_that_loaded_but_never_started_is_stuck_at_the_loading_screen(monkeypatch, tmp_path):
     # the game opens every map of the Maps folder at start, so a log line says nothing; the held map file does
     lines = ["9/24 22:29:38.797  Opening map - C:/x/map.w3x"]
-    result, _, _ = _fake_run(monkeypatch, tmp_path, [], foreground=55, held=True)
+    posted = []
+    result, _, _ = _fake_run(monkeypatch, tmp_path, [], foreground=55, held=True, posted=posted,
+                             started_file=r"wc3mcp\started.txt")
+    assert result["loading_screen"]["blind_keys"] == len(posted) > 0 and not result["loading_screen"]["prompt_seen"]
     assert result["stuck_at"] == "loading_screen" and "Battle.net.exe" in result["hint"]
     quiet, _, _ = _fake_run(monkeypatch, tmp_path, [], foreground=55, log_lines=lines)
     assert "stuck_at" not in quiet
@@ -445,7 +451,7 @@ def test_a_custom_loading_screen_that_looks_like_the_menu_is_not_restarted(monke
     result, keys, _ = _fake_run(monkeypatch, tmp_path, ["menu"] * 12 + ["press_key"], write_result_after_key=True,
                                 launches=launches, held=lambda t: t >= 5)
     assert "relaunched" not in result and len(launches) == 1 and keys and result["results"]
-    assert "PRESS ANY KEY" in result["loading_screen_note"] and "title" not in result["loading_screen_note"]
+    assert "PRESS ANY KEY" in result["loading_screen"]["note"] and result["loading_screen"]["prompt_seen"]
 
 
 def test_the_login_queue_is_waited_out_not_restarted(monkeypatch, tmp_path):
@@ -481,3 +487,38 @@ def test_screen_state_reads_the_login_queue_and_a_lower_loading_bar():
     low = Image.new("RGB", (1440, 774), (10, 20, 40))
     ImageDraw.Draw(low).rectangle((left + 0.12 * wide, 0.87 * h, left + 0.88 * wide, 0.91 * h), fill=(30, 120, 230))
     assert game.screen_state(low) == "press_key"
+
+
+def test_an_unrecognised_prompt_gets_keys_until_the_map_starts_and_the_users_window_gets_none(monkeypatch, tmp_path):
+    """The prompt of a map's own loading screen may not be recognised: once the game has held the map a while, a
+    key is posted to the game window every few seconds until the probe's start marker appears. Keys are typed only
+    while the game window is in front."""
+    marker = tmp_path / "docs" / "CustomMapData" / "wc3mcp" / "started.txt"
+    posted, typed = [], []
+
+    def states():
+        yield from [None] * 12
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("started")
+        yield from [None] * 400
+
+    result, keys, _ = _fake_run(monkeypatch, tmp_path, states(), held=True, posted=posted, foreground=55,
+                                started_file=r"wc3mcp\started.txt", results=())
+    assert result["loading_screen"]["blind_keys"] == len(posted) >= 2 and not keys   # never typed: not in front
+    assert result["map_started_after"] > 0 and "unseen" in result["loading_screen"]["note"]
+
+
+def test_a_run_closes_the_games_and_crash_reporters_it_started(monkeypatch, tmp_path):
+    killed = []
+    real_run = game.subprocess.run
+    monkeypatch.setattr(game.subprocess, "run", lambda args, **k: killed.append(args[2]) if args[0] == "taskkill"
+                        else real_run(args, **k))
+    shown = {"Warcraft III.exe": [11], "BlizzardError.exe": []}
+
+    def states():
+        shown["Warcraft III.exe"].append(12)          # a game the run started (handed over, or restarted)
+        shown["BlizzardError.exe"].append(13)         # and a crash reporter
+        yield from ["press_key"]
+
+    result, _, _ = _fake_run(monkeypatch, tmp_path, states(), write_result_after_key=True, processes=shown)
+    assert result["closed_also"] == [12, 13] and killed == ["12", "13"]   # 11 was the user's: left open

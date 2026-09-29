@@ -263,7 +263,13 @@ FOCUS
   Whether the map loads is read from the map file the game holds open, not from pixels: a map's own loading screen
   model or teal ground can look like the main menu, and a run only starts the game again (relaunched
   "stuck_at_main_menu") while the game has not opened the map. A full loading bar (PRESS ANY KEY) is found at any
-  height, so a custom loading screen gets its key too.
+  height, and the screen is read even while the user works in another window (the window draws itself).
+  A prompt that is not recognised still gets its key: once the game has held the map 20 s and the map has not started
+  (probe: no start marker yet; plain run: for 90 s), space is posted to the game window every 5 s. Keys are posted as
+  window messages and typed only while the game window is in front, so nothing lands in the user's own window.
+  loading_screen says whether the prompt was seen (prompt_seen, keys) and how many keys went unseen (blind_keys).
+  At the end a closing run also ends every game and crash reporter (BlizzardError.exe) it started (closed_also);
+  games that were open before the run are left alone.
   Blizzard's LOGIN QUEUE dialog is waited out, not counted against the timeout and reported as login_queue.seconds.
 
 LOGIN

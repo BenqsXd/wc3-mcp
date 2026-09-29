@@ -350,6 +350,41 @@ def capture(hwnd: int) -> bytes | None:
     return out.getvalue()
 
 
+def client_capture(hwnd: int):
+    """PIL image of a window's client area drawn by the window itself (PrintWindow), so it can be read while the
+    window is behind other windows; None when it cannot be captured."""
+    import win32ui
+    from PIL import Image
+
+    if not win32gui.IsWindow(hwnd) or win32gui.IsIconic(hwnd):
+        return None
+    _, _, width, height = win32gui.GetClientRect(hwnd)
+    if width <= 0 or height <= 0:
+        return None
+    window_dc = win32gui.GetDC(hwnd)
+    source = win32ui.CreateDCFromHandle(window_dc)
+    memory = source.CreateCompatibleDC()
+    bitmap = win32ui.CreateBitmap()
+    try:
+        bitmap.CreateCompatibleBitmap(source, width, height)
+        memory.SelectObject(bitmap)
+        drawn = user32.PrintWindow(hwnd, memory.GetSafeHdc(), 3)  # PW_CLIENTONLY | PW_RENDERFULLCONTENT
+        image_ = Image.frombuffer("RGB", (width, height), bitmap.GetBitmapBits(True), "raw", "BGRX", 0, 1)
+    finally:
+        win32gui.DeleteObject(bitmap.GetHandle())
+        memory.DeleteDC()
+        source.DeleteDC()
+        win32gui.ReleaseDC(hwnd, window_dc)
+    return image_ if drawn and image_.getextrema() != ((0, 0),) * 3 else None
+
+
+def post_key(hwnd: int, vk: int = 0x20) -> None:
+    """A key press posted to the window's message queue: reaches it in the background and never types into
+    whatever window the user is working in."""
+    win32gui.PostMessage(hwnd, win32con.WM_KEYDOWN, vk, 1)
+    win32gui.PostMessage(hwnd, win32con.WM_KEYUP, vk, 1 | 0xC0000000)
+
+
 def _key(vk: int, up: bool) -> None:
     win32api.keybd_event(vk, 0, win32con.KEYEVENTF_KEYUP if up else 0, 0)
 

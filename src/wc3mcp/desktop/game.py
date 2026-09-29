@@ -38,6 +38,10 @@ USER_LOGIN_WAIT = 120    # how long a run waits for the user to log in by hand (
 LOGIN_MODES = ("auto", "battlenet", "wait", "stop")
 MENU_WAIT = 20           # seconds at the main menu after a -loadfile launch before the run starts the game again
 MAX_RELAUNCHES = 2
+BLIND_AFTER = 20         # seconds the game has held the map before keys go to its loading screen unseen
+BLIND_EVERY = 5
+BLIND_PLAIN_FOR = 90     # a plain run cannot tell when its map starts: blind keys stop this long after the load began
+CRASH_EXE = "BlizzardError.exe"
 PAUSE_NOTE = ("an open dialog (DialogDisplay) pauses a single-player game until it is clicked, so timers and "
               "probe_seconds wait for it (screenshot=true shows it; probe_init runs before any dialog opens)")
 LEFT_OPEN_NOTE = ("the game is still open on the test map, so the Battle.net app still starts Warcraft III on it: "
@@ -355,6 +359,8 @@ class Game:
             self._close(waiting[0])   # a different test: the game left open for a login holds its own map
         self.cancelled = False
         crashes = self._crash_folders()
+        # games and crash reporters open before the run are the user's: only newer ones are closed at the end
+        before = {name: set(win.processes(name)) for name in (EXE_NAME, CRASH_EXE)}
         previous = win32gui.GetForegroundWindow()
         started = time.time()
         app = battlenet.exe() if login in ("auto", "battlenet") and not attached else None
@@ -376,6 +382,7 @@ class Game:
                 process = self._launch(target)
         found: dict[str, list[str]] = {}
         focused_at, raised, keys = 0.0, 0, 0
+        blind_keys, blind_at = 0, 0.0
         holders: Counter = Counter()   # (exe, title) of whatever held the foreground when the game was raised
         holder_pids: dict[tuple, int] = {}
         launcher, minimized = None, 0   # the Battle.net app's pids; its windows get minimised once the game shows
@@ -430,17 +437,19 @@ class Game:
                     focused_at, raised = now, raised + 1
             window = self.window(process.pid) if now - checked_at > 3 else None
             restart = None
-            if window and win32gui.GetForegroundWindow() == window:
+            if window:
+                # read the screen in front, or drawn by the window itself when the user works in another window
+                in_front = win32gui.GetForegroundWindow() == window
                 checked_at = now
                 try:
-                    state = screen_state(win.client_image(window))
+                    state = screen_state(win.client_image(window) if in_front else win.client_capture(window))
                 except (win32gui.error, OSError):
                     state = None
                 if state == "press_key":
                     if loading_shot and not loading_taken:   # the bar is full: this picture is the loading screen
                         loading_taken = True
                         loading_image, loading_of = self._screenshot(process.pid)
-                    win.send_input(window, [{"keys": "space"}])
+                    self._press(window)
                     keys += 1
                 if login_since and state != "login":
                     grace += now - login_since   # the user (or a remembered login) signed in meanwhile
@@ -474,6 +483,16 @@ class Game:
                         outcome = "stuck_at_menu"
                         break
                     restart = "stuck_at_main_menu"
+            # a loading screen whose prompt is not recognised still gets its key: once the game has held the map a
+            # while and the map has not started, a key goes to the window every few seconds
+            if opened_since and now - opened_since >= BLIND_AFTER and now - blind_at >= BLIND_EVERY                     and state not in ("login", "queue", "menu") and (
+                        (marker is not None and not marker.exists())
+                        or (marker is None and now - opened_since < BLIND_PLAIN_FOR)):
+                window = window or self.window(process.pid)
+                if window:
+                    blind_at = now
+                    self._press(window)
+                    blind_keys += 1
             if restart:
                 if process.poll() is None:
                     self._close(process)
@@ -527,10 +546,15 @@ class Game:
             result["login_seconds"] = round(grace, 1)
         if map_since is not None:
             result["map_started_after"] = round(map_since - started, 1)
+        if keys or blind_keys:
+            result["loading_screen"] = {
+                "prompt_seen": bool(keys), "keys": keys, "blind_keys": blind_keys,
+                "note": ("the loading screen showed PRESS ANY KEY TO CONTINUE and the run pressed space"
+                         if keys else "the prompt was not recognised on screen")
+                        + (f"; {blind_keys} key(s) went to the game window unseen, one every {BLIND_EVERY} s after the "
+                           f"game had held the map {BLIND_AFTER} s" if blind_keys else "")}
         if keys:
             result["loading_screen_keys"] = keys
-            result["loading_screen_note"] = ("the loading screen showed PRESS ANY KEY TO CONTINUE, so the run pressed "
-                                             "space")
         if loading_shot:
             if loading_image:
                 result["loading_screenshot"] = loading_image
@@ -607,10 +631,10 @@ class Game:
             # game opens every map in the Maps folder at start)
             top = holders.most_common(1)
             result["stuck_at"] = "loading_screen"
-            result["hint"] = ("the map loaded but the key press that leaves the loading screen never reached the "
-                              "game; the foreground belonged to "
+            result["hint"] = ("the map loaded but never started: the loading screen did not take the keys sent to "
+                              "it, or the map stopped before its start; the foreground belonged to "
                               + (f"{top[0][0][0]} ({top[0][0][1]!r})" if top else "another window")
-                              + ". Leave the game window in front")
+                              + ". Take a screenshot (screenshot=true) and tell the user")
         elif result["missing"]:
             result["hint"] = ("no result file was written: the map script failed (script_validate), the game stayed on "
                               f"a login screen, the map did not get that far before timeout, or {PAUSE_NOTE}")
@@ -620,6 +644,12 @@ class Game:
         if close and outcome != "login_required":
             result["closed_by"] = self._close(process)
             result["closed"] = True
+            # a game the run started that handed over to another process, or a crash reporter, would stay open
+            extra = [pid for name in (EXE_NAME, CRASH_EXE) for pid in win.processes(name) if pid not in before[name]]
+            for pid in extra:
+                subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, check=False)
+            if extra:
+                result["closed_also"] = extra
         else:
             result["closed"] = process.poll() is not None
         if focused_at and previous and win32gui.IsWindow(previous):
@@ -632,6 +662,14 @@ class Game:
         if minimized:
             result["launcher_minimized"] = minimized
         return result
+
+    @staticmethod
+    def _press(window: int) -> None:
+        """Space for a loading screen: posted to the window (works behind other windows), and typed as well only
+        while the game window is in front, so no key ever lands in the user's own window."""
+        win.post_key(window)
+        if win32gui.GetForegroundWindow() == window:
+            win.send_input(window, [{"keys": "space"}])
 
     def _close(self, process: subprocess.Popen) -> str:
         """End a game this server launched: "exited" (it had), "closed" (it quit when its window was closed) or
