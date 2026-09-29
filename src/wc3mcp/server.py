@@ -40,6 +40,7 @@ from .ops import placed as placed_ops
 from .ops import probe as probe_ops
 from .ops import protect as protect_ops
 from .ops import recipes as recipe_ops
+from .ops import replay as replay_ops
 from .ops import script as script_ops
 from .ops import terrain as terrain_ops
 from .ops import text as text_ops
@@ -1457,6 +1458,24 @@ def game_close() -> dict:
     """Close game processes launched by game_test (never other game sessions), and put the Battle.net app's launch
     options back when a run left them pointing at a test map (result: launcher)."""
     return desktop_game.GAME.close()
+
+
+# ---- replays ---------------------------------------------------------------------------------------------------
+@_tool
+def replay_read(path: str, player: str | int | None = None, kinds: list[str] | None = None, limit: int = 100,
+                offset: int = 0) -> dict:
+    """A .w3g replay: header, game, players (slot, per-action counts), chat, leaves, how far parsing got, and the
+    actions of kinds (default: orders; order ids named, ability ids as FourCC) for one player (id or name) or all,
+    limit/offset. A relative path is looked up under Documents\\Warcraft III. wc3_help("replays") has the kinds."""
+    return replay_ops.replay_read(path, player, kinds, limit, offset)
+
+
+@_tool
+def desync_read(paths: list[str], limit: int = 20) -> dict:
+    """Desync reports (Logs\\*_Desync.log, Errors\\<date>\\Desync.txt): checksummed sections by FourCC name per turn,
+    and, given several players' files of one game, the sections that differ with the first differing value.
+    wc3_help("replays")."""
+    return replay_ops.desync_read(paths, limit)
 
 
 def setup_logging() -> Path:

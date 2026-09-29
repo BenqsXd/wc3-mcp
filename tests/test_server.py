@@ -23,7 +23,7 @@ EXPECTED = {"map_new", "map_open", "map_close", "map_save", "map_status", "map_f
             "game_test", "game_regress", "game_status", "game_close", "elements_list", "elements_edit", "placed_list",
             "placed_edit", "terrain_get", "terrain_edit", "terrain_render", "campaign_new", "campaign_get",
             "campaign_edit", "ai_get", "ai_edit", "ai_export", "asset_info", "asset_convert", "asset_edit",
-            "asset_preview", "constants_get", "constants_edit", "image_crop"}
+            "asset_preview", "constants_get", "constants_edit", "image_crop", "replay_read", "desync_read"}
 
 
 def call(name: str, args: dict):
@@ -515,7 +515,7 @@ def test_help_pages_hold_what_the_descriptions_left_out():
     tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
     for name in listing["topics"]:
         # a page named after a tool is pointed at from that tool; a topic page (terrain_landscape) from its tool too
-        holder = name if name in tools else "terrain_edit"
+        holder = name if name in tools else {"terrain_landscape": "terrain_edit", "replays": "replay_read"}[name]
         assert f'wc3_help("{name}")' in tools[holder].description, name
 
 

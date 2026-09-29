@@ -641,6 +641,44 @@ density - and reports each metric with the shipped maps' p10, median and p90 for
 the first time.
 """)
 
+page("replays", """
+replay_read(path, player=None, kinds=None, limit=100, offset=0) and desync_read(paths, limit=20) - an online
+playtest's replay and desync reports, read without the game.
+
+WHERE THE FILES ARE (relative paths are looked up under Documents\\Warcraft III)
+  BattleNet\\<account>\\Replays\\LastReplay.w3g   the last game; TempReplay.w3g is the one still running (no header yet)
+  Logs\\<...>_replay.w3g and <...>_Desync.log      written on a desync, beside each other
+  Errors\\<date>\\Desync.txt                        the crash-report summary: desync turn, game id, map, checksums
+Every player of a desynced game has their own _Desync.log: collect them and pass them together.
+
+REPLAY_READ
+  header (build, length, multiplayer), game (map, creator, host_id, speed, game_type, random_seed), players (id, name,
+  host, team, color, race, actions, action_counts), chat (time, player, to: all|allies|observers|private|lobby, text),
+  leaves (time, player, reason code, result: won|lost|left|draw|disconnect|observer_left or the raw code), parsed
+  (reached_end, time_ms, unknown_actions: action id -> player blocks it cut short), actions (the kinds asked for).
+  Times are m:ss.s of game time. player: an id or part of a name.
+  kinds (default the orders): order (no target), order_point, order_target, give_item, order_two_points, command,
+  select, subgroup, hotkey_assign, hotkey_select, pre_subselect, select_item, dequeue, cancel_revive, mouse,
+  trigger_chat (chat a trigger caught), trigger_sync, sync_stored, ping, esc, hero_skill_menu, build_menu,
+  ally_options, transfer, pause, resume, set_speed, speed_up, speed_down, save_game, save_done, continue,
+  arrow_key, cheat, unknown_1b, unknown_21, unknown_78, unknown_79.
+  An order names its ability by FourCC (id: "AHbz", a unit to train or build, an item to buy) or by order id
+  (order_id: 851971, order: "smart" when the name is known); targets are world x/y and unit handle numbers.
+  command (Reforged 0x7A) is the command card click: unit, ability id and then (the order or item it leads to).
+  mouse (0x76) is a Reforged mouse event: event, x, y, button - frequent, left out by default.
+  An action id the reader does not know ends that player's block for that time slot, counted in unknown_actions;
+  the rest of the game still parses.
+
+DESYNC_READ
+  Per file: kind (log | report), turns, sections (FourCC name, occurrence, checksum per turn, number of lines).
+  The log's sections: gwar (the game state, as the report's "game checksum"), rand (random), cust (custom object
+  data, one per kind), misc, cnet, ipse, ... A desync report lists the named checksums (unit, item, upgrade, ...).
+  With two or more logs (or reports) of the same game: differences = the sections whose checksum differs, in log
+  order, each with the first differing value (key path of FourCC names, e.g. pnum/plys/tech/teci, and the values).
+  The first differing section and value is where the game states went apart.
+""")
+
+
 def help_text(topic: str | None = None) -> dict:
     """One reference page, or the list of them."""
     if topic is None or topic not in TOPICS:
