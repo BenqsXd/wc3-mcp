@@ -68,6 +68,22 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.10
+
+- **Probes run on protected maps.** A map without trigger data (a `map_protect` build, or any script-only map) gets
+  the probe straight into its script, so `game_test probe=true` checks the build that ships. Probe code there can
+  call only natives and Blizzard.j functions, since the map's own names are renamed. Verified live on a protected
+  build.
+- **`replay_read` and `desync_read`.** A replay's players, chat, leaves and each player's orders (Reforged actions
+  0x76-0x7A included), and a desync log's sections by name, with several players' logs compared. `wc3_help("replays")`.
+- **`map_flow sight` and `open_near`.** Whether one point sees another (higher cliff levels and sight-blocking
+  destructibles, the first blocker named), and open, reachable ground in sight of a point, for placing test units.
+- **`game_regress`** runs a folder of probe files after a game patch and reports every check whose verdict changed
+  since the last run; a starter suite ships in the skill (`regress/`).
+- **`game_test loading_screenshot=true`** saves one picture of the map's loading screen when its bar is full.
+- **`probe.script_started`** gives the game time the probe script began; `wc3_help("game_test")` says when each part
+  of a probe runs (dialogs pause the game, and so the script).
+
 ## What's new in 1.9
 
 - **Maps with their own loading screen run in `game_test`.** Whether the map loads is now read from the map file the
