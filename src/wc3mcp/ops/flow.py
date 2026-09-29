@@ -501,3 +501,153 @@ def areas(project, catalog, min_cells: int = 16, grid_step: int | None = None) -
         out["grid"] = {"step_units": step * CELL, "origin": world(step / 2, step / 2), "rows": rows,
                        "format": "rows south to north, each [area, count] pairs west to east; 0 is not walkable"}
     return out
+
+
+# ---- line of sight --------------------------------------------------------------------------------------------
+SIGHT_STEP = 16      # world units between samples along a sight line: half a pathing cell, so no tree slips between
+OPEN_CLEAR = 128     # an open spot keeps this far from every living destructible's centre
+OPEN_SPACING = 64    # open spots listed at least this far apart, so units placed on them do not overlap
+SIGHT_NOTE = ("a unit sees no ground on a higher cliff level than its own, and no further across it; a living "
+              "destructible with an occlusion height (trees, rocks, gates, line-of-sight blockers) blocks the line "
+              "within its pathing footprint's half-width. Heights inside one cliff level, flying units and vision "
+              "range are not modelled")
+
+
+class _Sight:
+    """Cliff levels and the living sight-blocking destructibles of a map, for line-of-sight questions."""
+
+    def __init__(self, scene, catalog):
+        from .placed import _id
+
+        self.terrain, self.scene = scene.terrain, scene
+        self.solid, self.occluders = [], {}      # every living destructible; the sight blockers by 128-unit tile
+        for o in scene.doodads.doodads:
+            if o.life <= 0 or scene.kind_of(o) != "destructible":
+                continue
+            type_id = _id(o.id)
+            self.solid.append((o.x, o.y))
+            try:
+                height = float(catalog.field("destructible", type_id, "boch") or 0)   # occlusion height
+            except ValueError:
+                height = 0.0
+            if height <= 0:
+                continue
+            found = catalog.pathing_pixels(str(catalog.field("destructible", type_id, "bptx") or ""))
+            reach = max(found[0], found[1]) * CELL / 2 if found else CORNER / 2
+            key = (int(o.x // CORNER), int(o.y // CORNER))
+            self.occluders.setdefault(key, []).append((o.x, o.y, reach, type_id))
+
+    def level(self, x: float, y: float) -> int:
+        t = self.terrain
+        cx, cy = corner_of(t, x, y)
+        return t.cliffs[cy * t.width + cx] & 15
+
+    def blocker(self, a, b) -> dict | None:
+        """The first thing that hides b from a unit standing at a, or None when b is in sight."""
+        own = self.level(*a)
+        steps = max(1, int(math.dist(a, b) // SIGHT_STEP))
+        for k in range(1, steps + 1):
+            f = k / steps
+            x, y = a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f
+            level = self.level(x, y)
+            if level > own:
+                return {"kind": "cliff", "level": level, "at": [round(x), round(y)]}
+            tx, ty = int(x // CORNER), int(y // CORNER)
+            for i in (-1, 0, 1):
+                for j in (-1, 0, 1):
+                    for ox, oy, reach, type_id in self.occluders.get((tx + i, ty + j), ()):
+                        # a tree the viewer or the target stands against hides neither of them
+                        if math.dist((x, y), (ox, oy)) < reach <= min(math.dist(a, (ox, oy)), math.dist(b, (ox, oy))):
+                            return {"kind": "destructible", "type": type_id,
+                                    "name": self.scene.name("destructible", type_id),
+                                    "at": [round(ox), round(oy)], "hit_at": [round(x), round(y)]}
+        return None
+
+
+def _point(value, name: str) -> tuple[float, float]:
+    if isinstance(value, list) and len(value) == 2 and all(isinstance(v, (int, float)) for v in value):
+        return float(value[0]), float(value[1])
+    raise ToolError("bad_value", f"{name}: expected [x, y]", path=name)
+
+
+def sight(project, catalog, line=None, open_near=None) -> dict:
+    """Whether one point sees another (line = [x1, y1, x2, y2] or [[x1, y1], [x2, y2]]), and/or open ground near a
+    point (open_near = [x, y, r] or [x, y, r, n]): walkable, on the point's own cliff level and walkable area, clear
+    of destructibles, and in sight of it."""
+    scene, _grid_unused, blockers, _starts = _grid(project, catalog, corners=False)
+    look = _Sight(scene, catalog)
+    out: dict = {"note": SIGHT_NOTE}
+    if line is not None:
+        if isinstance(line, list) and len(line) == 4:
+            line = [line[:2], line[2:]]
+        if not isinstance(line, list) or len(line) != 2:
+            raise ToolError("bad_value", "sight: expected [x1, y1, x2, y2] or [[x1, y1], [x2, y2]]", path="sight")
+        a, b = _point(line[0], "sight[0]"), _point(line[1], "sight[1]")
+        seen, back = look.blocker(a, b), look.blocker(b, a)
+        out["sight"] = {"from": [round(a[0]), round(a[1])], "to": [round(b[0]), round(b[1])],
+                        "from_level": look.level(*a), "to_level": look.level(*b),
+                        "distance": round(math.dist(a, b)), "visible": seen is None, "blocked_by": seen,
+                        "visible_back": back is None, **({"blocked_back_by": back} if back else {})}
+    if open_near is not None:
+        out["open_near"] = _open_near(project, catalog, blockers, look, open_near)
+    return out
+
+
+def _open_near(project, catalog, blockers, look, spec) -> dict:
+    from .pathing import cells, flood
+
+    if not (isinstance(spec, list) and len(spec) in (3, 4) and all(isinstance(v, (int, float)) for v in spec)
+            and spec[2] > 0):
+        raise ToolError("bad_value", "open_near: expected [x, y, r] or [x, y, r, n] with r > 0", path="open_near")
+    x, y, r = float(spec[0]), float(spec[1]), float(spec[2])
+    n = int(spec[3]) if len(spec) == 4 else 10
+    terrain = look.terrain
+    free, width, height, source = cells(project, terrain, catalog, blockers)
+    col, row = int((x - terrain.offset_x) // CELL), int((y - terrain.offset_y) // CELL)
+    home = [row * width + col] if 0 <= col < width and 0 <= row < height else []
+    seeds = _standing(free, width, home)
+    if not seeds:
+        raise ToolError("bad_value", f"open_near: no walkable ground within {ESCAPE * CELL} units of ({x:g}, {y:g})",
+                        path="open_near")
+    dist = flood(free, width, height, seeds)      # the walkable area of (x, y): spots elsewhere cannot be walked to
+    level = look.level(x, y)
+    solid: dict = {}
+    for ox, oy in look.solid:
+        solid.setdefault((int(ox // CORNER), int(oy // CORNER)), []).append((ox, oy))
+    found = []
+    span = int(r // CELL) + 1
+    for j in range(max(row - span, 1), min(row + span + 1, height - 1)):
+        for i in range(max(col - span, 1), min(col + span + 1, width - 1)):
+            s = j * width + i
+            if dist[s] < 0:
+                continue
+            px, py = terrain.offset_x + (i + 0.5) * CELL, terrain.offset_y + (j + 0.5) * CELL
+            d = math.dist((x, y), (px, py))
+            if d > r or look.level(px, py) != level:
+                continue
+            if not all(free[s + dj * width + di] for dj in (-1, 0, 1) for di in (-1, 0, 1)):
+                continue      # beside a cliff, a footprint or deep water: not open ground
+            tx, ty = int(px // CORNER), int(py // CORNER)
+            if any(math.dist((px, py), p) < OPEN_CLEAR for a in (-1, 0, 1) for b in (-1, 0, 1)
+                   for p in solid.get((tx + a, ty + b), ())):
+                continue
+            if look.blocker((x, y), (px, py)) is None:
+                found.append((d, px, py, dist[s]))
+    found.sort()
+    spots = []
+    for d, px, py, steps in found:
+        if len(spots) >= n:
+            break
+        if all(math.dist((px, py), (sx, sy)) >= OPEN_SPACING for sx, sy, *_ in spots):
+            spots.append((px, py, d, steps))
+    out = {"at": [round(x), round(y)], "level": level, "radius": round(r), "found": len(found),
+           "spots": [{"at": [round(px), round(py)], "distance": round(d), "walk": steps * CELL}
+                     for px, py, d, steps in spots],
+           "terrain_source": source,
+           "reading": (f"found counts the 32-unit cells within radius that are walkable from (x, y), on its cliff "
+                       f"level, with free cells all around, at least {OPEN_CLEAR} from a destructible and in sight of "
+                       f"(x, y); spots are the nearest of them, {OPEN_SPACING} or more apart; walk is the walking "
+                       f"distance from (x, y)")}
+    if source == "derived":
+        out["warning"] = DERIVED_WARNING
+    return out
