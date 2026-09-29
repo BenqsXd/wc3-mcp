@@ -331,6 +331,22 @@ def test_a_game_stuck_at_the_main_menu_is_started_again(monkeypatch, tmp_path):
     assert result["stuck_at"] == "main_menu" and len(result["relaunched"]) == game.MAX_RELAUNCHES
 
 
+def test_the_loading_screen_is_photographed_before_its_key_is_pressed(monkeypatch, tmp_path):
+    shots = []
+    monkeypatch.setattr(game.Game, "_screenshot", lambda self, pid: shots.append(1) or (b"png", "Warcraft III"))
+    result, _, _ = _fake_run(monkeypatch, tmp_path, [None, "press_key", "press_key"], write_result_after_key=True,
+                             loading_shot=True)
+    assert result["loading_screenshot"] == b"png" and len(shots) == 1   # the first full bar only
+    monkeypatch.setattr(game.Game, "_screenshot", lambda self, pid: (None, "game_window_not_in_front"))
+    result, _, _ = _fake_run(monkeypatch, tmp_path, [None, "press_key"], write_result_after_key=True,
+                             loading_shot=True)
+    assert "loading_screenshot" not in result and result["loading_screenshot_failed"] == "game_window_not_in_front"
+    result, _, _ = _fake_run(monkeypatch, tmp_path, [None, "login"], loading_shot=True)   # no full bar ever seen
+    assert "did not wait for a key" in result["loading_screenshot_note"]
+    result, _, _ = _fake_run(monkeypatch, tmp_path, [None, "press_key"], write_result_after_key=True)
+    assert not any(k.startswith("loading_screenshot") for k in result)
+
+
 def test_the_screenshot_series_starts_when_the_map_runs(monkeypatch, tmp_path):
     marker = tmp_path / "docs" / "CustomMapData" / "wc3mcp" / "started.txt"
 

@@ -261,7 +261,7 @@ class Game:
     def test(self, map_path, timeout: float = 240, results: list[str] | None = None, close: bool = True,
              screenshot: bool = False, wait: bool = True, meta: dict | None = None, shots: int = 0,
              shot_every: float = 3.0, login: str = "auto", login_wait: float = USER_LOGIN_WAIT,
-             started_file: str | None = None) -> dict:
+             started_file: str | None = None, loading_shot: bool = False) -> dict:
         """Run the map, blocking until it ends. wait=False instead runs it in a background thread and returns at
         once; `status()` then reports the run and holds its result when it ends. login says what a Battle.net login
         screen gets (LOGIN_MODES); started_file is a result file the map writes the moment it runs (the probe's)."""
@@ -280,7 +280,7 @@ class Game:
                "written": [], "result": None, "error": None, "thread": None, "meta": meta or {}}
         self.run = job
         options = {"shots": shots, "shot_every": shot_every, "login": login, "login_wait": login_wait,
-                   "started_file": started_file}
+                   "started_file": started_file, "loading_shot": loading_shot}
         # the run always has its own thread: a waiting call that is interrupted loses only its answer, and the run
         # goes on to finish under game_status
         job["thread"] = threading.Thread(target=self._run, daemon=True,
@@ -344,7 +344,8 @@ class Game:
 
     def _test(self, job: dict, target: Path, timeout: float, results: list[str] | None, close: bool,
               screenshot: bool, shots: int = 0, shot_every: float = 3.0, login: str = "auto",
-              login_wait: float = USER_LOGIN_WAIT, started_file: str | None = None) -> dict:
+              login_wait: float = USER_LOGIN_WAIT, started_file: str | None = None,
+              loading_shot: bool = False) -> dict:
         wanted = {name: _result_path(name) for name in results or []}
         marker = _result_path(started_file) if started_file else None
         digest = hashlib.sha256(target.read_bytes()).hexdigest() if target.is_file() else str(target)
@@ -386,6 +387,7 @@ class Game:
         opened_since, ended = None, None
         outcome, relaunches, asked_user, login_seen = None, [], False, False
         shot_at, series, missed, shot_times = 0.0, [], [], []
+        loading_taken, loading_image, loading_of = False, None, ""
         grace = 0.0   # time spent on login screens: it does not count against the timeout
         while process.poll() is None and not self.cancelled:
             now = time.time()
@@ -435,6 +437,9 @@ class Game:
                 except (win32gui.error, OSError):
                     state = None
                 if state == "press_key":
+                    if loading_shot and not loading_taken:   # the bar is full: this picture is the loading screen
+                        loading_taken = True
+                        loading_image, loading_of = self._screenshot(process.pid)
                     win.send_input(window, [{"keys": "space"}])
                     keys += 1
                 if login_since and state != "login":
@@ -526,6 +531,15 @@ class Game:
             result["loading_screen_keys"] = keys
             result["loading_screen_note"] = ("the loading screen showed PRESS ANY KEY TO CONTINUE, so the run pressed "
                                              "space")
+        if loading_shot:
+            if loading_image:
+                result["loading_screenshot"] = loading_image
+            elif loading_taken:
+                result["loading_screenshot_failed"] = loading_of
+            else:
+                result["loading_screenshot_note"] = ("the loading screen never showed a full bar with PRESS ANY KEY TO "
+                                                     "CONTINUE (the map's loading screen did not wait for a key, or "
+                                                     "the run ended first), so no picture was taken")
         if queued:
             result["login_queue"] = {"seconds": round(queued, 1),
                                      "note": "Blizzard's login queue was shown and waited out (not counted against "

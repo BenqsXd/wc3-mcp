@@ -624,6 +624,20 @@ def test_game_test_reads_probe_helpers_from_a_path_or_the_probe_file_beside_it(m
     assert seen["functions"].startswith("function G") and out["probe_functions_file"].endswith("duel.functions.j")
 
 
+def test_game_test_saves_the_loading_screenshot(monkeypatch, tmp_path):
+    monkeypatch.setenv("WC3MCP_HOME", str(tmp_path))
+    seen = {}
+
+    def test(target, **kw):
+        seen.update(kw)
+        return {"results": {}, "pid": 5, "loading_screenshot": b"png"}
+
+    monkeypatch.setattr(server.desktop_game.GAME, "test", test)
+    out = payload(call("game_test", {"path": str(tmp_path / "m.w3x"), "loading_screenshot": True}))
+    assert seen["loading_shot"] is True and Path(out["loading_screenshot"]).read_bytes() == b"png"
+    assert out["loading_screenshot"].endswith("game-5-loading.png")
+
+
 def test_probe_messages_say_whom_they_were_for():
     from wc3mcp.ops.probe import parse
 
