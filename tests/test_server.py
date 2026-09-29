@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,7 @@ EXPECTED = {"map_new", "map_open", "map_close", "map_save", "map_status", "map_f
             "objdata_list", "objdata_get", "objdata_edit", "triggers_tree", "trigger_get", "triggers_edit",
             "script_build", "script_validate", "map_validate", "editor_launch", "editor_status", "editor_map",
             "editor_menu", "editor_screenshot", "editor_dialogs", "editor_dialog_act", "editor_input", "editor_log",
-            "game_test", "game_status", "game_close", "elements_list", "elements_edit", "placed_list",
+            "game_test", "game_regress", "game_status", "game_close", "elements_list", "elements_edit", "placed_list",
             "placed_edit", "terrain_get", "terrain_edit", "terrain_render", "campaign_new", "campaign_get",
             "campaign_edit", "ai_get", "ai_edit", "ai_export", "asset_info", "asset_convert", "asset_edit",
             "asset_preview", "constants_get", "constants_edit", "image_crop"}
@@ -675,3 +676,37 @@ def test_a_round_trip_can_end_with_the_editor_closed(monkeypatch):
     monkeypatch.setattr(editor, "quit", lambda discard=False, force=False: {"quit": True})
     out = payload(call("editor_map", {"action": "save", "quit_after": True}))
     assert out["saved"] and out["quit"] == {"quit": True}
+
+
+def test_game_regress_reports_verdicts_that_changed_since_the_last_run(monkeypatch, tmp_path):
+    suite = tmp_path / "suite"
+    suite.mkdir()
+    for name in ("a.j", "b.j"):
+        (suite / name).write_text("call ProbeReport(\"x\")\n")
+    (suite / "a.functions.j").write_text("function F takes nothing returns nothing\nendfunction\n")   # not a probe
+    verdicts = [{"a.j": {"swap": True, "flag": True}, "b.j": {"hp": True}},
+                {"a.j": {"swap": False, "flag": True}, "b.j": {}}]
+    seen = []
+
+    def fake(path, **kw):
+        seen.append(Path(kw["probe_script_file"]).name)
+        checks = verdicts[0][seen[-1]]
+        failed = sorted(n for n, ok in checks.items() if not ok)
+        return {"probe": {"checks": checks, "checks_failed": failed, "checks_passed": len(checks) - len(failed)} if checks else None,
+                "hint": "no report"}
+
+    monkeypatch.setitem(server.TOOLS, "game_test", fake)
+    first = payload(call("game_regress", {"map": "m.w3x", "suite": str(suite)}))
+    assert seen == ["a.j", "b.j"] and first["changed"] == [] and "previous" not in first
+    assert first["summary"]["checks_passed"] == 3 and first["game_version"].count(".") == 3
+    verdicts.pop(0)
+    seen.clear()
+    time.sleep(1.1)   # results files are named by the second
+    second = payload(call("game_regress", {"map": "m.w3x", "suite": str(suite)}))
+    assert second["changed"] == [{"file": "a.j", "check": "swap", "was": True, "now": False},
+                                 {"file": "b.j", "check": "hp", "was": True, "now": None}]
+    assert second["files"][0]["checks_failed"] == ["swap"] and second["files"][1]["errors"] == ["no report"]
+    assert second["previous"]["results"] == Path(first["saved"]).name and len(list((suite / "results").glob("*.json"))) == 2
+    seen.clear()
+    payload(call("game_regress", {"map": "m.w3x", "suite": str(suite), "stop_on_fail": True}))
+    assert seen == ["a.j"]   # a.j failed a check, so b.j never launched

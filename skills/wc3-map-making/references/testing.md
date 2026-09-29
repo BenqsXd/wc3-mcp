@@ -85,3 +85,7 @@
 - Keep hands off the game window during a probe: clicks and chat reach the map. `probe.user_input` lists chat lines and counts clicks by human players, so a failed check can be traced to someone playing along.
 - A map with its own loading screen model loads in `game_test` like any other; a plain run (no results) ends once the map runs and its screenshots are taken, instead of waiting at the map's first dialog (a dialog pauses a single-player game) until the timeout.
 
+
+## After a game patch
+
+- `game_regress(map, suite)` runs every probe file of a folder (`skills/wc3-map-making/regress/` is a starter suite of engine behaviours from `game-behaviour.md`) and lists the checks whose verdict changed since the last run saved in `<suite>/results/`. A `true` -> `false` after a patch is a technique the patch broke (the Engineering Upgrade swap stopped working on 3.0.0 unnoticed). Add a probe file for each engine behaviour a map depends on; `wc3_help("game_regress")`.
