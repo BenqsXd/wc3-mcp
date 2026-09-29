@@ -1313,6 +1313,61 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
     return {**(_finish_test(result, probe) if wait else result), **extra}
 
 
+@_tool
+def game_regress(map: str, suite: str, stop_on_fail: bool = False) -> dict:
+    """Run a folder of probe files (each a probe_script, <name>.functions.j beside it for helpers) on a map, one game
+    after another, and say which checks passed. Every run is saved to <suite>/results/<timestamp>.json;
+    changed lists the checks whose verdict differs from the previous file there, which is how a game patch that
+    broke a technique shows. skills/wc3-map-making/regress/ is a starter suite. wc3_help("game_regress")."""
+    folder = Path(suite)
+    files = sorted(p for p in folder.glob("*.j") if not p.name.lower().endswith(".functions.j"))
+    if not files:
+        raise ToolError("bad_value", f"no probe .j files in {suite}", path="suite")
+    rows, failed_run = [], False
+    for f in files:
+        start = time.time()
+        row = {"file": f.name, "errors": []}
+        try:
+            r = TOOLS["game_test"](map, probe=True, probe_script_file=str(f))
+        except ToolError as e:   # a probe that does not compile ends only its own file
+            r = {}
+            row["errors"].append(f"{e.code}: {e}")
+        probe = r.get("probe") or {}
+        row.update(checks=probe.get("checks", {}), checks_passed=probe.get("checks_passed", 0),
+                   checks_failed=probe.get("checks_failed", []))
+        if r and not probe:
+            row["errors"].append(r.get("hint") or "no probe report")
+        row["seconds"] = round(time.time() - start, 1)
+        rows.append(row)
+        if r.get("login_required") or r.get("stuck_at"):   # every later launch would meet the same wall
+            row["errors"].append(f"stopped: {'login_required' if r.get('login_required') else r.get('stuck_at')}")
+            break
+        if stop_on_fail and (row["errors"] or row["checks_failed"]):
+            break
+    out = {"map": map, "suite": str(folder), "game_version": ".".join(str(n) for n in newmap_ops._game_version()),
+           "server_version": __version__, "files": rows}
+    results = folder / "results"
+    before = sorted(results.glob("*.json"))
+    previous = json.loads(before[-1].read_text("utf-8")) if before else None
+    changed = []
+    if previous:
+        for row in rows:
+            was = (previous.get("files") or {}).get(row["file"], {}).get("checks", {})
+            for name, ok in was.items():
+                if row["checks"].get(name) != ok:   # None: the check did not report this time
+                    changed.append({"file": row["file"], "check": name, "was": ok, "now": row["checks"].get(name)})
+        out["previous"] = {"results": before[-1].name, "game_version": previous.get("game_version")}
+    out["changed"] = changed
+    out["summary"] = {"files": len(rows), "checks_passed": sum(r["checks_passed"] for r in rows),
+                      "checks_failed": sum(len(r["checks_failed"]) for r in rows),
+                      "files_with_errors": sum(1 for r in rows if r["errors"]), "changed": len(changed)}
+    results.mkdir(exist_ok=True)
+    saved = results / (time.strftime("%Y%m%d-%H%M%S") + ".json")
+    saved.write_text(json.dumps({**out, "files": {r["file"]: r for r in rows}}, indent=1), "utf-8")
+    out["saved"] = str(saved)
+    return out
+
+
 def _finish_test(result: dict, probe: bool) -> dict:
     """The parts of a run's result that need the server: the screenshot files and the probe report."""
     series = result.get("screenshots")

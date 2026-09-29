@@ -287,6 +287,24 @@ PITFALLS
   takes: keep one probe that only waits and checks that nothing happened early.
 """)
 
+page("game_regress", """
+game_regress(map, suite, stop_on_fail=false) - run a folder of probe files on a map and compare with the last run.
+
+  suite is a folder of .j files, each a probe_script body using ProbeExpect(name, condition); a <name>.functions.j
+  beside it holds helper functions, as for game_test probe_script_file. Each file is one game_test(probe=true) run,
+  one game at a time: five files are five launches, several minutes in all, so keep suites small.
+  Per file: checks (name -> pass), checks_passed, checks_failed, errors (a probe that did not compile, no report, a
+  login wall) and seconds. Also game_version (the install's build), server_version and a summary.
+  The run is saved to <suite>/results/<timestamp>.json. changed lists every check whose verdict differs from the
+  newest earlier file there ({file, check, was, now}; now null when it did not report): run the suite after a game
+  patch and a check that went true -> false is a technique the patch broke. previous names that file and its
+  game_version; a change between two runs on the same build is a flaky check, not a patch.
+  stop_on_fail ends the suite after the first file with a failed check or an error.
+  Starter suite: skills/wc3-map-making/regress/ (attack flag, damage event, max life, hero skills), each cheap to
+  set up on any map. Techniques that need custom object data (the Engineering Upgrade learn-menu swap) are not in
+  it: put such a probe in your own suite, on a map that has the ability.
+""")
+
 page("data_search", """
 data_search(kind, query, limit, offset, locale, balance, hd, tileset) - find ids and paths in the game data.
 

@@ -199,3 +199,25 @@ def test_what_a_person_does_during_a_run_is_reported():
     routed = probe.route_messages("globals\nendglobals\nfunction A takes nothing returns nothing\nendfunction\n")
     assert "EVENT_PLAYER_MOUSE_DOWN" in routed and "TriggerRegisterPlayerChatEvent" in routed
     assert "call wc3mcpProbe_WatchUsers()" in probe.script("jass", 5)
+
+
+@pytest.mark.skipif(not HAVE_INSTALL, reason="needs the Warcraft III install")
+def test_the_shipped_regression_suite_compiles(tmp_path):
+    from pathlib import Path
+
+    from wc3mcp.gamedata.catalog import Catalog
+
+    maps = [p for p in ladder_maps() if open_sample("ladder:" + p.name).read("war3map.j") is not None]
+    if not maps:
+        pytest.skip("no JASS ladder map")
+    source = tmp_path / maps[0].name
+    shutil.copyfile(maps[0], source)
+    catalog = Catalog(_storage(), balance="Custom_V1")
+    suite = Path(__file__).parents[2] / "skills" / "wc3-map-making" / "regress"
+    files = [p for p in suite.glob("*.j") if not p.name.endswith(".functions.j")]
+    assert len(files) >= 4
+    for i, f in enumerate(files):
+        helpers = f.with_suffix(".functions.j")
+        # build runs pjass and raises probe_script_failed when the probe does not compile
+        probe.build(source, tmp_path / f"probe{i}" / maps[0].name, catalog, user=f.read_text("utf-8"),
+                    functions=helpers.read_text("utf-8") if helpers.is_file() else None)

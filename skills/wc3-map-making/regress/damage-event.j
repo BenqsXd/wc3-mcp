@@ -1,0 +1,18 @@
+// In EVENT_UNIT_DAMAGED, BlzSetEventDamage(0.0) prevents the life loss and the damage reads back as dealt
+// (game-behaviour.md, Combat). The handler zeroes damage on a unit whose user data is 9.
+local unit a = CreateUnit(Player(0), 'hfoo', 0, 0, 0)
+local unit t = CreateUnit(Player(PLAYER_NEUTRAL_PASSIVE), 'hfoo', 300, 0, 0)
+local unit u = CreateUnit(Player(PLAYER_NEUTRAL_PASSIVE), 'hfoo', 600, 0, 0)
+local trigger g = CreateTrigger()
+local real before = GetUnitState(t, UNIT_STATE_LIFE)
+local real beforeU = GetUnitState(u, UNIT_STATE_LIFE)
+call PauseUnit(a, true)
+call SetUnitUserData(t, 9)
+call TriggerRegisterUnitEvent(g, t, EVENT_UNIT_DAMAGED)
+call TriggerRegisterUnitEvent(g, u, EVENT_UNIT_DAMAGED)
+call TriggerAddAction(g, function RegressZeroDamage)
+call UnitDamageTarget(a, t, 50.0, false, false, ATTACK_TYPE_NORMAL, DAMAGE_TYPE_NORMAL, WEAPON_TYPE_WHOKNOWS)
+call UnitDamageTarget(a, u, 50.0, false, false, ATTACK_TYPE_NORMAL, DAMAGE_TYPE_NORMAL, WEAPON_TYPE_WHOKNOWS)
+call TriggerSleepAction(0.5)
+call ProbeExpect("BlzSetEventDamage(0) keeps the life", GetUnitState(t, UNIT_STATE_LIFE) == before)
+call ProbeExpect("an untouched target still loses life", GetUnitState(u, UNIT_STATE_LIFE) < beforeU)
