@@ -221,6 +221,9 @@ BACKGROUND AND PICTURES
   the moment the map runs (a probe writes a start marker; map_started_after says when), which is how scenery gets
   looked at in the game. A frame that could not be taken is listed in screenshots_failed with the reason. The run
   ends when its results are written, so put ProbeCamera stops before the last ProbeReport.
+  loading_screenshot=true saves one PNG of the map's own loading screen, taken when its bar is full and it shows
+  PRESS ANY KEY (before the run presses the key): loading_screenshot is the file, or loading_screenshot_failed says
+  why there is none. A map whose loading screen does not wait for a key gets loading_screenshot_note instead.
 
   In probes: GroupEnumUnitsInRect (and the other GroupEnum calls) skip units hidden with ShowUnit(false) - keep their
   handles, or read placed_list. Raw codes are base-256 integers, so 'n020' + 10 is 'n02:', not 'n02A'.

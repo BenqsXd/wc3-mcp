@@ -1255,14 +1255,15 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
               probe_functions: str | None = None, wait: bool = True, screenshots: int = 0,
               screenshot_every: float = 3.0, login: Literal["auto", "battlenet", "wait", "stop"] = "auto",
               login_wait: float = 120, probe_init: str | None = None,
-              probe_functions_file: str | None = None) -> dict:
+              probe_functions_file: str | None = None, loading_screenshot: bool = False) -> dict:
     """Run a map in Warcraft III (windowed; the window needs to be in front while loading) and collect what it
     reports. The map writes result files with PreloadGenEnd and the run ends as soon as every file listed in results
     exists. probe=true runs a throwaway copy that reports the state at probe_seconds; probe_script, probe_functions
     and the helpers ProbeReport, ProbeExpect, ProbeCountEvent and ProbeCamera make it a real test; probe_init runs
     at map initialization, before any dialog the map shows (ProbeSkipDialogs keeps them shut). wait=false runs it
     in the background (game_status reports it and its result); screenshots=N with screenshot_every saves pictures
-    from the moment the map runs. Logins: login="auto" (default) starts the game through the Battle.net desktop app,
+    from the moment the map runs; loading_screenshot=true saves one picture of the map's own loading screen once its
+    bar is full (PRESS ANY KEY). Logins: login="auto" (default) starts the game through the Battle.net desktop app,
     which hands it the app's own session, so no login screen appears and no credentials are involved anywhere (the
     app needs to be logged in once, with "Keep me logged in"). "battlenet" is the same but fails when the app is
     missing; "wait" and "stop" start the game directly, which asks for a login unless the game still has a session -
@@ -1307,7 +1308,8 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
     result = desktop_game.GAME.test(target, timeout=timeout, results=results, close=close, screenshot=screenshot,
                                     wait=wait, meta={"probe": probe, "extra": extra}, shots=screenshots,
                                     shot_every=screenshot_every, login=login, login_wait=login_wait,
-                                    started_file=probe_ops.STARTED if probe else None)
+                                    started_file=probe_ops.STARTED if probe else None,
+                                    loading_shot=loading_screenshot)
     if wait and desktop_game.GAME.run is not None:
         desktop_game.GAME.run["finished"] = True   # game_status must not finish this result a second time
     return {**(_finish_test(result, probe) if wait else result), **extra}
@@ -1331,6 +1333,11 @@ def _finish_test(result: dict, probe: bool) -> dict:
         result["screenshot"] = str(shot)
     elif "screenshot" in result:
         result["screenshot"] = None
+    if result.get("loading_screenshot"):
+        shot = config.home() / "screenshots" / f"game-{result['pid']}-loading.png"
+        shot.parent.mkdir(parents=True, exist_ok=True)
+        shot.write_bytes(result["loading_screenshot"])
+        result["loading_screenshot"] = str(shot)
     if probe:
         lines = result["results"].pop(probe_ops.REPORT, None)
         result["probe"] = probe_ops.parse(lines) if lines is not None else None
