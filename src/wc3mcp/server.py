@@ -858,7 +858,7 @@ def layout_check(path: str, area: list[float] | None = None, kinds: list[str] | 
 def map_flow(path: str, area: list[float] | None = None, origins: list | None = None,
              targets: list | None = None, fields: list[str] | None = None, min_gap: float | None = None,
              verbose: bool = False, areas: bool = False, min_cells: int = 16,
-             grid_step: int | None = None) -> dict:
+             grid_step: int | None = None, sight: list | None = None, open_near: list[float] | None = None) -> dict:
     """How a map plays, in walking distances rather than straight lines: per start location the way to its own gold
     mine and to the nearest expansion, the walkable room around it, and how much ground it reaches; per pair of
     starts the distance between them and the narrowest choke on the way, with where that choke is; plus the walkable
@@ -871,7 +871,12 @@ def map_flow(path: str, area: list[float] | None = None, origins: list | None = 
     targets and those narrower than it; fields keeps only those keys per target. areas=true instead labels every
     walkable area (largest first, with its rect and one walkable sample point; areas under min_cells cells are
     counted, not listed), and grid_step=N adds a label grid every N cells as run-length rows - where to keep blinks
-    and spawns on reachable ground. wc3_help("map_flow") explains the numbers, melee_check included."""
+    and spawns on reachable ground. sight=[x1, y1, x2, y2] instead says whether the first point sees the second
+    (cliff levels, sight-blocking destructibles) and what blocks it; open_near=[x, y, r(, n)] lists open walkable
+    spots within r on the same cliff level and area, in sight of (x, y). wc3_help("map_flow") explains the numbers,
+    melee_check included."""
+    if sight is not None or open_near is not None:
+        return flow_ops.sight(_project(path), _catalog("enUS", "Custom_V1", True), sight, open_near)
     if areas:
         return flow_ops.areas(_project(path), _catalog("enUS", "Custom_V1", True), min_cells, grid_step)
     if (origins is None) != (targets is None):

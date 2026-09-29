@@ -556,7 +556,7 @@ WORTH KNOWING
 """)
 
 page("map_flow", """
-map_flow(path, area, origins, targets) and melee_check(path, sample) - how a map plays, in walking distances.
+map_flow(path, area, origins, targets, areas, sight, open_near) and melee_check(path, sample) - how a map plays, in walking distances.
 
 map_flow, per start location: the distance to its own gold mine and to the nearest expansion (and where that is), the
 walkable corners within 1500 units (room for a base), and how much ground it reaches. Per pair of starts: the walking
@@ -584,6 +584,20 @@ ORIGINS AND TARGETS (the 32-unit cells the game paths on)
   Before the first editor save the terrain part is derived, and the result carries a warning saying so. layout_check's
   narrowest gives the tightest gap between the starts; a gap under about 128 stops heroes (collision above 16), 64 or
   96 is a wall for them.
+
+SIGHT AND OPEN GROUND
+  map_flow(path, sight=[x1, y1, x2, y2]) (or [[x1, y1], [x2, y2]]): does a unit at the first point see the second?
+  The line is sampled every 16 units: a sample on a higher cliff level than the viewer's blocks it (a unit below a
+  cliff sees neither its top nor past it), and so does a living destructible with an occlusion height (occH: trees,
+  rocks, gates, line-of-sight blockers; barrels and crates do not) within half its pathing footprint of the line - but
+  not one beside the target or one the viewer stands in. Answers visible, blocked_by (kind cliff with its level and
+  where, or kind destructible with type, name, where it stands and hit_at on the line), from_level and to_level, and
+  visible_back / blocked_back_by the other way (cliffs make sight one-way). Heights within one cliff level, flying
+  units and sight range are not modelled.
+  map_flow(path, open_near=[x, y, r]) or [x, y, r, n] (n spots, default 10): open ground to put a unit in sight of
+  (x, y) - 32-unit cells within r that are walkable from it, on its cliff level, with all eight neighbour cells free,
+  at least 128 from any living destructible and in sight of it. found counts them; spots lists the nearest n, 64 or
+  more apart, each with its straight and walking distance. sight and open_near may be given together.
 
 melee_check measures the same map the way the melee maps shipped with this install are measured - mines per player,
 start distance, distance to a player's own mine, creep camps, playable area per player, tile count, doodad and unit

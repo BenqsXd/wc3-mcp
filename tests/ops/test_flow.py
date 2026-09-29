@@ -100,3 +100,45 @@ def test_areas_label_the_ground_a_unit_can_walk_between(tmp_path):
     assert south["rect"][3] < top["rect"][1] and top["rect"][3] < north["rect"][1]
     labels = {v for row in doc["grid"]["rows"] for v, _ in row}
     assert labels == {0, 1, 2, 3}
+
+
+def test_sight_is_blocked_by_higher_cliffs_one_way_and_by_trees_not_barrels(tmp_path, catalog):
+    from wc3mcp.ops.flow import sight
+    from wc3mcp.ops.terrain import terrain_edit
+
+    p = new_map(str(tmp_path / "S.w3x"), catalog, width=64, height=64, tileset="L", players=2, fill_tile="Lgrs")
+    terrain_edit(p, catalog, [{"op": "cliff", "rect": [-4096, 1024, 4096, 4096], "level": 3}])   # high ground north
+    doc = sight(p, catalog, [0, -1024, 0, -256])
+    assert doc["sight"]["visible"] and doc["sight"]["visible_back"]
+    up = sight(p, catalog, [[0, -512], [0, 1536]])["sight"]
+    assert up["from_level"] < up["to_level"]
+    assert not up["visible"] and up["blocked_by"]["kind"] == "cliff"
+    assert 700 < up["blocked_by"]["at"][1] < 1200         # where the cliff rises
+    assert up["visible_back"]                             # the high ground looks down
+    placed_edit(p, catalog, [{"op": "add", "kind": "destructible", "columns": ["type", "x", "y"],
+                              "rows": [["LTlt", 0, -640], ["LTbr", 512, -640]]}])
+    tree = sight(p, catalog, [0, -1024, 0, -256])["sight"]
+    assert not tree["visible"] and tree["blocked_by"]["type"] == "LTlt" and tree["blocked_by"]["at"] == [0, -640]
+    assert sight(p, catalog, [512, -1024, 512, -256])["sight"]["visible"]      # a barrel hides nothing
+    assert sight(p, catalog, [0, -1024, 0, -640 + 40])["sight"]["visible"]     # a unit against the tree is seen
+    with pytest.raises(ToolError):
+        sight(p, catalog, [0, 1, 2])
+
+
+def test_open_near_lists_open_ground_in_sight_on_the_same_level(tmp_path, catalog):
+    from wc3mcp.ops.flow import sight
+    from wc3mcp.ops.terrain import terrain_edit
+
+    p = new_map(str(tmp_path / "O.w3x"), catalog, width=64, height=64, tileset="L", players=2, fill_tile="Lgrs")
+    terrain_edit(p, catalog, [{"op": "cliff", "rect": [-4096, 512, 4096, 4096], "level": 3}])
+    placed_edit(p, catalog, [{"op": "add", "kind": "destructible", "columns": ["type", "x", "y"],
+                              "rows": [["LTlt", x, -384] for x in range(-1024, 1025, 128)]}])   # a tree line south
+    doc = sight(p, catalog, open_near=[0, 0, 900, 5])["open_near"]
+    assert doc["found"] > 20 and len(doc["spots"]) == 5
+    assert [s["distance"] for s in doc["spots"]] == sorted(s["distance"] for s in doc["spots"])
+    for s in doc["spots"]:
+        x, y = s["at"]
+        assert -384 + 128 <= y < 512 and s["walk"] >= s["distance"] - 64   # not on the cliff, not by or past the trees
+    everything = sight(p, catalog, open_near=[0, 0, 900, 500])["open_near"]["spots"]
+    assert all(s["at"][1] < 512 for s in everything)                    # nothing on the high ground
+    assert all(-384 + 128 <= s["at"][1] < 512 or abs(s["at"][0]) > 1024 for s in everything)
