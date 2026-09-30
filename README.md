@@ -83,6 +83,24 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.11
+
+- **Runs in more agents.** Besides the Claude Code plugin, the repository is an Agent Plugins 1.0 plugin (Codex and
+  ChatGPT, GitHub Copilot CLI, Cursor), a Codex and a Cursor marketplace and a Gemini CLI extension, and
+  `uvx --from git+https://github.com/BenqsXd/wc3-mcp wc3-mcp` starts it in any MCP client (DeepSeek's agents
+  included). See [docs/harnesses.md](docs/harnesses.md). Tool descriptions fit OpenAI's 1,024-character limit;
+  `WC3MCP_TOOLS` exposes a subset for clients that cap the tool count.
+- **Loading screens get their key on their own.** The full PRESS ANY KEY bar is found anywhere in the bottom of
+  the window on any background (a map's own loading screen, any window shape), the screen is read even while you
+  work in another window, and keys go to the game window only. If the prompt is still not recognised, a key goes
+  to the game every 5 s once it has loaded the map 20 s. `loading_screen` says how it was dismissed. Verified live
+  on a map with a 16:9 loading screen model.
+- **A run closes what it started**, handed-over game processes and crash reporters included (`closed_also`).
+- **A dialog the map opens is reported at once** in a probe run (`run.dialog_open`, `dialog_shown`).
+- **`objdata_edit` upsert says when it renamed an object** (`renamed`); `expect_new: true` refuses a taken id.
+- Lint: a handle handed to one of the map's own functions is not a leak, and `R2I(x * y + 0.001)` counts as
+  rounded.
+
 ## What's new in 1.10
 
 - **Probes run on protected maps.** A map without trigger data (a `map_protect` build, or any script-only map) gets

@@ -453,7 +453,8 @@ def test_a_custom_loading_screen_that_looks_like_the_menu_is_not_restarted(monke
     result, keys, _ = _fake_run(monkeypatch, tmp_path, ["menu"] * 12 + ["press_key"], write_result_after_key=True,
                                 launches=launches, held=lambda t: t >= 5)
     assert "relaunched" not in result and len(launches) == 1 and keys and result["results"]
-    assert "PRESS ANY KEY" in result["loading_screen"]["note"] and result["loading_screen"]["prompt_seen"]
+    # the menu-looking art also must not hold back the keys: one went in unseen 20 s after the game held the map
+    assert result["loading_screen"]["blind_keys"] >= 1
 
 
 def test_the_login_queue_is_waited_out_not_restarted(monkeypatch, tmp_path):
@@ -554,3 +555,24 @@ def test_a_half_written_dialog_file_is_not_read(tmp_path):
     assert game.dialog_shown(path) is None
     path.write_text(DIALOG_TEXT)
     assert game.dialog_shown(path) == {"first_at": 12.5, "count": 2}
+
+
+def test_a_full_loading_bar_is_found_on_any_background_and_window_shape():
+    """The bar is the game's own: found wherever a map's loading screen and the window's shape put it, and a bar
+    still filling (LOADING...) is not taken for it."""
+    from PIL import Image, ImageDraw
+
+    def screen(size, bar, fill=1.0, background=(15, 25, 40)):
+        image = Image.new("RGB", size, background)
+        draw = ImageDraw.Draw(image)
+        left, top, right, bottom = bar
+        draw.rectangle((left, top, left + (right - left) * fill, bottom), fill=(30, 120, 230))
+        mid, height = (left + right) / 2, bottom - top
+        for k in range(-8, 9):   # the prompt's letters, centred on the whole bar
+            x = mid + k * (right - left) / 40
+            draw.rectangle((x, top + height * 0.25, x + (right - left) / 90, bottom - height * 0.25), fill=(250, 210, 40))
+        return image
+
+    assert game.screen_state(screen((1900, 989), (395, 855, 1365, 905))) == "press_key"   # 16:9 model, off centre
+    assert game.screen_state(screen((1440, 774), (330, 640, 1110, 665), background=(120, 90, 60))) == "press_key"
+    assert game.screen_state(screen((1900, 989), (395, 855, 1365, 905), fill=0.75)) != "press_key"

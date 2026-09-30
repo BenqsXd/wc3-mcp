@@ -163,9 +163,43 @@ def _queue(image) -> bool:
             and min(_share(image, 0.0, 0.0, 0.3, 1.0, _dark), _share(image, 0.7, 0.0, 1.0, 1.0, _dark)) > 0.9)
 
 
+def _bar_rows(image) -> bool:
+    """A full loading bar anywhere in the bottom third: a band of rows mostly bright blue across a wide stretch,
+    with no blue a little above it. Position-free, because the bar moves with the window's shape and a map's own
+    loading screen (0.865-0.915 of the height and left of centre on a 1900x989 window with a 16:9 model)."""
+    w, h = image.size
+    top = int(0.66 * h)
+    rows, cols = 120, 240
+    data = image.crop((0, top, w, h)).convert("RGB").resize((cols, rows)).tobytes()
+    px = lambda r, c: data[(r * cols + c) * 3:(r * cols + c) * 3 + 3]  # noqa: E731
+    blue = [[_bright_blue(px(r, c)) for c in range(cols)] for r in range(rows)]
+    share = [sum(row) / cols for row in blue]
+    band = 3   # the bar is 3-5 % of the window height; a third of the window is 120 rows
+    for r in range(15, rows - band):
+        if min(share[r:r + band]) < 0.3 or max(share[r - 15:r - 10]) >= 0.05:
+            continue
+        # the widest blue stretch of these rows must be solid blue at both ends (a glowing floor is patchy, a bar
+        # still filling is dark at its right end) with the prompt's gold letters centred on it (a filling bar
+        # centres LOADING... on the whole bar, not on its blue part)
+        span = [c for c in range(cols) if sum(blue[k][c] for k in range(r, r + band)) >= 2]
+        if len(span) < 0.3 * cols:
+            continue
+        a, b = span[0], span[-1]
+        end = max(3, (b - a) // 7)
+        solid = lambda lo, hi: sum(blue[k][c] for k in range(r, r + band) for c in range(lo, hi)) / (band * (hi - lo))  # noqa: E731
+        gold = [c for c in range(a, b + 1) if any(_gold(px(k, c)) for k in range(max(0, r - 2), min(rows, r + band + 2)))]
+        if solid(a, a + end) < 0.85 or solid(b + 1 - end, b + 1) < 0.85 or len(gold) < 3:
+            continue
+        if abs((gold[0] + gold[-1]) / 2 - (a + b) / 2) < 0.06 * (b - a):
+            return True
+    return False
+
+
 def _press_key(image) -> bool:
     """A full loading bar: the default loading screen draws it at 0.815-0.84 of the height, a map's own loading
     screen model can move it lower (0.87-0.91 on one), so the band is searched for."""
+    if _bar_rows(image):
+        return True
     for k in range(16):
         v = 0.78 + k * 0.01
         ends = (_share(image, 0.17, v, 0.23, v + 0.025, _bright_blue), _share(image, 0.78, v, 0.84, v + 0.025, _bright_blue))
@@ -503,7 +537,7 @@ class Game:
                     restart = "stuck_at_main_menu"
             # a loading screen whose prompt is not recognised still gets its key: once the game has held the map a
             # while and the map has not started, a key goes to the window every few seconds
-            if opened_since and now - opened_since >= BLIND_AFTER and now - blind_at >= BLIND_EVERY                     and state not in ("login", "queue", "menu") and (
+            if opened_since and now - opened_since >= BLIND_AFTER and now - blind_at >= BLIND_EVERY                     and state not in ("login", "queue") and (
                         (marker is not None and not marker.exists())
                         or (marker is None and now - opened_since < BLIND_PLAIN_FOR)):
                 window = window or self.window(process.pid)
