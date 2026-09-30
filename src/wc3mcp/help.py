@@ -692,3 +692,28 @@ def help_text(topic: str | None = None) -> dict:
                 **({"unknown_topic": topic} if topic else {}),
                 "note": "wc3_help(topic) gives the full op shapes and field lists of that tool"}
     return {"topic": topic, "text": TOPICS[topic]}
+
+
+page("objdata_edit", """
+objdata_edit(path, kind, ops | ops_file, quiet=[]) - one all-or-nothing batch of object changes.
+
+OPS
+  {"op": "create", "base": "hfoo", "set": {"Name": "Guard", "HP": 500}}
+    id optional, allocated like the editor. base may be one of the map's custom objects: that copies its stock base
+    and all its modifications, like the editor's copy and paste.
+  {"op": "set", "id": "h000", "set": {"Hbz1": {"1": 7, "2": 9}}}
+    per-level fields take level keys; stock ids such as hgtw work too.
+  {"op": "reset", "id": "h000", "fields": ["uhpm"]}
+  {"op": "delete", "id": "h000"}              "missing_ok": true skips an id that is gone.
+  {"op": "upsert", "id": "h000", "base": "hfoo", "set": {...}}
+    creates when missing, sets when there (result: upserted). An upsert onto an id that exists with another base
+    refuses (base_mismatch). One that changes an existing object's name reports renamed [{id, was, now}] and a
+    warning: two generators claiming one id range overwrite each other silently otherwise. "expect_new": true
+    refuses (code exists, naming the current name) an id that is already taken.
+
+FIELDS
+  Raw codes, field names or display names. A per-level field also takes a list (levels 1..n), {"from": a,
+  "step": s} or {"from": a, "to": b} (optional "levels"); a text field takes {"template": "... {Htb1} ...
+  {level} ..."} filled per level from the object's own values. A button position below 0 (arpy -11) puts the
+  button off the card. quiet=["extended_levels"] shortens that block of the result to a count.
+""")

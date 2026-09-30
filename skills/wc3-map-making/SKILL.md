@@ -7,7 +7,7 @@ description: Use when the user wants to create, edit, inspect, validate or test 
 
 The `wc3` MCP server works on real map files (`.w3x`/`.w3m`, map folders, `.w3n` campaigns). Game data comes read-only from the local Warcraft III install.
 
-If a parameter or op named here is missing from the tool definitions you see (for example `wait`, `lint` or `probe_functions`), the session still holds an older version of the tools: ask the user to reconnect the `wc3` server (`/mcp`) or start a new session instead of working around it.
+If a parameter or op named here is missing from the tool definitions you see (for example `wait`, `lint` or `probe_functions`), the session still holds an older version of the tools: ask the user to reconnect the `wc3` server (in Claude Code `/mcp`; elsewhere the client's MCP reload) or start a new session instead of working around it.
 
 ## Workflow
 

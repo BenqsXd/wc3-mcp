@@ -1,0 +1,21 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "wc3": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--quiet",
+        "--no-dev",
+        "python",
+        "-m",
+        "wc3mcp.server"
+      ],
+      "env": {
+        "PYTHONPATH": "src"
+      },
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

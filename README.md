@@ -45,6 +45,21 @@ Restart Claude Code. `/mcp` should list the `wc3` server. The first start takes 
 
 Try it: *"Create a 64x64 Lordaeron Summer map at C:\Maps\Arena.w3x with a hero for player 1, then test it in the game."*
 
+## Codex, Copilot CLI, Cursor, Gemini CLI, DeepSeek and other harnesses
+
+The repository is also an [Agent Plugins](https://agent-plugins.org) plugin (`plugin.json`, `mcp.json`,
+`skills/`), a Codex/ChatGPT and a Cursor marketplace, and a Gemini CLI extension:
+
+```bash
+codex plugin marketplace add BenqsXd/wc3-mcp                    # Codex / ChatGPT, then /plugins
+copilot plugin install BenqsXd/wc3-mcp                          # GitHub Copilot CLI
+gemini extensions install https://github.com/BenqsXd/wc3-mcp    # Gemini CLI
+```
+
+Any other MCP client starts the server with `uvx --from git+https://github.com/BenqsXd/wc3-mcp wc3-mcp`.
+[docs/harnesses.md](docs/harnesses.md) has every harness, DeepSeek's agents included, and `WC3MCP_TOOLS` for
+clients that cap the number of tools.
+
 ## Manual setup (any MCP client, no plugin)
 
 ```powershell

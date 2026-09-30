@@ -112,7 +112,8 @@ def test_local_replays_parse_to_the_end():
         assert rp.end["reason"] in ("end of data", "padding"), (path.name, rp.end)
         assert rp.unknown == {}, (path.name, rp.unknown)
         assert rp.players and rp.slots and rp.actions
-        assert abs(rp.end["time_ms"] - rp.header["length_ms"]) < 5000, path.name
+        if rp.header["multiplayer"]:   # a single-player game counts paused time in its slots, not in the header
+            assert abs(rp.end["time_ms"] - rp.header["length_ms"]) < 5000, path.name
 
 
 def test_replay_read_tool_filters_and_bounds(tmp_path):

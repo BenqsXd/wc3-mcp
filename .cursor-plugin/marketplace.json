@@ -1,0 +1,13 @@
+{
+  "name": "wc3-mcp",
+  "owner": {
+    "name": "BenqsXd"
+  },
+  "plugins": [
+    {
+      "name": "wc3-mcp",
+      "source": "./",
+      "description": "Make Warcraft III maps, campaigns, AI and assets with an AI agent, and drive the World Editor and the game."
+    }
+  ]
+}

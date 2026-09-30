@@ -1,0 +1,16 @@
+{
+  "name": "wc3-mcp",
+  "interface": {
+    "displayName": "Warcraft III map making"
+  },
+  "plugins": [
+    {
+      "name": "wc3-mcp",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "category": "Development"
+    }
+  ]
+}

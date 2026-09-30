@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "wc3-mcp",
+  "version": "1.10.0",
+  "description": "Make Warcraft III maps, campaigns, AI and assets with an AI agent, and drive the World Editor and the game.",
+  "author": {
+    "name": "BenqsXd"
+  },
+  "homepage": "https://github.com/BenqsXd/wc3-mcp",
+  "repository": "https://github.com/BenqsXd/wc3-mcp",
+  "license": "MIT",
+  "keywords": [
+    "warcraft-iii",
+    "world-editor",
+    "mcp",
+    "game-modding",
+    "jass"
+  ]
+}
