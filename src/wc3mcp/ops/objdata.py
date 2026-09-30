@@ -278,7 +278,7 @@ _HINT = ('ops: {"op": "create", "base": "hfoo", "set": {"Name": "Guard"}}, {"op"
          '{"uhpm": 500}}, {"op": "upsert", "id": "h000", "base": "hfoo", "set": {...}}, {"op": "reset", "id": "h000", '
          '"fields": ["uhpm"]}, {"op": "delete", "id": "h000"}')
 OP_KEYS = {"create": {"op", "base", "id", "set"}, "set": {"op", "id", "set"}, "reset": {"op", "id", "fields"},
-           "delete": {"op", "id", "missing_ok"}, "upsert": {"op", "base", "id", "set"}}
+           "delete": {"op", "id", "missing_ok"}, "upsert": {"op", "base", "id", "set", "expect_new"}}
 QUIET = {"extended_levels"}
 # button positions below 0 put a button off the card: the long-standing way to hide one, and the game accepts it
 BUTTON_FIELDS = frozenset({"abpx", "abpy", "arpx", "arpy", "ubpx", "ubpy", "gbpx", "gbpy"})
@@ -586,6 +586,12 @@ def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = No
     warnings: list[str] = []
     touched: set[str] = set()
     upserted: dict[str, str] = {}
+    was: dict[str, str] = {}   # name of each object an upsert changed, before the batch touched it
+
+    def _upsert_name(oid: str) -> str:
+        entries = _entries(files, oid)
+        return _name(catalog, kind, entries[0][2].base_id.decode("latin-1") if entries else oid, _merged(entries),
+                     strings)
     skipped: list[str] = []   # deletes with missing_ok whose object the map did not have
     for i, op in enumerate(ops):
         path = f"ops[{i}]"
@@ -611,6 +617,13 @@ def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = No
                         raise ToolError("base_mismatch", f"{path}: {oid} exists with base {had}; this upsert names "
                                         f"{op['base']}", hint="two generators (or a renumbered one) claim the same id: "
                                         "pick another id, or delete the object first to rebuild it from the new base")
+                if exists and op.get("expect_new"):   # a second generator claiming a range the first one owns
+                    now = _name(catalog, kind, next((e.base_id.decode("latin-1") for _, _, e in _entries(files, oid)),
+                                                    oid), _merged(_entries(files, oid)), strings)
+                    raise ToolError("exists", f"{path}: {oid} already exists (named {now!r}) and expect_new is set",
+                                    hint="pick another id, or drop expect_new to overwrite it")
+                if exists and oid not in was:
+                    was[oid] = _upsert_name(oid)
                 action = "set" if exists else "create"
                 upserted[oid] = "set" if exists else "created"
                 op = {k: v for k, v in op.items() if k != "base" or not exists}
@@ -733,8 +746,15 @@ def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = No
     out = {"changed": changed, "created": created, "warnings": warnings}
     if skipped:
         out["skipped"] = skipped
+    renamed = [{"id": oid, "was": old, "now": new} for oid, old in was.items()
+               if (new := _upsert_name(oid)) != old]
+    for r in renamed:
+        warnings.append(f"{r['id']}: upsert renamed {r['was']!r} to {r['now']!r}; if another generator owns this id "
+                        "it is now overwritten (use expect_new: true to refuse an id that already exists)")
     if upserted:
         out["upserted"] = upserted
+    if renamed:
+        out["renamed"] = renamed
     if extended and "extended_levels" in quiet:
         out["extended_levels"] = {"objects": len(extended), "note": "quiet: the per-object list was left out"}
     elif extended:
