@@ -688,7 +688,7 @@ def objdata_edit(path: str, kind: ObjectKind, ops: list[dict] | None = None, bal
     stock base and all its modifications, like the editor's copy and paste), {"op": "set", "id": "h000", "set": {"Hbz1":
     {"1": 7, "2": 9}}} (per-level fields take level keys; stock ids such as hgtw work too), {"op": "reset", "id":
     "h000", "fields": ["uhpm"]}, {"op": "delete", "id": "h000"} ("missing_ok": true skips a gone id), {"op": "upsert", "id": "h000", "base": "hfoo", "set":
-    {...}} (creates when missing, sets when there; result: upserted). Fields accept raw codes, field names or display
+    {...}} (creates when missing, sets when there; result: upserted, and renamed [{id, was, now}] plus a warning when it changed an existing object's name; "expect_new": true refuses, code exists, an id already taken). Fields accept raw codes, field names or display
     names.
     A per-level field also takes a list (levels 1..n), {"from": a, "step": s} or {"from": a, "to": b} (optional
     "levels"), and a text field {"template": "... {Htb1} ... {level} ..."} filled per level from the object's own

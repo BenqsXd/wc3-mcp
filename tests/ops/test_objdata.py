@@ -283,3 +283,20 @@ def test_curse_extended_past_its_levels_skips_the_three_letter_field(plain_proje
     with pytest.raises(ToolError) as e:
         objdata_edit(plain_project, catalog, "ability", [{"op": "set", "id": "A0ZZ", "set": {"Crs": {"1": 0.5}}}])
     assert e.value.code == "bad_field" and "ops[0]" in e.value.message
+
+
+def test_an_upsert_that_renames_an_existing_object_reports_it(plain_project, catalog):
+    objdata_edit(plain_project, catalog, "unit", [{"op": "create", "base": "hfoo", "id": "h0ZX", "set": {"Name": "Ann"}}])
+    same = objdata_edit(plain_project, catalog, "unit", [{"op": "upsert", "id": "h0ZX", "set": {"Name": "Ann"}}])
+    assert "renamed" not in same
+    out = objdata_edit(plain_project, catalog, "unit", [{"op": "upsert", "id": "h0ZX", "set": {"Name": "Bob"}}])
+    assert out["renamed"] == [{"id": "h0ZX", "was": "Ann", "now": "Bob"}]
+    assert any("h0ZX" in w and "renamed" in w for w in out["warnings"])
+
+
+def test_expect_new_refuses_an_existing_id(plain_project, catalog):
+    op = {"op": "upsert", "id": "h0ZW", "base": "hfoo", "set": {"Name": "Ann"}, "expect_new": True}
+    assert objdata_edit(plain_project, catalog, "unit", [op])["upserted"] == {"h0ZW": "created"}
+    with pytest.raises(ToolError) as e:
+        objdata_edit(plain_project, catalog, "unit", [op])
+    assert e.value.code == "exists" and "h0ZW" in e.value.message and "'Ann'" in e.value.message
