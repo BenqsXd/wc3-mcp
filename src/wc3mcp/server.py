@@ -1315,6 +1315,7 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
                                     wait=wait, meta={"probe": probe, "extra": extra}, shots=screenshots,
                                     shot_every=screenshot_every, login=login, login_wait=login_wait,
                                     started_file=probe_ops.STARTED if probe else None,
+                                    dialog_file=probe_ops.DIALOG if probe else None,
                                     loading_shot=loading_screenshot)
     if wait and desktop_game.GAME.run is not None:
         desktop_game.GAME.run["finished"] = True   # game_status must not finish this result a second time

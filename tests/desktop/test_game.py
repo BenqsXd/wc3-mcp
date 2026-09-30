@@ -167,7 +167,7 @@ def test_screen_state_reads_login_and_waiting_loading_screens():
 
 def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False, runner=None, map_bytes=b"",
               launches=None, wait=True, login="stop", app=None, alerts=None, raised=None, foreground=7,
-              app_windows=None, minimized=None, log_lines=None, held=False, results=(r"t\r.txt",), **options):
+              app_windows=None, minimized=None, log_lines=None, held=False, results=(r"t\r.txt",), on_key=None, **options):
     clock = {"now": 1000.0}
     fake_time = type("T", (), {"time": staticmethod(lambda: clock["now"]),
                                "sleep": staticmethod(lambda s: clock.__setitem__("now", clock["now"] + s))})
@@ -212,6 +212,8 @@ def _fake_run(monkeypatch, tmp_path, states, write_result_after_key=False, runne
 
     def press(h, actions):
         keys.append(actions)
+        if on_key:
+            on_key(tmp_path / "docs" / "CustomMapData")
         if write_result_after_key:
             out = tmp_path / "docs" / "CustomMapData" / "t" / "r.txt"
             out.parent.mkdir(parents=True, exist_ok=True)
@@ -481,3 +483,35 @@ def test_screen_state_reads_the_login_queue_and_a_lower_loading_bar():
     low = Image.new("RGB", (1440, 774), (10, 20, 40))
     ImageDraw.Draw(low).rectangle((left + 0.12 * wide, 0.87 * h, left + 0.88 * wide, 0.91 * h), fill=(30, 120, 230))
     assert game.screen_state(low) == "press_key"
+
+
+
+DIALOG_TEXT = ('function PreloadFiles takes nothing returns nothing\n\tcall Preload( "dialog=12.5" )\n'
+               '\tcall Preload( "count=2" )\nendfunction\n')
+
+
+def test_a_dialog_the_map_opens_is_noted_while_the_run_waits(monkeypatch, tmp_path):
+    def open_dialog(folder):
+        (folder / "wc3mcp").mkdir(parents=True, exist_ok=True)
+        (folder / "wc3mcp" / "dialog.txt").write_text(DIALOG_TEXT)
+
+    runner = game.Game()
+    result, _, _ = _fake_run(monkeypatch, tmp_path, [None, "press_key"], runner=runner, on_key=open_dialog,
+                             dialog_file=r"wc3mcp\dialog.txt")   # no result file ever comes: the run times out
+    assert result["missing"] == [r"t\r.txt"]
+    assert result["dialog_shown"]["first_at"] == 12.5 and result["dialog_shown"]["count"] == 2
+    assert runner.run["dialog"] == {"first_at": 12.5, "count": 2}
+    runner.run.update(thread=type("T", (), {"is_alive": lambda s: True})(), result=None)   # still going
+    assert runner.run_status()["dialog_open"]["first_at"] == 12.5
+    assert "ProbeSkipDialogs" in runner.run_status()["dialog_open"]["note"]
+    quiet, _, _ = _fake_run(monkeypatch, tmp_path, [None, "press_key"], dialog_file=r"wc3mcp\dialog.txt")
+    assert "dialog_shown" not in quiet   # the stale file of the run before is deleted at launch
+
+
+def test_a_half_written_dialog_file_is_not_read(tmp_path):
+    path = tmp_path / "dialog.txt"
+    assert game.dialog_shown(path) is None
+    path.write_text("function PreloadFiles takes nothing returns nothing\n")
+    assert game.dialog_shown(path) is None
+    path.write_text(DIALOG_TEXT)
+    assert game.dialog_shown(path) == {"first_at": 12.5, "count": 2}
