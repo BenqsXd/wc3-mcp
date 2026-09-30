@@ -15,6 +15,7 @@ NAME = "wc3mcpProbe"
 REPORT = "wc3mcp\\probe.txt"
 PARTIAL = "wc3mcp\\partial.txt"   # the lines reported so far, rewritten every 30 s (JASS maps)
 STARTED = "wc3mcp\\started.txt"   # written the moment the map runs: game_test starts its screenshot series there
+DIALOG = "wc3mcp\\dialog.txt"   # written the moment the map shows a dialog (a single-player game then pauses)
 MAX_MESSAGES = 50
 # JASS maps: the probe copy routes BJDebugMsg and the text display functions through these, which keep the text for
 # the report
@@ -28,6 +29,8 @@ JASS_GLOBALS = """    string array wc3mcpProbe_messages
     timer wc3mcpProbe_clock = null
     boolean wc3mcpProbe_noDialogs = false
     integer wc3mcpProbe_clicks = 0
+    integer wc3mcpProbe_dialogs = 0
+    real wc3mcpProbe_dialogFirst = 0.0
 """
 JASS_MESSAGES = """
 function wc3mcpProbe_Line takes string s returns nothing
@@ -122,10 +125,31 @@ function wc3mcpProbe_DisplayTimedTextToForce takes force f, real d, string s ret
     call DisplayTimedTextToForce(f, d, s)
 endfunction
 
+// a shown dialog pauses a single-player game, so it is written to its own file before the native runs (the report
+// is buffered in arrays and written in one go, so this file never cuts into it)
+function wc3mcpProbe_DialogShown takes nothing returns nothing
+    local real t = 0.0
+    if wc3mcpProbe_clock != null then
+        set t = TimerGetElapsed(wc3mcpProbe_clock)
+    endif
+    if wc3mcpProbe_dialogs == 0 then
+        set wc3mcpProbe_dialogFirst = t
+    endif
+    set wc3mcpProbe_dialogs = wc3mcpProbe_dialogs + 1
+    call PreloadGenClear()
+    call PreloadGenStart()
+    call Preload("dialog=" + R2S(wc3mcpProbe_dialogFirst))
+    call Preload("count=" + I2S(wc3mcpProbe_dialogs))
+    call PreloadGenEnd("{dialog}")
+endfunction
+
 function wc3mcpProbe_DialogDisplay takes player p, dialog d, boolean flag returns nothing
     if flag and wc3mcpProbe_noDialogs then
         call wc3mcpProbe_Line("dialog=suppressed")
         return
+    endif
+    if flag then
+        call wc3mcpProbe_DialogShown()
     endif
     call DialogDisplay(p, d, flag)
 endfunction
@@ -235,6 +259,8 @@ wc3mcpProbe_lines = {{}}
 wc3mcpProbe_noDialogs = false
 wc3mcpProbe_handles0 = 0
 wc3mcpProbe_clock = nil
+wc3mcpProbe_dialogs = 0
+wc3mcpProbe_dialogFirst = 0
 
 function wc3mcpProbe_Line(s)
     if #wc3mcpProbe_lines < 8000 then table.insert(wc3mcpProbe_lines, s) end
@@ -286,6 +312,16 @@ function InitTrig_{name}()
         if flag and wc3mcpProbe_noDialogs then
             wc3mcpProbe_Line("dialog=suppressed")
             return
+        end
+        if flag then
+            local t = wc3mcpProbe_clock and TimerGetElapsed(wc3mcpProbe_clock) or 0
+            if wc3mcpProbe_dialogs == 0 then wc3mcpProbe_dialogFirst = t end
+            wc3mcpProbe_dialogs = wc3mcpProbe_dialogs + 1
+            PreloadGenClear()
+            PreloadGenStart()
+            Preload("dialog=" .. string.format("%.3f", wc3mcpProbe_dialogFirst))
+            Preload("count=" .. wc3mcpProbe_dialogs)
+            PreloadGenEnd("{dialog}")
         end
         return display(p, d, flag)
     end
@@ -464,7 +500,7 @@ def script(language: str, seconds: float, user: str | None = None, functions: st
     call_init = ("" if init is None else f"    Trig_{NAME}_Init()\n" if lua else f"    call Trig_{NAME}_Init()\n")
     text = template.format(name=NAME, seconds=f"{float(seconds):.2f}", report=REPORT.replace("\\", "\\\\"),
                            started=STARTED.replace("\\", "\\\\"), partial=PARTIAL.replace("\\", "\\\\"),
-                           limit=MAX_MESSAGES, call_user=call,
+                           dialog=DIALOG.replace("\\", "\\\\"), limit=MAX_MESSAGES, call_user=call,
                            call_init=call_init)
     if user is None:
         return text
@@ -483,7 +519,7 @@ def route_messages(script_text: str) -> str:
     if not sep:
         raise ToolError("probe_script_failed", "the map script has no globals block", hint="script_validate")
     body = re.sub(r"\b(" + "|".join(ROUTED) + r")\b", lambda m: ROUTED[m.group(1)], body)
-    return head + JASS_GLOBALS + sep + JASS_MESSAGES.format(limit=MAX_MESSAGES) + body
+    return head + JASS_GLOBALS + sep + JASS_MESSAGES.format(limit=MAX_MESSAGES, dialog=DIALOG.replace("\\", "\\\\")) + body
 
 
 JASS_MAIN = re.compile(r"^[ \t]*function[ \t]+main[ \t]+takes\b[^\n]*\n(?:[ \t]*(?:local\b[^\n]*|//[^\n]*|\r?)\n)*",

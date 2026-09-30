@@ -180,3 +180,33 @@ def test_big_reals_truncating_r2i_and_bad_escapes_are_found():
     hits = {(h["rule"], h["line"]) for h in lint(text)}
     assert hits == {("big_real", 2), ("bad_escape", 4), ("r2i_truncates", 7)}
 
+
+
+def test_a_handle_handed_to_a_map_function_or_rounded_r2i_is_not_flagged():
+    text = """function FxEnd takes effect e returns nothing
+    call DestroyEffect(e)
+endfunction
+
+function FxScaled takes string m, real x, real y returns nothing
+    local effect e = AddSpecialEffect(m, x, y)
+    call BlzSetSpecialEffectScale(e, 2.0)
+    call FxEnd(e)
+    set e = null
+endfunction
+
+function Kept takes nothing returns effect
+    local effect e = AddSpecialEffect("x.mdx", 0, 0)
+    return e
+endfunction
+
+function Leaky takes nothing returns nothing
+    local effect e = AddSpecialEffect("x.mdx", 0, 0)
+    call BlzSetSpecialEffectScale(e, 2.0)
+endfunction
+
+function Tip takes real b, real p, integer lvl returns integer
+    return R2I(b + p * I2R(lvl - 1) + 0.001) + R2I(0.5 + p * 1.10) + R2I(p * 1.10)
+endfunction
+"""
+    hits = [(h["rule"], h["function"]) for h in lint(text) if h["rule"] in ("leak", "r2i_truncates")]
+    assert hits == [("leak", "Leaky"), ("r2i_truncates", "Tip")]

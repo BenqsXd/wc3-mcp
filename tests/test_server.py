@@ -658,6 +658,17 @@ def test_game_status_shows_what_a_long_probe_reported_so_far(monkeypatch, tmp_pa
     assert run["partial"]["reports"] == ["duel 3 of 24"]
 
 
+def test_game_status_shows_an_open_dialog_of_a_running_run(monkeypatch):
+    runner = server.desktop_game.Game()
+    runner.run = {"map": "m.w3x", "started": time.time(), "timeout": 60, "results": [], "written": [], "result": None,
+                  "error": None, "meta": {}, "dialog": {"first_at": 3.0, "count": 1},
+                  "thread": type("T", (), {"is_alive": lambda s: True})()}
+    monkeypatch.setattr(server.desktop_game, "GAME", runner)
+    monkeypatch.setattr(server.desktop_game.Game, "status", lambda self: {"run": self.run_status()})
+    run = payload(call("game_status", {}))["run"]
+    assert run["dialog_open"]["first_at"] == 3.0 and "pauses a single-player game" in run["dialog_open"]["note"]
+
+
 def test_game_status_keeps_a_long_partial_report_small():
     partial = {"reports": [f"event {i}" for i in range(1000)] + ["death 7"],
                "messages": ["a", "b", "death c"], "message_to": ["all", "0", "3"]}

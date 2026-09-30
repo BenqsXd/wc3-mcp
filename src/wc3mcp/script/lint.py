@@ -3,6 +3,7 @@ endless loops, handles used after they were destroyed. Every finding is a heuris
 line and what to check; a game run is the only proof, and each rule that fires is one run saved.
 """
 import bisect
+import functools
 import re
 
 # JASS type names (common.j): a local or parameter of this name makes pjass report a syntax error on the function
@@ -118,12 +119,27 @@ def reserved_names(text: str) -> list[dict]:
     return out
 
 
+@functools.lru_cache(maxsize=4)
+def _defined(text: str) -> frozenset[str]:
+    return frozenset(m[1] for m in FUNCTION.finditer(text))
+
+
+def _handed_off(var: str, body: str, text: str) -> bool:
+    """The handle leaves the function: returned, stored, or passed to one of the map's own functions (which then
+    owns it, e.g. a helper that destroys an effect after its animation)."""
+    v = re.escape(var)
+    if re.search(rf"\breturn\s+{v}\b|\bset\s+\w+(?:\[[^\]]*\])?\s*=\s*{v}\s*$", body, re.M):
+        return True
+    return any(call in _defined(text) for call in re.findall(rf"\b(\w+)\s*\([^()\n]*\b{v}\b", body))
+
+
 def _leaks(name: str, first_line: int, body: str, text: str) -> list[dict]:
     out = []
     for m in LOCAL.finditer(body):
         kind, var = m[1], m[2]
         freed = LEAKS.get(kind)
-        if freed is None or re.search(rf"\b{freed[0]}\s*\(\s*{re.escape(var)}\b", body):
+        if freed is None or re.search(rf"\b{freed[0]}\s*\(\s*{re.escape(var)}\b", body) \
+                or _handed_off(var, body, text):
             continue
         made = next((c for c in freed[1]
                      if re.search(rf"\b{re.escape(var)}\s*=[^\n]*\b{c}\s*\(", body)), None)
@@ -328,7 +344,9 @@ def _r2i_products(name: str, first_line: int, body: str, text: str) -> list[dict
                  f"R2I({m.group(1).strip()}) truncates a product with a real (329.99 becomes 329): add 0.5 "
                  "inside the R2I to round")
             for m in R2I_PRODUCT.finditer(code)
-            if "*" in m.group(1) and re.search(r"\d\.\d|\bI2R\b|\breal\b", m.group(1)) and "0.5" not in m.group(1)]
+            if "*" in m.group(1) and re.search(r"\d\.\d|\bI2R\b|\breal\b", m.group(1)) 
+            # a real constant added as its own term ("+ 0.5", or an epsilon like "+ 0.001") rounds
+            and not re.search(r"(?:^|\+)\s*\d*\.\d+\s*(?:\+|$)", m.group(1).strip())]
 
 
 RULES = (_leaks, _event_after_wait, _dead_trigger, _loops, _after_destroy, _desync, _discarded_effects, _corpse_enum,

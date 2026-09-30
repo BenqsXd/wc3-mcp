@@ -299,7 +299,7 @@ LOGIN
   under launcher what a Play would start today.
 
 PITFALLS
-  Every launch can meet a login screen (see LOGIN), so put many checks into one run. An open dialog pauses a single-player game, so report before it opens. The game keeps
+  Every launch can meet a login screen (see LOGIN), so put many checks into one run. An open dialog pauses a single-player game, so report before it opens. A probe run notices a dialog the map opens at once: game_status shows run.dialog_open (game seconds, count, what to do) while the run waits, and the result has dialog_shown. A plain run (no probe) cannot see it. The game keeps
   about 259 characters of one Preload string (truncated lists the lines that hit it). A loading screen that waits for
   a key gets a space press (loading_screen_keys).
   Nothing in a probe stands in for a player's click on a shop: IssueNeutralImmediateOrderById returned false for

@@ -42,6 +42,8 @@ BLIND_AFTER = 20         # seconds the game has held the map before keys go to i
 BLIND_EVERY = 5
 BLIND_PLAIN_FOR = 90     # a plain run cannot tell when its map starts: blind keys stop this long after the load began
 CRASH_EXE = "BlizzardError.exe"
+DIALOG_NOTE = ("the map opened a dialog (first_at: game seconds): it pauses a single-player game until it is clicked; "
+               "probe_init ProbeSkipDialogs() keeps them shut")
 PAUSE_NOTE = ("an open dialog (DialogDisplay) pauses a single-player game until it is clicked, so timers and "
               "probe_seconds wait for it (screenshot=true shows it; probe_init runs before any dialog opens)")
 LEFT_OPEN_NOTE = ("the game is still open on the test map, so the Battle.net app still starts Warcraft III on it: "
@@ -82,6 +84,21 @@ class _AppGame:
 
     def kill(self) -> None:
         subprocess.run(["taskkill", "/PID", str(self.pid), "/F"], capture_output=True, check=False)
+
+
+def dialog_shown(path: Path) -> dict | None:
+    """What the probe's dialog file says (the map opened a dialog, which pauses a single-player game): the game
+    seconds of the first one and how many were shown."""
+    if not path.is_file():
+        return None
+    text = path.read_text("utf-8", "replace")
+    if "endfunction" not in text:
+        return None
+    fields = dict(line.partition("=")[::2] for line in parse_preload(text))
+    try:
+        return {"first_at": float(fields["dialog"]), "count": int(fields.get("count", 1))}
+    except (KeyError, ValueError):
+        return None
 
 
 def parse_preload(text: str) -> list[str]:
@@ -265,7 +282,7 @@ class Game:
     def test(self, map_path, timeout: float = 240, results: list[str] | None = None, close: bool = True,
              screenshot: bool = False, wait: bool = True, meta: dict | None = None, shots: int = 0,
              shot_every: float = 3.0, login: str = "auto", login_wait: float = USER_LOGIN_WAIT,
-             started_file: str | None = None, loading_shot: bool = False) -> dict:
+             started_file: str | None = None, loading_shot: bool = False, dialog_file: str | None = None) -> dict:
         """Run the map, blocking until it ends. wait=False instead runs it in a background thread and returns at
         once; `status()` then reports the run and holds its result when it ends. login says what a Battle.net login
         screen gets (LOGIN_MODES); started_file is a result file the map writes the moment it runs (the probe's)."""
@@ -284,7 +301,7 @@ class Game:
                "written": [], "result": None, "error": None, "thread": None, "meta": meta or {}}
         self.run = job
         options = {"shots": shots, "shot_every": shot_every, "login": login, "login_wait": login_wait,
-                   "started_file": started_file, "loading_shot": loading_shot}
+                   "started_file": started_file, "loading_shot": loading_shot, "dialog_file": dialog_file}
         # the run always has its own thread: a waiting call that is interrupted loses only its answer, and the run
         # goes on to finish under game_status
         job["thread"] = threading.Thread(target=self._run, daemon=True,
@@ -349,9 +366,10 @@ class Game:
     def _test(self, job: dict, target: Path, timeout: float, results: list[str] | None, close: bool,
               screenshot: bool, shots: int = 0, shot_every: float = 3.0, login: str = "auto",
               login_wait: float = USER_LOGIN_WAIT, started_file: str | None = None,
-              loading_shot: bool = False) -> dict:
+              loading_shot: bool = False, dialog_file: str | None = None) -> dict:
         wanted = {name: _result_path(name) for name in results or []}
         marker = _result_path(started_file) if started_file else None
+        dialog_path, dialog = (_result_path(dialog_file) if dialog_file else None), None
         digest = hashlib.sha256(target.read_bytes()).hexdigest() if target.is_file() else str(target)
         waiting, self.waiting = self.waiting, None
         attached = bool(waiting and waiting[0].poll() is None and waiting[2:] == (digest, sorted(wanted)))
@@ -372,7 +390,7 @@ class Game:
         if attached:   # the same test again after the user logged in: continue in that game, no new launch
             process, launched_at = waiting[0], waiting[1]
         else:
-            for path in [*wanted.values(), *([marker] if marker else [])]:
+            for path in [*wanted.values(), *([marker] if marker else []), *([dialog_path] if dialog_path else [])]:
                 path.unlink(missing_ok=True)  # never read a stale result from an earlier run
             process, launched_at = None, started
             if app is not None:   # the app hands the game its session: no login panel (battlenet.py)
@@ -512,6 +530,8 @@ class Game:
                     shot_times.append(round(now - map_since, 1))
                 else:
                     missed.append({"t": round(now - map_since, 1), "reason": of})
+            if dialog_path and (shown := dialog_shown(dialog_path)) and shown != dialog:
+                dialog = job["dialog"] = shown   # game_status shows it while the run goes
             for name, path in wanted.items():
                 if name not in found and path.exists():
                     text = path.read_text("utf-8", "replace")
@@ -542,6 +562,8 @@ class Game:
                   "crash": next(iter(sorted(self._crash_folders() - crashes)), None)}
         if self.cancelled:
             result["cancelled"] = True
+        if dialog:
+            result["dialog_shown"] = {**dialog, "note": DIALOG_NOTE}
         if grace:
             result["login_seconds"] = round(grace, 1)
         if map_since is not None:
@@ -697,6 +719,8 @@ class Game:
         out = {"state": "running" if alive else "failed" if job["error"] is not None else "done",
                "map": job["map"], "seconds": round(time.time() - job["started"], 1), "timeout": job["timeout"],
                "results": job["results"], "written": job["written"], "background": not job.get("waited")}
+        if alive and job.get("dialog"):
+            out["dialog_open"] = {**job["dialog"], "note": DIALOG_NOTE + " (or click it in the game)"}
         if alive:
             out["note"] = ("the run is still going: call game_status again for its result (the map's own working copy "
                            "is free while it runs)")

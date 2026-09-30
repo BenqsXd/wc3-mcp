@@ -280,3 +280,15 @@ def test_the_shipped_regression_suite_compiles(tmp_path):
         # build runs pjass and raises probe_script_failed when the probe does not compile
         probe.build(source, tmp_path / f"probe{i}" / maps[0].name, catalog, user=f.read_text("utf-8"),
                     functions=helpers.read_text("utf-8") if helpers.is_file() else None)
+
+
+def test_a_shown_dialog_is_written_to_its_own_file_at_once():
+    """DialogDisplay pauses a single-player game: the wrapper writes its own file before the native runs, apart from
+    the report and partial buffers."""
+    jass = probe.route_messages("globals\nendglobals\n")
+    shown = jass[jass.index("function wc3mcpProbe_DialogShown"):jass.index("function wc3mcpProbe_DialogDisplayBJ")]
+    assert probe.DIALOG.replace("\\", "\\\\") in shown and 'Preload("dialog=" + R2S' in shown
+    assert shown.index("dialog=suppressed") < shown.index("call wc3mcpProbe_DialogShown()") \
+        < shown.index("call DialogDisplay(p, d, flag)")
+    lua = probe.script("lua", 5.0)
+    assert probe.DIALOG.replace("\\", "\\\\") in lua and 'Preload("count=" .. wc3mcpProbe_dialogs)' in lua
