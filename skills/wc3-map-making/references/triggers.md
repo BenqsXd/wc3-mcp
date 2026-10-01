@@ -38,25 +38,25 @@ Trigger code is emitted in **trigger-tree order**, so a function can only be cal
 
 ### Damage handlers run as conditions
 
-`TriggerAddAction` runs the function on a **new thread, after the damage call returned**, so a global the dealer set around `UnitDamageTarget` is already reset by the time the handler reads it - an expensive mistake to find late. `TriggerAddCondition(t, Condition(function F))`, with `F` returning `boolean` (`return false`), runs it inside the damage call instead. The `damage_detection` recipe writes that shape, and `script_validate lint=true` reports `damage_action` for the other one.
+`TriggerAddAction` runs the function on a **new thread, after the damage call returned**, so a global the dealer set around `UnitDamageTarget` is already reset by the time the handler reads it. `TriggerAddCondition(t, Condition(function F))`, with `F` returning `boolean` (`return false`), runs it inside the damage call instead. The `damage_detection` recipe writes that shape, and `script_validate lint=true` reports `damage_action` for the other one.
 
 Exact scripted damage: send it as `ATTACK_TYPE_CHAOS` + `DAMAGE_TYPE_UNIVERSAL` (the engine scales neither) and apply the map's own multiplier in the handler - true 200 arrived as 199.9, while magic 1000 arrived as 528.2 against the intended 528.3. `1 / (1 + 0.06 * X)` on a script-held resist reproduces the armour curve.
 
 ### Trigger shapes the tools write
 
-- A library trigger (functions only, no event) gets an `InitTrig` that registers nothing. Before 1.3 the wrapper registered the first function as the trigger's action, which failed pjass when that function took parameters.
+- A library trigger (functions only, no event) gets an `InitTrig` that registers nothing.
 - A map with no triggers at all keeps working: the World Editor leaves the `Triggers` section out of `war3map.j` for such a map, and the tools put the empty section back instead of refusing with `not_editor_script`. Keeping one placeholder trigger (a comment) is still tidier. `triggers_edit` warns when a delete removes the last one.
 
 ### Lint rules beyond the leaks
 
 - `leak` also covers effects: an `effect` local that is never destroyed, and a discarded `AddSpecialEffect*` result (`call DestroyEffect(AddSpecialEffect(...))` plays it once and frees it).
 - `corpse_enum`: `GroupEnumUnitsIn*` returns dead units, and a `FirstOfGroup` loop that damages, orders or kills them without a life check works on corpses. Test `GetUnitState(u, UNIT_STATE_LIFE) > 0.405` in the loop or in the filter. For heroes, whose corpses can regain life, test `IsUnitType(u, UNIT_TYPE_DEAD)` instead.
-- `item_reentry`: `RemoveItem` / `UnitAddItemById` inside an item-event handler fires the item events again before the inventory settles (an unguarded recipe built six copies). Guard it with a global flag or `DisableTrigger(GetTriggeringTrigger())` around the change.
+- `item_reentry`: `RemoveItem` / `UnitAddItemById` inside an item-event handler fires the item events again before the inventory settles (an unguarded recipe builds several copies). Guard it with a global flag or `DisableTrigger(GetTriggeringTrigger())` around the change.
 - `damage_action`: the handler shape above.
 
-### Measuring in a map with bots
+### Measuring in a map with scripted computer players
 
-- Freeze the bots (the map's own match-over flag) while measuring, and attribute a cast by the last ability id, not by a shared counter.
+- Freeze them (the map's own match-over flag) while measuring, and attribute a cast by the last ability id, not by a shared counter.
 - `data_get kind=native` carries `observed` for natives whose name promises more than a game run showed (`SetUnitAcquireRange`, `IssueNeutralImmediateOrderById`, `ForceUIKey`, `UnitRemoveAbility`, `DialogDisplay`, ...). Read it before building on one of them.
 
 ## The script API of the installed build
@@ -107,5 +107,5 @@ has regenerated the script; a 3D sound is heard where it is played, so attach it
 - JASS cannot pass an array to a function (`takes boolean array` is not a parameter type); use a global array for shared scratch state.
 - A function started with `ExecuteFunc` may sleep and runs in its own thread with its own op limit: use it for long searches and for a scripted ending with `TriggerSleepAction` between steps.
 - Per-unit state for a unit indexer that never recycles belongs in a hashtable, not in `index * k + j` arrays: those pass the 32768 array limit in a long game.
-- A variable op on a name the map already has changes that variable: `triggers_edit` now warns (and refuses a different type), and `created` lists only the new ones. Two generators must never share a global name.
+- A variable op on a name the map already has changes that variable: `triggers_edit` warns (and refuses a different type), and `created` lists only the new ones. Two generators must never share a global name.
 - Generated object ids must be stable: number new combinations at the end of an id table instead of in catalogue order, or a regenerated batch moves ids onto other bases (`objdata_edit` upsert refuses that with `base_mismatch`).
