@@ -83,6 +83,16 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.12
+
+- **`replay_read kinds=["cast", "learn"]`** pairs each command-card press with the order it led to (ability,
+  target) and lists learned abilities, and says that a replay never shows whether a cast took effect.
+- **`map_flow` counts custom types' footprints.** A unit, doodad or destructible type the map made or changed
+  (a shop copied from the Goblin Merchant) was looked up in the stock data only and blocked nothing.
+- **`editor_dropped` lists real losses only**: fields whose value equals the base object's are left out.
+- **`game_close` answers with the finished run** (it failed with a JSON error when it ended a run that held
+  screenshots).
+
 ## What's new in 1.11
 
 - **Runs in more agents.** Besides the Claude Code plugin, the repository is an Agent Plugins 1.0 plugin (Codex and

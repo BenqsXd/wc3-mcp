@@ -588,6 +588,12 @@ def test_editor_dropped_names_fields_a_save_left_out(tmp_path):
     dropped = server._editor_dropped(before, after, catalog)
     assert {(d["id"], d["field"]) for d in dropped} == {("B000", "bmis"), ("B000", "bmas")}
     assert server._editor_dropped(before, before, catalog) == []
+    # a field stored with the base object's own value is no loss when the editor leaves it out
+    default = catalog.get("destructible", "LTlt")["fields"]["bmas"]["value"]
+    objdata_edit(p, catalog, "destructible", [{"op": "create", "base": "LTlt", "id": "B001", "set": {"bmas": default}}])
+    before = {n: p.read(n) for n in names}
+    objdata_edit(p, catalog, "destructible", [{"op": "reset", "id": "B001", "fields": ["bmas"]}])
+    assert server._editor_dropped(before, {n: p.read(n) for n in names}, catalog) == []
 
 
 def test_closing_an_editor_that_does_not_run_is_not_an_error(monkeypatch):
@@ -721,3 +727,19 @@ def test_game_regress_reports_verdicts_that_changed_since_the_last_run(monkeypat
     seen.clear()
     payload(call("game_regress", {"map": "m.w3x", "suite": str(suite), "stop_on_fail": True}))
     assert seen == ["a.j"]   # a.j failed a check, so b.j never launched
+
+
+def test_game_close_answers_with_a_finished_run_result(monkeypatch, tmp_path):
+    """A run that game_close ends still holds its screenshots as bytes: the answer has to be the finished result."""
+    import json
+
+    monkeypatch.setenv("WC3MCP_HOME", str(tmp_path))
+    game = server.desktop_game.GAME
+    job = {"result": {"pid": 7, "results": {}, "missing": [], "screenshots": [bytes([137, 80, 78, 71, 255])], "screenshot": None},
+           "meta": {"probe": False}, "error": None, "thread": None, "map": "m.w3x", "started": 0.0, "timeout": 10,
+           "results": [], "written": []}
+    monkeypatch.setattr(game, "run", job)
+    monkeypatch.setattr(game, "close", lambda: {"closed": [7], "running": False, "run": game.run_status()})
+    out = payload(call("game_close", {}))
+    json.dumps(out)
+    assert out["run"]["state"] == "done" and all(isinstance(s, str) for s in out["run"]["result"]["screenshots"])

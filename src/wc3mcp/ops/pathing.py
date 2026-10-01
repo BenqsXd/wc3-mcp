@@ -23,6 +23,27 @@ def _blocked_pixels(catalog, path: str, cache: dict) -> tuple[int, int, frozense
     return cache[path]
 
 
+def map_value(project, catalog):
+    """value(kind, id, field) over the map's own object data: a custom type answers with its changed field, else
+    with its base type's value (the stock data alone knows neither a custom id nor a changed pathing texture)."""
+    from .objdata import _maybe, _side
+
+    sides: dict[str, dict] = {}
+
+    def value(kind: str, oid: str, field: str):
+        if kind not in sides:
+            sides[kind] = _side(lambda name: _maybe(project, name), kind, catalog)
+        item = sides[kind].get(oid)
+        if item is None:
+            return catalog.field(kind, oid, field)
+        for level in (0, 1):
+            if (field, level) in item:
+                return item[(field, level)]
+        return catalog.field(kind, item["base"], field)
+
+    return value
+
+
 def footprint(catalog, kind: str, type_id: str, value, cache: dict) -> tuple[int, int, frozenset] | None:
     """The blocked pixels of a type's pathing texture; `value(kind, id, field)` gives the map's own field value."""
     field = FOOTPRINT_FIELDS.get(kind)

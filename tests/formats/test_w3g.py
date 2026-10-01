@@ -111,7 +111,8 @@ def test_local_replays_parse_to_the_end():
         rp = w3g.parse(path.read_bytes())
         assert rp.end["reason"] in ("end of data", "padding"), (path.name, rp.end)
         assert rp.unknown == {}, (path.name, rp.unknown)
-        assert rp.players and rp.slots and rp.actions
+        assert rp.players and rp.slots
+        assert rp.actions or rp.end["time_ms"] < 60000, path.name   # a game left at once has no actions
         if rp.header["multiplayer"]:   # a single-player game counts paused time in its slots, not in the header
             assert abs(rp.end["time_ms"] - rp.header["length_ms"]) < 5000, path.name
 
@@ -140,3 +141,21 @@ def test_replay_read_tool_filters_and_bounds(tmp_path):
     (tmp_path / "TempReplay.w3g").write_bytes(bytes(100))
     with pytest.raises(ToolError, match="no w3g header"):
         replay_read(str(tmp_path / "TempReplay.w3g"))
+
+
+def test_casts_and_learns_are_read_out_of_presses_and_orders():
+    from wc3mcp.ops.replay import _derived
+
+    rows = [
+        {"time_ms": 100, "player_id": 1, "action": "command", "id": "AHer", "unit": 5, "then": {"order_id": 852000}},
+        {"time_ms": 200, "player_id": 1, "action": "command", "id": "AHer", "unit": 5, "then": {"id": "AHbz"}},
+        {"time_ms": 300, "player_id": 1, "action": "command", "id": "AHbz", "unit": 5, "then": {"order_id": 852089}},
+        {"time_ms": 350, "player_id": 2, "action": "order_point", "order_id": 852089, "flags": 0},   # someone else
+        {"time_ms": 400, "player_id": 1, "action": "order_point", "order_id": 852089, "order": "blizzard", "flags": 0,
+         "target": {"x": 1.0, "y": 2.0}},
+        {"time_ms": 500, "player_id": 1, "action": "command", "id": "AHwe", "unit": 5, "then": {"order_id": 852125}},
+        {"time_ms": 600, "player_id": 1, "action": "order_target", "order_id": 851971, "flags": 0},  # walked away
+    ]
+    out = _derived(rows)
+    assert [(r["action"], r.get("ability"), r["time_ms"]) for r in out] == [("learn", "AHbz", 200), ("cast", "AHbz", 400)]
+    assert out[1]["how"] == "order_point" and out[1]["pressed_ms_before"] == 100 and out[1]["target"] == {"x": 1.0, "y": 2.0}

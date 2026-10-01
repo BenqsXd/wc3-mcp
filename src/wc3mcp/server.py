@@ -186,14 +186,34 @@ def _object_files(path) -> dict[str, bytes]:
 
 
 def _editor_dropped(before: dict, after: dict, catalog) -> list[dict]:
-    """Fields an object had before an editor save and lacks after it."""
+    """Fields an object had before an editor save and lacks after it. A field whose value equals the base object's
+    is left out: the editor drops those and nothing is lost."""
     out = []
+    stock: dict[tuple, dict] = {}
+
+    def same_as_base(kind: str, base: str, field: str, level: int, was) -> bool:
+        if (kind, base) not in stock:
+            try:
+                stock[kind, base] = catalog.get(kind, base)["fields"]
+            except ToolError:
+                stock[kind, base] = {}
+        entry = stock[kind, base].get(field)
+        if entry is None:
+            return False
+        values = entry["values"] if "values" in entry else [entry["value"]]
+        if not 0 <= max(level, 1) - 1 < len(values):
+            return False
+        default = objdata_ops._typed(entry["type"], values[max(level, 1) - 1])
+        if isinstance(default, (int, float)) and isinstance(was, (int, float)):
+            return abs(default - was) < 1e-4
+        return str(default or "") == str(was or "")
+
     for kind in OBJECT_KINDS:
         old, new = objdata_ops._side(before.get, kind, catalog), objdata_ops._side(after.get, kind, catalog)
         for oid, fields in sorted(old.items()):
             kept = new.get(oid, {})
             for (field, level), was in sorted((k, v) for k, v in fields.items() if isinstance(k, tuple)):
-                if (field, level) not in kept:
+                if (field, level) not in kept and not same_as_base(kind, fields.get("base", oid), field, level, was):
                     out.append({"kind": kind, "id": oid, "field": field, "level": level, "was": was})
     return out
 
@@ -1393,6 +1413,16 @@ def _trim_partial(partial: dict, tail: int, grep: str | None) -> dict:
     return partial
 
 
+def _finish_run() -> dict | None:
+    """Turn the last run's raw result (pictures as bytes, unparsed probe lines) into the tool result, once."""
+    job = desktop_game.GAME.run
+    if job is not None and job["result"] is not None and not job.get("finished"):
+        job["result"] = _finish_test(job["result"], job["meta"].get("probe", False))
+        job["result"].update(job["meta"].get("extra") or {})
+        job["finished"] = True
+    return job
+
+
 @_tool
 def game_status(tail: int = 100, grep: str | None = None) -> dict:
     """Game processes (and which this server launched), their windows and the useful War3Log.txt lines. A game_test
@@ -1400,11 +1430,7 @@ def game_status(tail: int = 100, grep: str | None = None) -> dict:
     it has; when it ends, its whole result (probe reports included) under run.result. launcher says what a Play in
     the Battle.net app would start today. A running probe's report so far (run.partial) keeps its last `tail`
     report lines and messages, only those matching the regex `grep` when given."""
-    job = desktop_game.GAME.run
-    if job is not None and job["result"] is not None and not job.get("finished"):
-        job["result"] = _finish_test(job["result"], job["meta"].get("probe", False))
-        job["result"].update(job["meta"].get("extra") or {})
-        job["finished"] = True
+    job = _finish_run()
     status = desktop_game.GAME.status()
     run = status.get("run")
     if run and run["state"] == "running" and job["meta"].get("probe"):
@@ -1421,7 +1447,10 @@ def game_status(tail: int = 100, grep: str | None = None) -> dict:
 def game_close() -> dict:
     """Close game processes launched by game_test (never other game sessions), and put the Battle.net app's launch
     options back when a run left them pointing at a test map (result: launcher)."""
-    return desktop_game.GAME.close()
+    out = desktop_game.GAME.close()
+    if _finish_run() is not None:   # a run it ended holds screenshots as bytes until finished: not JSON
+        out["run"] = desktop_game.GAME.run_status()
+    return out
 
 
 # ---- replays ---------------------------------------------------------------------------------------------------
@@ -1430,7 +1459,9 @@ def replay_read(path: str, player: str | int | None = None, kinds: list[str] | N
                 offset: int = 0) -> dict:
     """A .w3g replay: header, game, players (slot, per-action counts), chat, leaves, how far parsing got, and the
     actions of kinds (default: orders; order ids named, ability ids as FourCC) for one player (id or name) or all,
-    limit/offset. A relative path is looked up under Documents\\Warcraft III. wc3_help("replays") has the kinds."""
+    limit/offset. kinds=["cast", "learn"] pairs each button press with the order it led to and lists learned
+    abilities; a replay never shows whether a cast took effect. A relative path is looked up under
+    Documents\\Warcraft III. wc3_help("replays") has the kinds."""
     return replay_ops.replay_read(path, player, kinds, limit, offset)
 
 

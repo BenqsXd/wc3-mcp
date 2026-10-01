@@ -142,3 +142,19 @@ def test_open_near_lists_open_ground_in_sight_on_the_same_level(tmp_path, catalo
     everything = sight(p, catalog, open_near=[0, 0, 900, 500])["open_near"]["spots"]
     assert all(s["at"][1] < 512 for s in everything)                    # nothing on the high ground
     assert all(-384 + 128 <= s["at"][1] < 512 or abs(s["at"][0]) > 1024 for s in everything)
+
+
+def test_a_custom_units_pathing_texture_blocks_the_ground_it_stands_on(tmp_path, catalog):
+    """A shop copied from the Goblin Merchant has a custom id the stock data does not know: its footprint comes
+    from the map's own object data."""
+    from wc3mcp.ops.flow import _grid
+    from wc3mcp.ops.objdata import objdata_edit
+    from wc3mcp.ops.pathing import cells, map_value
+
+    project = new_map(str(tmp_path / "Shop.w3x"), catalog, width=32, height=32, tileset="L", players=2)
+    objdata_edit(project, catalog, "unit", [{"op": "create", "base": "ngme", "id": "n0SH", "set": {"Name": "Vendor"}}])
+    placed_edit(project, catalog, [{"op": "add", "kind": "unit", "type": "n0SH", "x": 0, "y": 0, "owner": 15}])
+    scene, _, blockers, _ = _grid(project, catalog, corners=False)
+    stock, width, _, _ = cells(project, scene.terrain, catalog, blockers)
+    own, _, _, _ = cells(project, scene.terrain, catalog, blockers, map_value(project, catalog))
+    assert sum(stock) - sum(own) >= 16   # the merchant's footprint is at least 4x4 cells: blocked only when known

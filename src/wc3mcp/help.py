@@ -668,6 +668,12 @@ REPLAY_READ
   trigger_chat (chat a trigger caught), trigger_sync, sync_stored, ping, esc, hero_skill_menu, build_menu,
   ally_options, transfer, pause, resume, set_speed, speed_up, speed_down, save_game, save_done, continue,
   arrow_key, cheat, unknown_1b, unknown_21, unknown_78, unknown_79.
+  Two kinds are read out of those: kinds=["cast", "learn"]. cast is the order that follows a command-card press with
+  the same order id (ability: the button's FourCC, how: order | order_point | order_target, target,
+  pressed_ms_before) - a command row alone is only a button press. learn is a pick in the hero's learn menu
+  (ability: what was learned). A replay holds orders only: nothing in it says whether a cast took effect (cooldown,
+  mana, range or the map's script may have stopped it), and a single-player replay holds only the local player's
+  actions, with paused time counted in its time slots.
   An order names its ability by FourCC (id: "AHbz", a unit to train or build, an item to buy) or by order id
   (order_id: 851971, order: "smart" when the name is known); targets are world x/y and unit handle numbers.
   command (Reforged 0x7A) is the command card click: unit, ability id and then (the order or item it leads to).

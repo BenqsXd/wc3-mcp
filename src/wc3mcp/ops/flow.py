@@ -14,7 +14,7 @@ from .. import config
 from ..errors import ToolError
 from ..formats import doo, unitsdoo, w3e, w3i
 from ..mpq.reader import Archive, MpqError
-from .pathing import CELL, CORNER, NOTE, corner_of, walkable
+from .pathing import CELL, CORNER, NOTE, corner_of, map_value, walkable
 
 GOLD_MINE = "ngol"          # the neutral gold mine; a start's own mine and its expansions are all this unit
 CREEP_OWNER = 24            # neutral hostile: the owner of a creep camp
@@ -44,7 +44,8 @@ def _grid(project, catalog, corners: bool = True):
             blockers.append((kind, type_id, o.x, o.y, o.angle))
     if not starts and scene.info:
         starts = {p.id: (p.start_x, p.start_y) for p in scene.info.players}
-    return scene, walkable(scene.terrain, catalog, blockers) if corners else None, blockers, starts
+    grid = walkable(scene.terrain, catalog, blockers, map_value(project, catalog)) if corners else None
+    return scene, grid, blockers, starts
 
 
 def _distances(grid, start) -> dict:
@@ -239,7 +240,7 @@ def connect(project, catalog, origins, targets) -> dict:
 
     scene, _grid_unused, blockers, starts = _grid(project, catalog, corners=False)
     terrain = scene.terrain
-    free, width, height, source = cells(project, terrain, catalog, blockers)
+    free, width, height, source = cells(project, terrain, catalog, blockers, map_value(project, catalog))
     sources = _places(scene, project, terrain, width, height, origins, "origins", starts)
     goals = _places(scene, project, terrain, width, height, targets, "targets", starts)
 
@@ -429,7 +430,7 @@ def areas(project, catalog, min_cells: int = 16, grid_step: int | None = None) -
 
     scene, _grid_unused, blockers, _starts = _grid(project, catalog, corners=False)
     terrain = scene.terrain
-    free, width, height, source = cells(project, terrain, catalog, blockers)
+    free, width, height, source = cells(project, terrain, catalog, blockers, map_value(project, catalog))
     # union-find over the free runs of each row (4-connected, as units path on the cells)
     parent: list[int] = []
 
@@ -602,7 +603,7 @@ def _open_near(project, catalog, blockers, look, spec) -> dict:
     x, y, r = float(spec[0]), float(spec[1]), float(spec[2])
     n = int(spec[3]) if len(spec) == 4 else 10
     terrain = look.terrain
-    free, width, height, source = cells(project, terrain, catalog, blockers)
+    free, width, height, source = cells(project, terrain, catalog, blockers, map_value(project, catalog))
     col, row = int((x - terrain.offset_x) // CELL), int((y - terrain.offset_y) // CELL)
     home = [row * width + col] if 0 <= col < width and 0 <= row < height else []
     seeds = _standing(free, width, home)

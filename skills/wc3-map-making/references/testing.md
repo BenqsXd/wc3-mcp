@@ -89,3 +89,5 @@
 ## After a game patch
 
 - `game_regress(map, suite)` runs every probe file of a folder (`skills/wc3-map-making/regress/` is a starter suite of engine behaviours from `game-behaviour.md`) and lists the checks whose verdict changed since the last run saved in `<suite>/results/`. A `true` -> `false` after a patch is a technique the patch broke (the Engineering Upgrade swap stopped working on 3.0.0 unnoticed). Add a probe file for each engine behaviour a map depends on; `wc3_help("game_regress")`.
+- `replay_read kinds=["cast", "learn"]` lists what a player cast (the order that followed each button press) and learned. A replay holds orders only: it cannot show whether a cast took effect, so follow the order through the map's trigger path, or reproduce it in a probe. A single-player replay holds only the local player's actions (computer players are script-driven): read such a game from a screenshot series and probe reports.
+- A probe's report file is written when its script ends, so it is lost when someone quits the game first: poll `game_status` (its partial report) during a long run.

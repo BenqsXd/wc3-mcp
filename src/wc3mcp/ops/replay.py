@@ -10,6 +10,10 @@ from ..gamedata import orderids
 
 ORDER_KINDS = ("order", "order_point", "order_target", "give_item", "order_two_points", "command")
 MAX_LIMIT = 2000
+DERIVED = ("cast", "learn")   # kinds read out of the raw actions, see _derived
+CAST_NOTE = ("a cast is the order that follows a command-card press with the same order id; a replay holds orders "
+             "only, so nothing here says whether a cast took effect (cooldown, mana, range or the map's own script "
+             "may have stopped it)")
 
 
 def _file(path: str, arg: str) -> Path:
@@ -41,6 +45,30 @@ def _order_names() -> dict[int, str]:
     return names
 
 
+def _derived(actions: list[dict]) -> list[dict]:
+    """cast: a command-card press (command with then.order_id) and the order with that order id the same player
+    gives next - the press alone is only a button. learn: a press in the hero's learn menu (AHer)."""
+    out, pressed = [], {}
+    for a in actions:
+        pid = a["player_id"]
+        if a["action"] == "command":
+            then = a.get("then") or {}
+            if a.get("id") == "AHer":
+                if then.get("id"):   # then.order_id alone is the press that opens the learn menu
+                    out.append({"time_ms": a["time_ms"], "player_id": pid, "action": "learn", "unit": a.get("unit"),
+                                "ability": then["id"]})
+            elif then.get("order_id"):
+                pressed[pid] = a
+        elif a["action"] in ("order", "order_point", "order_target", "order_two_points") and pid in pressed:
+            press = pressed[pid]
+            if a.get("order_id") == press["then"]["order_id"]:
+                del pressed[pid]
+                out.append({**{k: v for k, v in a.items() if k != "flags"}, "action": "cast", "how": a["action"],
+                            **({"ability": press["id"]} if press.get("id") else {}), "unit": press.get("unit"),
+                            "pressed_ms_before": a["time_ms"] - press["time_ms"]})
+    return out
+
+
 def replay_read(path: str, player=None, kinds: list[str] | None = None, limit: int = 100, offset: int = 0) -> dict:
     source = _file(path, "path")
     try:
@@ -67,13 +95,15 @@ def replay_read(path: str, player=None, kinds: list[str] | None = None, limit: i
             raise ToolError("bad_value", f"player {player!r} is not in this replay",
                             hint="players: " + ", ".join(f"{p['id']} {p['name']}" for p in players), path="player")
         wanted = set(match)
-    known = {name for name, _ in w3g.ACTIONS.values()}
+    known = {name for name, _ in w3g.ACTIONS.values()} | set(DERIVED)
     kinds = list(kinds or ORDER_KINDS)
     bad = [k for k in kinds if k not in known]
     if bad:
         raise ToolError("bad_value", f"unknown action kinds {bad}", hint="kinds: " + ", ".join(sorted(known)),
                         path="kinds")
-    rows = [a for a in rp.actions if a["action"] in kinds and (wanted is None or a["player_id"] in wanted)]
+    source_rows = rp.actions + (_derived(rp.actions) if set(kinds) & set(DERIVED) else [])
+    rows = sorted((a for a in source_rows if a["action"] in kinds and (wanted is None or a["player_id"] in wanted)),
+                  key=lambda a: a["time_ms"])
     limit, offset = max(0, min(limit, MAX_LIMIT)), max(offset, 0)
     shown = [_timed(a) for a in rows[offset:offset + limit]]
     chat = [_timed(c) for c in rp.chat if wanted is None or c["player_id"] in wanted]
@@ -82,7 +112,8 @@ def replay_read(path: str, player=None, kinds: list[str] | None = None, limit: i
             "chat": chat[:MAX_LIMIT], "leaves": [_timed(x) for x in rp.leaves],
             "parsed": {**rp.end, "reached_end": rp.end.get("reason") in ("end of data", "padding"),
                        "unknown_actions": rp.unknown},
-            "kinds": kinds, "total": len(rows), "offset": offset, "returned": len(shown), "actions": shown}
+            "kinds": kinds, "total": len(rows), "offset": offset, "returned": len(shown), "actions": shown,
+            "note": CAST_NOTE}
 
 
 def _sections(f: desync.DesyncFile) -> list[dict]:
