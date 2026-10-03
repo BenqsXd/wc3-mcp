@@ -158,6 +158,7 @@ def _screen(kind, size=(1440, 774)):
 
 
 def test_screen_state_reads_login_and_waiting_loading_screens():
+    assert game.screen_state(None) is None   # a hidden window cannot be captured: not an error
     assert game.screen_state(_screen("login")) == "login"
     assert game.screen_state(_screen("press_key")) == "press_key"
     assert game.screen_state(_screen("press_key", (1920, 1080))) == "press_key"

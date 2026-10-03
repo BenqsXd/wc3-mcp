@@ -214,6 +214,8 @@ def screen_state(image) -> str | None:
     "press_key" when a loading screen has finished and waits for a key (its bar is full and says PRESS ANY KEY TO
     CONTINUE), "menu" when it may be the main menu, else None. "menu" is only a hint: a map's own art (teal ground, a
     custom loading screen) can read as it too, so a run checks that the game has not opened the map before it acts."""
+    if image is None:   # a window that could not be captured (hidden, minimised)
+        return None
     # ponytail: fixed boxes measured on a 1440x774 window; retune if other window sizes misread
     if _share(image, 0.15, 0.15, 0.85, 0.80, _blue) > 0.7 and _share(image, -0.05, 0.2, 0.05, 0.8, _blue) < 0.2:
         return "login"
@@ -359,6 +361,9 @@ class Game:
             job["error"] = e
         except Exception as e:   # a background run must not take the server down
             job["error"] = ToolError("game_failed", f"the run failed: {e}")
+            if close:   # the error skipped the run's own close: never leave its game open
+                for process in list(self.launched.values()):
+                    self._close(process)
         finally:
             # every exit path - result files, timeout, kill, error - gives the user their launcher back, unless the
             # game was left open on purpose (close=false, or waiting for a login)

@@ -78,7 +78,9 @@ def test_probe_script_compiles_into_the_copy(tmp_path):
     source = tmp_path / maps[0].name
     shutil.copyfile(maps[0], source)
     catalog = Catalog(_storage(), balance="Custom_V1")
-    user = 'local integer n = 3\ncall ProbeReport("n=" + I2S(n))\ncall BJDebugMsg("hi")'
+    # ProbeBool and ProbeFinish ride along so the compiler checks them too
+    user = ('local integer n = 3\ncall ProbeReport("n=" + I2S(n))\ncall BJDebugMsg("hi")\n'
+            "call ProbeReport(ProbeBool(n > 2))\ncall ProbeFinish()")
     copy = probe.build(source, tmp_path / "probe" / maps[0].name, catalog, user=user)
     project = MapProject.open(copy)
     try:
@@ -135,6 +137,16 @@ def test_probe_script_can_call_the_maps_own_functions(tmp_path):
         assert script.index("function MapHelper") < script.index("function Trig_wc3mcpProbe_User")
     finally:
         text.close(discard=True)
+
+
+def test_probe_finish_writes_the_report_once():
+    """ProbeFinish() runs the report trigger at once; the timer's own run then finds it written."""
+    for language in ("jass", "lua"):
+        text = probe.script(language, 900, "")
+        assert "ProbeFinish" in text and "ProbeBool" in text
+        assert text.count("wc3mcpProbe_written = true") == 1
+        assert text.index("if not wc3mcpProbe_userRan then") < text.index("wc3mcpProbe_written = true")
+    assert "call TriggerExecute(gg_trg_wc3mcpProbe)" in probe.script("jass", 900, "")
 
 
 def test_probe_expect_records_a_verdict():

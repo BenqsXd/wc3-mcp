@@ -218,6 +218,11 @@ PROBES (a throwaway copy of the map, so the map itself never gets test triggers)
   In the probe code:
     ProbeReport(text)                          -> probe.reports, any length
     ProbeExpect(name, condition)               -> probe.checks, checks_failed, checks_passed
+    ProbeBool(condition)                       "true" / "false" for a report line (JASS has no B2S)
+    ProbeFinish()                              writes the report now and ends a run that waits only for it: call
+                                               it from probe_functions code when a long game has its answer,
+                                               with probe_seconds set past the longest game (probe_script is
+                                               skipped when it has not started yet)
     ProbeCountEvent(EVENT_..., "name")         counts a player-unit event from then on
     ProbeEventCount("name")                    reads the count
     ProbeCamera(x, y, distance, seconds)       looks at a place and waits there, for the screenshot series
@@ -672,7 +677,8 @@ REPLAY_READ
   the same order id (ability: the button's FourCC, how: order | order_point | order_target, target,
   pressed_ms_before) - a command row alone is only a button press. learn is a pick in the hero's learn menu
   (ability: what was learned). A replay holds orders only: nothing in it says whether a cast took effect (cooldown,
-  mana, range or the map's script may have stopped it), and a single-player replay holds only the local player's
+  mana, range or the map's script may have stopped it), no unit state is in it (life, position, deaths, items), a
+  chat line shows as trigger_chat once per trigger that listens for it, and a single-player replay holds only the local player's
   actions, with paused time counted in its time slots.
   An order names its ability by FourCC (id: "AHbz", a unit to train or build, an item to buy) or by order id
   (order_id: 851971, order: "smart" when the name is known); targets are world x/y and unit handle numbers.

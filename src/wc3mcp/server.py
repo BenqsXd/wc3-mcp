@@ -1293,6 +1293,7 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
         target = str(probe_ops.build(path, run, catalog, opened, probe_seconds, probe_script, probe_functions,
                                      probe_init))
         results = list(results or []) + [probe_ops.REPORT]
+        desktop_game._result_path(probe_ops.PARTIAL).unlink(missing_ok=True)   # never merge an earlier run's lines
         extra["probe_map"] = target
     result = desktop_game.GAME.test(target, timeout=timeout, results=results, close=close, screenshot=screenshot,
                                     wait=wait, meta={"probe": probe, "extra": extra}, shots=screenshots,
@@ -1386,7 +1387,21 @@ def _finish_test(result: dict, probe: bool) -> dict:
     if probe:
         lines = result["results"].pop(probe_ops.REPORT, None)
         result["probe"] = probe_ops.parse(lines) if lines is not None else None
-        if lines is None and not result.get("login_required") and not result.get("stuck_at"):
+        # lines reported after the report was written (the run went on for its own result files), or the only lines
+        # there are (the run ended before probe_seconds), are in the partial file
+        partial = desktop_game._result_path(probe_ops.PARTIAL)
+        if partial.is_file():
+            late = probe_ops.parse(desktop_game.parse_preload(partial.read_text("utf-8", "replace")))
+            if result["probe"] is None:
+                result["probe"] = {**late, "partial": True}
+                result["probe_note"] = ("the report was never written (the run ended before probe_seconds or "
+                                        "ProbeFinish()): this is the partial file, up to 30 s of game time behind")
+            else:
+                for key in ("reports", "messages", "message_to"):
+                    if len(late.get(key) or []) > len(result["probe"].get(key) or []):
+                        result["probe"][key] = late[key]
+                        result["probe"]["merged_from_partial"] = True
+        if result["probe"] is None and not result.get("login_required") and not result.get("stuck_at"):
             result["hint"] = ("the probed copy never reported: the game did not reach the map, it ended before "
                               f"probe_seconds, or {desktop_game.PAUSE_NOTE}")
     return result
@@ -1424,12 +1439,16 @@ def _finish_run() -> dict | None:
 
 
 @_tool
-def game_status(tail: int = 100, grep: str | None = None) -> dict:
+def game_status(tail: int = 100, grep: str | None = None, wait: float = 0) -> dict:
     """Game processes (and which this server launched), their windows and the useful War3Log.txt lines. A game_test
     run started with wait=false is reported under run: while it goes, how long it has taken and which result files
     it has; when it ends, its whole result (probe reports included) under run.result. launcher says what a Play in
     the Battle.net app would start today. A running probe's report so far (run.partial) keeps its last `tail`
-    report lines and messages, only those matching the regex `grep` when given."""
+    report lines and messages, only those matching the regex `grep` when given. wait=N answers when the run ends or
+    after N seconds (300 at most), whichever is first: a poll without a sleep of your own."""
+    end = time.time() + min(max(wait, 0), 300)
+    while time.time() < end and (run := desktop_game.GAME.run) and run["thread"] is not None and run["thread"].is_alive():
+        time.sleep(1)
     job = _finish_run()
     status = desktop_game.GAME.status()
     run = status.get("run")

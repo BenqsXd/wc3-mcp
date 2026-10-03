@@ -675,6 +675,28 @@ def test_game_status_shows_an_open_dialog_of_a_running_run(monkeypatch):
     assert run["dialog_open"]["first_at"] == 3.0 and "pauses a single-player game" in run["dialog_open"]["note"]
 
 
+def test_a_finished_probe_gets_the_lines_reported_after_its_report(monkeypatch, tmp_path):
+    monkeypatch.setenv("WC3MCP_DOCUMENTS", str(tmp_path))
+    partial = server.desktop_game._result_path(server.probe_ops.PARTIAL)
+    partial.parent.mkdir(parents=True)
+    partial.write_text('function PreloadFiles takes nothing returns nothing\n\tcall Preload( "report=game 1" )\n'
+                       '\tcall Preload( "report=game 2" )\nendfunction\n')
+    done = server._finish_test({"results": {server.probe_ops.REPORT: ["probe=ok", "report=game 1"]}}, True)
+    assert done["probe"]["reports"] == ["game 1", "game 2"] and done["probe"]["merged_from_partial"]
+    early = server._finish_test({"results": {}}, True)   # ended before the report: the partial file is the answer
+    assert early["probe"]["partial"] and early["probe"]["reports"] == ["game 1", "game 2"] and "hint" not in early
+
+
+def test_game_status_waits_for_a_run_to_end(monkeypatch):
+    polls = iter([True, True, False])
+    run = {"result": None, "meta": {}, "started": 0.0, "thread": type("T", (), {"is_alive": lambda s: next(polls)})()}
+    monkeypatch.setattr(server.desktop_game.GAME, "run", run)
+    monkeypatch.setattr(server.desktop_game.GAME, "status", lambda: {"run": {"state": "done"}})
+    monkeypatch.setattr(server.time, "sleep", lambda s: None)
+    assert payload(call("game_status", {"wait": 30}))["run"]["state"] == "done"
+    assert next(polls, None) is None   # it polled until the thread ended
+
+
 def test_game_status_keeps_a_long_partial_report_small():
     partial = {"reports": [f"event {i}" for i in range(1000)] + ["death 7"],
                "messages": ["a", "b", "death c"], "message_to": ["all", "0", "3"]}

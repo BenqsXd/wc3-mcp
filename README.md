@@ -83,6 +83,17 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.13
+
+- **`ProbeFinish()`** writes a probe's report at once, so a game of unknown length ends its own run instead of
+  waiting for `probe_seconds`; **`ProbeBool(condition)`** gives "true"/"false" (JASS has no `B2S`).
+- **`game_status wait=N`** answers when the background run ends or after N seconds: a poll without a sleep.
+- **Late report lines are kept.** Lines a probe reports after its report file was written are merged in from the
+  partial file, and a run that ended before the report gets the partial file as its probe result.
+- **A game window that cannot be captured no longer fails the run** (it ended as `game_failed` with the game left
+  open); a run that does fail now closes its game.
+- **`replay_read`** says what a replay does not hold: no unit state, so "a unit disappeared" needs a probe.
+
 ## What's new in 1.12
 
 - **`replay_read kinds=["cast", "learn"]`** pairs each command-card press with the order it led to (ability,

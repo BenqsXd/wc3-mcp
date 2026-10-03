@@ -13,7 +13,9 @@ MAX_LIMIT = 2000
 DERIVED = ("cast", "learn")   # kinds read out of the raw actions, see _derived
 CAST_NOTE = ("a cast is the order that follows a command-card press with the same order id; a replay holds orders "
              "only, so nothing here says whether a cast took effect (cooldown, mana, range or the map's own script "
-             "may have stopped it)")
+             "may have stopped it). No unit state is recorded either (life, position, deaths, items carried), so "
+             "what happened to a unit cannot be confirmed from a replay: run the map with a probe for that. A chat "
+             "line shows as trigger_chat once per trigger that listens for it")
 
 
 def _file(path: str, arg: str) -> Path:

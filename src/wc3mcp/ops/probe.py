@@ -31,6 +31,8 @@ JASS_GLOBALS = """    string array wc3mcpProbe_messages
     integer wc3mcpProbe_clicks = 0
     integer wc3mcpProbe_dialogs = 0
     real wc3mcpProbe_dialogFirst = 0.0
+    boolean wc3mcpProbe_userRan = false
+    boolean wc3mcpProbe_written = false
 """
 JASS_MESSAGES = """
 function wc3mcpProbe_Line takes string s returns nothing
@@ -168,7 +170,11 @@ endfunction
 
 function Trig_{name}_Actions takes nothing returns nothing
     local integer i = 0
-    local group g = CreateGroup()
+    local group g = null
+    if wc3mcpProbe_written then
+        return
+    endif
+    set g = CreateGroup()
     call wc3mcpProbe_Line("probe=ok")
     call wc3mcpProbe_Line("seconds={seconds}")
     loop
@@ -187,7 +193,14 @@ function Trig_{name}_Actions takes nothing returns nothing
     endloop
     // game time since the start marker: dialogs pause it, so it can lag the real time the map has run
     call wc3mcpProbe_Line("script.started=" + R2S(TimerGetElapsed(wc3mcpProbe_clock)))
-{call_user}    // the report file is opened only now, so a PreloadGenClear() in probe code cannot wipe what was reported
+{call_user}    // ProbeFinish() wrote the report while probe_script slept
+    if wc3mcpProbe_written then
+        call DestroyGroup(g)
+        set g = null
+        return
+    endif
+    set wc3mcpProbe_written = true
+    // the report file is opened only now, so a PreloadGenClear() in probe code cannot wipe what was reported
     call PreloadGenClear()
     call PreloadGenStart()
     call Preload("handles.start=" + I2S(wc3mcpProbe_handles0))
@@ -261,6 +274,8 @@ wc3mcpProbe_handles0 = 0
 wc3mcpProbe_clock = nil
 wc3mcpProbe_dialogs = 0
 wc3mcpProbe_dialogFirst = 0
+wc3mcpProbe_userRan = false
+wc3mcpProbe_written = false
 
 function wc3mcpProbe_Line(s)
     if #wc3mcpProbe_lines < 8000 then table.insert(wc3mcpProbe_lines, s) end
@@ -274,6 +289,7 @@ function ProbeHandleCount()
 end
 
 function Trig_{name}_Actions()
+    if wc3mcpProbe_written then return end
     wc3mcpProbe_Line("probe=ok")
     wc3mcpProbe_Line("seconds={seconds}")
     for i = 0, 11 do
@@ -290,7 +306,9 @@ function Trig_{name}_Actions()
         end
     end
     wc3mcpProbe_Line("script.started=" .. string.format("%.3f", wc3mcpProbe_clock and TimerGetElapsed(wc3mcpProbe_clock) or 0))
-{call_user}    -- the report file is opened only now, so a PreloadGenClear() in probe code cannot wipe what was reported
+{call_user}    if wc3mcpProbe_written then return end   -- ProbeFinish() wrote the report while probe_script slept
+    wc3mcpProbe_written = true
+    -- the report file is opened only now, so a PreloadGenClear() in probe code cannot wipe what was reported
     PreloadGenClear()
     PreloadGenStart()
     Preload("handles.start=" .. wc3mcpProbe_handles0)
@@ -359,6 +377,7 @@ end
 # ProbeCamera(x, y, distance, seconds) looks at a place and waits there, for game_test's screenshots;
 # ProbeStartAI(player, "human.ai") gives an empty slot a melee AI so a run has an opponent, and
 # ProbeGold(player, gold, lumber) pays for what the test wants built;
+# ProbeFinish() writes the report at once (a long game that ends by itself), ProbeBool(b) is "true"/"false";
 # ProbeCountEvent(playerunitevent, name) counts that event from then on, ProbeEventCount(name) reads the count;
 # probe_functions (the caller's own functions) come right before Trig_wc3mcpProbe_User
 JASS_USER = """function wc3mcpProbe_Counted takes nothing returns nothing
@@ -418,6 +437,19 @@ function ProbeSkipDialogs takes nothing returns nothing
     set wc3mcpProbe_noDialogs = true
 endfunction
 
+function ProbeBool takes boolean b returns string
+    if b then
+        return "true"
+    endif
+    return "false"
+endfunction
+
+// writes the report now instead of at probe_seconds (probe_script is skipped when it has not started yet)
+function ProbeFinish takes nothing returns nothing
+    set wc3mcpProbe_userRan = true
+    call TriggerExecute(gg_trg_{name})
+endfunction
+
 function ProbeExpect takes string name, boolean ok returns nothing
     if ok then
         call wc3mcpProbe_Line("check=pass:" + name)
@@ -474,6 +506,15 @@ function ProbeSkipDialogs()
     wc3mcpProbe_noDialogs = true
 end
 
+function ProbeBool(b)
+    return tostring(b and true or false)
+end
+
+function ProbeFinish()
+    wc3mcpProbe_userRan = true
+    Trig_{name}_Actions()
+end
+
 function ProbeExpect(name, ok)
     wc3mcpProbe_Line("check=" .. (ok and "pass:" or "fail:") .. tostring(name))
 end
@@ -496,7 +537,11 @@ def script(language: str, seconds: float, user: str | None = None, functions: st
     template = LUA if lua else JASS
     if (functions is not None or init is not None) and user is None:
         user = ""
-    call = ("" if user is None else f"    Trig_{NAME}_User()\n" if lua else f"    call Trig_{NAME}_User()\n")
+    call = ("" if user is None else
+            f"    if not wc3mcpProbe_userRan then\n        wc3mcpProbe_userRan = true\n        Trig_{NAME}_User()\n    end\n"
+            if lua else
+            f"    if not wc3mcpProbe_userRan then\n        set wc3mcpProbe_userRan = true\n"
+            f"        call Trig_{NAME}_User()\n    endif\n")
     call_init = ("" if init is None else f"    Trig_{NAME}_Init()\n" if lua else f"    call Trig_{NAME}_Init()\n")
     text = template.format(name=NAME, seconds=f"{float(seconds):.2f}", report=REPORT.replace("\\", "\\\\"),
                            started=STARTED.replace("\\", "\\\\"), partial=PARTIAL.replace("\\", "\\\\"),

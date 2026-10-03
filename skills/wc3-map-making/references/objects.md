@@ -5,6 +5,7 @@
 - `info_edit` `set` of a whole list (`forces`, `players`) replaces it, and every element must be complete, including `unknown_flag_bits`. Read the shape from `info_get` first. A path can reach one field inside an element instead (`forces[0].name`, `forces[0].flags.allied`).
 - Accepted in one batch: `description`, `players_recommended`, `flags.use_custom_forces`, `flags.fixed_player_settings_for_custom_forces`, `flags.melee_map`, `flags.use_terrain_fog`, `forces[0].flags.allied_victory` / `share_vision`, a whole `fog` object (`style`, `start_z`, `end_z`, `density`, `color`), `water_tint`, `loading_screen.title` / `subtitle` / `text`.
 - Art fields (for example an ability's research icon `arar`) live in the skin files (`war3mapSkin.w3a`), so `map_save merge_external=true` keeps them with the working copy's changes.
+- A passive or aura shows two icons: `arar` in the learn menu and `aart` once learned. Give both the same art (`BTNx` and `PASBTNx`), and check that both files exist (`data_search kind=icon`): few `BTN` icons have a `PASBTN` twin.
 
 ## objdata_edit
 
