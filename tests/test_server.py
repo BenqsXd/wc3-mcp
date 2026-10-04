@@ -780,7 +780,7 @@ def test_a_brief_result_drops_logs_and_messages_and_sums_up_the_screenshots(tmp_
     assert "log" not in out and "focus" not in out and out["results"] == {"x.txt": ["a=1"]}
     assert out["screenshots"] == {"dir": str(tmp_path), "prefix": "game-7-", "count": 3, "times": [0.0, 3.1, 6.0]}
     assert "messages" not in out["probe"] and "player0.units" not in out["probe"]
-    assert out["probe"]["reports"] == ["r295", "r296", "r297", "r298", "r299"] and out["probe"]["checks"] == {"a": True}
+    assert out["probe"]["reports"] == ["r295", "r296", "r297", "r298", "r299"] and "checks" not in out["probe"]
     assert len(result["probe"]["reports"]) == 300   # the full result is untouched
 
 
@@ -792,3 +792,59 @@ def test_a_named_screenshot_is_saved_and_tied_to_its_mark(monkeypatch, tmp_path)
     shot = done["named_screenshots"][0]
     assert shot["file"].endswith("game-9-0-cast_burst.png") and "image" not in shot
     assert done["probe"]["marks"] == [{"name": "cast burst", "time": 4.0, "screenshot": shot["file"]}]
+
+
+def test_usage_is_logged_and_summed(monkeypatch, tmp_path):
+    monkeypatch.setenv("WC3MCP_HOME", str(tmp_path))
+    monkeypatch.setattr(server, "STARTED", 0.0)
+    server._note_usage("game_status", 8000, {"wait": 30})
+    server._note_usage("game_status", 400, {})
+    server._note_usage("map_open", 1200, {"path": "x.w3x"})
+    out = server.wc3_usage.__wrapped__() if hasattr(server.wc3_usage, "__wrapped__") else server.TOOLS["wc3_usage"]()
+    assert out["tokens"] == 2400 and out["by_tool"][0] == {"tool": "game_status", "calls": 2, "tokens": 2100, "largest": 2000}
+    assert out["largest"][0]["tool"] == "game_status" and out["largest"][0]["tokens"] == 2000
+
+
+def test_a_long_result_file_comes_back_as_its_path_and_first_lines(monkeypatch, tmp_path):
+    monkeypatch.setenv("WC3MCP_DOCUMENTS", str(tmp_path))
+    out = server._brief_result({"results": {"x.txt": [f"line {i}" for i in range(500)], "y.txt": ["a"]},
+                                "probe": {"checks": {"a": True, "b": False}, "checks_failed": ["b"],
+                                          "checks_passed": 1, "reports": []}}, 20, None)
+    assert out["results"]["y.txt"] == ["a"] and out["results"]["x.txt"]["lines"] == 500
+    assert len(out["results"]["x.txt"]["head"]) == 20 and out["results"]["x.txt"]["path"].endswith("x.txt")
+    assert "checks" not in out["probe"] and out["probe"]["checks_failed"] == ["b"]
+
+
+def test_saved_pictures_are_cropped_and_scaled():
+    from PIL import Image as PILImage
+    import io
+
+    raw = io.BytesIO()
+    PILImage.new("RGB", (400, 200), (10, 20, 30)).save(raw, "PNG")
+    small = PILImage.open(io.BytesIO(server._picture(raw.getvalue(), {"crop": [100, 50, 200, 100], "scale": 0.5})))
+    assert small.size == (100, 50) and server._picture(raw.getvalue(), None) == raw.getvalue()
+
+
+def test_a_contact_sheet_and_a_difference(tmp_path):
+    from PIL import Image as PILImage
+
+    for i in range(10):
+        PILImage.new("RGB", (200, 100), (i * 20, 0, 0)).save(tmp_path / f"game-5-{i}.png")
+    sheet, text = server.TOOLS["image_sheet"](glob=str(tmp_path / "game-5-*.png"), columns=4, scale=0.5)
+    frames = json.loads(text)["frames"]
+    assert frames["9"].endswith("game-5-9.png") and len(frames) == 10   # sorted by number, not as text
+    same = server.TOOLS["image_diff"](str(tmp_path / "game-5-0.png"), str(tmp_path / "game-5-0.png"))
+    assert json.loads(same[0]) == {"changed": False, "share": 0.0}
+    b = PILImage.new("RGB", (200, 100), (0, 0, 0))
+    b.paste((255, 255, 255), (50, 20, 70, 40))
+    b.save(tmp_path / "b.png")
+    picture, facts = server.TOOLS["image_diff"](str(tmp_path / "game-5-0.png"), str(tmp_path / "b.png"))
+    assert json.loads(facts)["box"] == [50, 20, 20, 20]
+
+
+def test_a_batch_summary_keeps_the_verdict():
+    long = {"changed": True, "warnings": ["w" * 200, "x" * 200], "created": [], "tree": [{"a": 1}] * 50}
+    out = server._step_summary(long)
+    assert out == {"changed": True, "warnings": {"count": 2, "first": "w" * 200}, "created": {"count": 0},
+                   "summarised": True}
+    assert server._step_summary({"changed": False}) == {"changed": False}

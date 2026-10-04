@@ -83,6 +83,19 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.15
+
+Cheaper sessions: an answer stays in the conversation and is paid again on every later turn, so bulk stays on disk.
+
+- **`game_status` and `game_test` answer short by default** (`brief=false` for logs and messages). A result file of
+  more than 20 lines comes back as its path and first lines; checks as a count and the names that failed.
+- **Smaller pictures**: `screenshot_crop` and `screenshot_scale` shrink what a run saves; **`image_sheet`** puts a
+  screenshot series on one contact sheet; **`image_diff`** says in text whether two frames differ.
+- **Function-level script access**: `trigger_get outline=true` (functions with line ranges), `function="Name"` (one
+  function), and `triggers_edit` `script_replace` with `"function"` replaces a function by name.
+- **`objdata_get modified_only=true`**, **`wc3_batch summary=true`**.
+- **`wc3_usage`**: estimated tokens per tool and the largest answers, from `usage.jsonl` in the server's folder.
+
 ## What's new in 1.14
 
 - **`brief=true`** on `game_status` and `game_test`: the short result (state, result files, checks, last report

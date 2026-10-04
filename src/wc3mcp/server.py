@@ -2,6 +2,7 @@
 import base64
 import functools
 import inspect
+import io
 import json
 import logging
 import os
@@ -62,7 +63,7 @@ ObjectKind = Literal["unit", "item", "destructible", "doodad", "ability", "buff"
 MAX_READ = 1024 * 1024
 MAX_BATCH = 20
 # tools that answer with a picture, which a batch result cannot carry
-IMAGE_TOOLS = ("terrain_render", "editor_screenshot", "asset_preview")
+IMAGE_TOOLS = ("terrain_render", "editor_screenshot", "asset_preview", "image_crop", "image_sheet", "image_diff")
 TOOLS: dict[str, object] = {}       # tool name -> the plain function behind it, for wc3_batch
 _projects: dict[str, MapProject] = {}
 _catalogs: dict[tuple, Catalog] = {}
@@ -72,6 +73,27 @@ _storage = None
 def _brief(kwargs: dict) -> str:
     return json.dumps({k: (v[:80] + "..." if isinstance(v, str) and len(v) > 80 else v) for k, v in kwargs.items()},
                       default=str)
+
+
+STARTED = time.time()
+PICTURE_TOKENS = 1500   # a picture's cost does not follow its bytes: counted as a typical screenshot part
+
+
+def _answer_size(result) -> int:
+    """Characters of text the answer puts into the conversation, a picture counted as PICTURE_TOKENS * 4."""
+    parts = result if isinstance(result, list) else [result]
+    return sum(PICTURE_TOKENS * 4 if isinstance(p, Image) else len(p) if isinstance(p, str)
+               else len(json.dumps(p, default=str)) for p in parts)
+
+
+def _note_usage(tool: str, size: int, kwargs: dict) -> None:
+    """One line per answer in <home>/usage.jsonl: wc3_usage reads it to show where a session's tokens went."""
+    try:
+        with open(config.home() / "usage.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"t": round(time.time(), 1), "tool": tool, "chars": size, "tokens": size // 4,
+                                "args": _brief(kwargs)[:200]}) + "\n")
+    except OSError:
+        pass   # a log that cannot be written never fails a tool
 
 
 def _tool(fn):
@@ -91,7 +113,9 @@ def _tool(fn):
             log.exception("%s crashed %.0fms %s", fn.__name__, ms(), _brief(kwargs))
             raise
         # result bytes: what the answer costs the conversation, so a later session can see where the tokens go
-        log.info("%s ok %.0fms %dB %s", fn.__name__, ms(), len(json.dumps(result, default=str)), _brief(kwargs))
+        size = _answer_size(result)
+        log.info("%s ok %.0fms %dB %s", fn.__name__, ms(), size, _brief(kwargs))
+        _note_usage(fn.__name__, size, kwargs)
         return result
     return mcp.tool()(wrapper) if _exposed(fn.__name__) else wrapper
 
@@ -278,14 +302,46 @@ def wc3_help(topic: str | None = None) -> dict:
 
 
 @_tool
-def wc3_batch(calls: list[dict], stop_on_error: bool = True) -> dict:
+def wc3_usage(scope: Literal["session", "all"] = "session", top: int = 10) -> dict:
+    """Where the tokens went: per tool the number of answers and their estimated tokens (characters / 4, a picture
+    counted as 1500), and the `top` largest answers with their arguments. scope="session" counts since this server
+    started, "all" the whole log (<home>/usage.jsonl). Call it at the end of a session to see which calls to make
+    smaller next time (brief results, fields, outline, crops)."""
+    rows = []
+    try:
+        with open(config.home() / "usage.jsonl", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if scope == "all" or row.get("t", 0) >= STARTED:
+                    rows.append(row)
+    except OSError:
+        pass
+    tools: dict[str, dict] = {}
+    for row in rows:
+        entry = tools.setdefault(row["tool"], {"tool": row["tool"], "calls": 0, "tokens": 0, "largest": 0})
+        entry["calls"] += 1
+        entry["tokens"] += row["tokens"]
+        entry["largest"] = max(entry["largest"], row["tokens"])
+    return {"scope": scope, "calls": len(rows), "tokens": sum(r["tokens"] for r in rows),
+            "by_tool": sorted(tools.values(), key=lambda e: -e["tokens"]),
+            "largest": [{"tool": r["tool"], "tokens": r["tokens"], "args": r["args"]}
+                        for r in sorted(rows, key=lambda r: -r["tokens"])[:max(0, top)]],
+            "note": "estimates; an answer is paid again on every later turn until the context is compacted"}
+
+
+@_tool
+def wc3_batch(calls: list[dict], stop_on_error: bool = True, summary: bool = False) -> dict:
     """Run several of these tools in one round trip: [{"tool": "objdata_edit", "args": {...}}, {"tool": "script_build",
     "args": {"path": "..."}}, {"tool": "map_validate", "args": {"path": "..."}}]. Each call answers as it would on its
     own, under results[i].result, or with its error under results[i].error; stop_on_error=false runs the rest anyway.
     Use it for the chains that always go together (edit, rebuild, check) instead of one call each. A call that leaves
     out path gets the path of the batch's last call that gave one, or the only open map. At most 20 calls, no nesting,
     and the tools that answer with a picture (terrain_render, editor_screenshot, asset_preview) have to be called on
-    their own."""
+    their own. summary=true shortens every step that worked to its verdict (changed, ok, counts of warnings and
+    errors with the first of each): use it for edit, build, validate, save chains. A failed step keeps its error."""
     if not isinstance(calls, list) or not calls:
         raise ToolError("bad_value", "calls is a list of {\"tool\", \"args\"}", path="calls")
     if len(calls) > MAX_BATCH:
@@ -326,7 +382,25 @@ def wc3_batch(calls: list[dict], stop_on_error: bool = True) -> dict:
                             "error": {"code": "bad_value", "message": f"{name}: {e}"}})
             if stop_on_error:
                 break
+    if summary:
+        for step in results:
+            if step["ok"]:
+                step["result"] = _step_summary(step["result"])
     return {"count": len(results), "failed": failed, "ran": len(results), "of": len(plan), "results": results}
+
+
+def _step_summary(result) -> dict:
+    """A batch step that worked, as its verdict: short values as they are, lists as a count and their first entry."""
+    if not isinstance(result, dict) or len(json.dumps(result, default=str)) <= 300:
+        return result
+    out = {}
+    for key, value in result.items():
+        if isinstance(value, (bool, int, float)) or value is None or (isinstance(value, str) and len(value) <= 120):
+            out[key] = value
+        elif isinstance(value, list) and key in ("warnings", "errors", "lint", "created", "missing"):
+            out[key] = {"count": len(value), **({"first": value[0]} if value else {})}
+    out["summarised"] = True
+    return out
 
 
 @_tool
@@ -693,16 +767,26 @@ def objdata_list(path: str, kind: ObjectKind, custom_only: bool = False, balance
 
 @_tool
 def objdata_get(path: str, kind: ObjectKind, id: str | list[str], fields: list[str] | None = None,
-                verbose: bool = False, balance: str | None = "Custom_V1") -> dict:
+                verbose: bool = False, balance: str | None = "Custom_V1", modified_only: bool = False) -> dict:
     """One object as the Object Editor shows it, or a list of up to 50 ids in one call (objects): base game values merged with
     this map's modifications. modified lists the raw codes the map changes; verbose=true instead gives each field its
     name, type and which levels are modified, at about ten times the size. levels and the per-level lists follow the
     map's own level count (alev, glvl); values the map stores for levels beyond it are listed under unused_levels.
     fields filters by raw code, field name or display-name substring, and then only those fields come back (no
-    orders, models or value_refs)."""
+    orders, models or value_refs). modified_only=true answers with just the fields this map changes: a tenth of
+    the size, and usually the question."""
     project, catalog = _project(path), _catalog("enUS", balance, True)
-    out = _many(kind, id, lambda one: objdata_ops.objdata_get(project, catalog, kind, one, fields), verbose)
-    if fields and not verbose:
+
+    def get(one: str) -> dict:
+        if not modified_only or fields:
+            return objdata_ops.objdata_get(project, catalog, kind, one, fields)
+        doc = objdata_ops.objdata_get(project, catalog, kind, one, None)
+        doc["fields"] = {code: entry for code, entry in doc["fields"].items() if entry.get("modified")}
+        return {key: value for key, value in doc.items()
+                if key not in ("orders", "model", "classic_defaults", "classic_note")}
+    fields_given = fields or modified_only
+    out = _many(kind, id, get, verbose)
+    if fields_given and not verbose:
         for doc in out.get("objects", [out]):
             doc.pop("value_refs", None)
     return out
@@ -786,10 +870,13 @@ def triggers_tree(path: str) -> dict:
 
 
 @_tool
-def trigger_get(path: str, name: str | None = None) -> dict:
+def trigger_get(path: str, name: str | None = None, function: str | None = None, outline: bool = False) -> dict:
     """One trigger. GUI triggers come as events/conditions/actions JSON (the shape triggers_edit takes) plus the
-    editor's text; text triggers as script. Without name: the map's custom script header and comment."""
-    return triggers_ops.trigger_get(_project(path), _catalog("enUS", "Custom_V1", True), name)
+    editor's text; text triggers as script. Without name: the map's custom script header and comment. For a large
+    script trigger (JASS): outline=true answers with its globals and functions (name, takes, returns, line range)
+    instead of the text, and function="Name" with that one function only. triggers_edit op script_replace with
+    "function": "Name" then replaces that function by name, no old text to quote."""
+    return triggers_ops.trigger_get(_project(path), _catalog("enUS", "Custom_V1", True), name, function, outline)
 
 
 @_tool
@@ -1106,6 +1193,83 @@ def image_crop(path: str, rect: list[int], scale: int = 4) -> list:
     return [Image(data=target.read_bytes(), format="png"), f"saved {target}"]
 
 
+def _natural(path: Path) -> list:
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", path.name)]
+
+
+@_tool
+def image_sheet(paths: list[str] | None = None, glob: str | None = None, columns: int = 4, scale: float = 0.25,
+                every: int = 1) -> list:
+    """Many pictures as one: a contact sheet of a screenshot series, each frame shrunk by scale and numbered with its
+    index in the list. Give paths, or glob (".../screenshots/game-1234-*.png", sorted by frame number; a brief
+    game_test result gives dir and prefix); every=N keeps each Nth frame. Find the frame that shows what you look
+    for here, then read only that one (image_crop for a part of it). At most 64 frames a sheet."""
+    from PIL import Image as PILImage
+    from PIL import ImageDraw
+
+    if (paths is None) == (glob is None):
+        raise ToolError("bad_value", "give paths or glob", path="paths")
+    if glob is not None:
+        base = Path(glob)
+        files = sorted(base.parent.glob(base.name), key=_natural)
+    else:
+        files = [Path(p) for p in paths]
+    files = [(i, f) for i, f in enumerate(files)][::max(1, every)]
+    missing = [str(f) for _, f in files if not f.is_file()]
+    if missing or not files:
+        raise ToolError("not_found", f"no picture at {missing[0]}" if missing else "no pictures match", path="paths")
+    if len(files) > 64:
+        raise ToolError("bad_value", f"{len(files)} frames; a sheet holds 64 (use every=N)", path="every")
+    if not 0.05 <= scale <= 1 or not 1 <= columns <= 16:
+        raise ToolError("bad_value", "scale is 0.05 to 1, columns 1 to 16", path="scale")
+    thumbs = []
+    for index, f in files:
+        with PILImage.open(f) as im:
+            thumb = im.convert("RGB").resize((max(1, round(im.width * scale)), max(1, round(im.height * scale))),
+                                             PILImage.LANCZOS)
+        draw = ImageDraw.Draw(thumb)
+        draw.rectangle((0, 0, 8 + 7 * len(str(index)), 13), fill=(0, 0, 0))
+        draw.text((3, 1), str(index), fill=(255, 255, 0))
+        thumbs.append(thumb)
+    w, h = max(t.width for t in thumbs), max(t.height for t in thumbs)
+    rows = (len(thumbs) + columns - 1) // columns
+    sheet = PILImage.new("RGB", (min(columns, len(thumbs)) * w, rows * h), (30, 30, 30))
+    for n, thumb in enumerate(thumbs):
+        sheet.paste(thumb, (n % columns * w, n // columns * h))
+    out = io.BytesIO()
+    sheet.save(out, "PNG")
+    return [Image(data=out.getvalue(), format="png"),
+            json.dumps({"frames": {index: str(f) for index, f in files}})]
+
+
+@_tool
+def image_diff(a: str, b: str, threshold: int = 24) -> list:
+    """What changed between two pictures of the same size (two screenshots of one camera spot): the share of pixels
+    that differ by more than threshold (0-255), the box [x, y, width, height] that holds them, and that box cut
+    from b. An unchanged pair answers in text only, so "did the look change at all" costs no picture."""
+    from PIL import Image as PILImage
+    from PIL import ImageChops
+
+    for name, path in (("a", a), ("b", b)):
+        if not Path(path).is_file():
+            raise ToolError("not_found", f"no file {path}", path=name)
+    with PILImage.open(a) as first, PILImage.open(b) as second:
+        first, second = first.convert("RGB"), second.convert("RGB")
+        if first.size != second.size:
+            raise ToolError("bad_value", f"sizes differ: {first.size} and {second.size}", path="b")
+        changed = ImageChops.difference(first, second).convert("L").point(lambda v: 255 if v > threshold else 0)
+        box = changed.getbbox()
+        if box is None:
+            return [json.dumps({"changed": False, "share": 0.0})]
+        share = round(changed.histogram()[255] / (first.width * first.height), 4)
+        crop = io.BytesIO()
+        second.crop(box).save(crop, "PNG")
+    facts = {"changed": True, "share": share, "box": [box[0], box[1], box[2] - box[0], box[3] - box[1]]}
+    if (box[2] - box[0]) * (box[3] - box[1]) > 800 * 600:   # most of the screen moved: the crop would be the picture
+        return [json.dumps({**facts, "note": "the changed box is larger than 800x600: no crop returned, use image_crop"})]
+    return [Image(data=crop.getvalue(), format="png"), json.dumps(facts)]
+
+
 # ---- AI Editor -------------------------------------------------------------------------------------------------
 def _ai_source(path: str):
     """An open map (its war3map.wai) or a .wai file."""
@@ -1271,16 +1435,23 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
               screenshot_every: float = 3.0, login: Literal["auto", "battlenet", "wait", "stop"] = "auto",
               login_wait: float = 120, probe_init: str | None = None,
               probe_functions_file: str | None = None, loading_screenshot: bool = False,
-              screenshots_from: float = 0, brief: bool = False) -> dict:
+              screenshots_from: float = 0, brief: bool = True, screenshot_scale: float = 1.0,
+              screenshot_crop: list[int] | None = None) -> dict:
     """Run a map in Warcraft III (windowed) and collect what it reports. results: files the map writes with
     PreloadGenEnd; the run ends when all exist. probe=true runs a throwaway copy that reports the state at
     probe_seconds; probe_script / probe_functions / probe_init (at map init) with ProbeReport, ProbeExpect,
     ProbeScreenshot, ProbeCamera and ProbeSkipDialogs make it a test (*_file variants read local files). Protected maps
     can be probed too. screenshots=N / screenshot_every / screenshots_from take pictures once the map runs;
-    loading_screenshot=true one of the loading screen. wait=false runs in the background: game_status shows progress
-    and the result. brief=true answers with the short result (no logs, no messages). login="auto" (default) starts
-    the game through the Battle.net app, so no login screen; "wait"/"stop" start it directly. wc3_help("game_test")
-    has the helpers, login, loading-screen keys and pitfalls."""
+    screenshot_crop [x, y, width, height] and screenshot_scale (0.1-1) shrink every saved picture. wait=false runs
+    in the background: game_status shows progress and the result. The answer is the short one; brief=false adds
+    logs, messages and launch details. login="auto" starts the game through the Battle.net app, so no login
+    screen; "wait"/"stop" start it directly. wc3_help("game_test") has the helpers, login and pitfalls."""
+    if not 0.1 <= screenshot_scale <= 1:
+        raise ToolError("bad_value", "screenshot_scale must be 0.1 to 1", path="screenshot_scale")
+    if screenshot_crop is not None and not (len(screenshot_crop) == 4 and all(isinstance(v, int) for v in screenshot_crop)
+                                            and min(screenshot_crop[2:]) > 0):
+        raise ToolError("bad_value", "screenshot_crop is [x, y, width, height] in pixels", path="screenshot_crop")
+    shot = {"scale": screenshot_scale, "crop": screenshot_crop}
     if probe_functions is not None and probe_functions_file is not None:
         raise ToolError("bad_value", "give probe_functions or probe_functions_file, not both")
     if probe_functions is not None and "\n" not in probe_functions and probe_functions.strip().lower().endswith(
@@ -1312,7 +1483,8 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
         desktop_game._result_path(probe_ops.PARTIAL).unlink(missing_ok=True)   # never merge an earlier run's lines
         extra["probe_map"] = target
     result = desktop_game.GAME.test(target, timeout=timeout, results=results, close=close, screenshot=screenshot,
-                                    wait=wait, meta={"probe": probe, "extra": extra}, shots=screenshots,
+                                    wait=wait, meta={"probe": probe, "extra": extra, "shot": shot},
+                                    shots=screenshots,
                                     shot_every=screenshot_every, login=login, login_wait=login_wait,
                                     started_file=probe_ops.STARTED if probe else None,
                                     dialog_file=probe_ops.DIALOG if probe else None,
@@ -1320,8 +1492,8 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
                                     shot_file=probe_ops.SHOT if probe else None)
     if wait and desktop_game.GAME.run is not None:
         desktop_game.GAME.run["finished"] = True   # game_status must not finish this result a second time
-    out = {**(_finish_test(result, probe) if wait else result), **extra}
-    return _brief_result(out, 100, None) if brief and wait else out
+    out = {**(_finish_test(result, probe, shot) if wait else result), **extra}
+    return _brief_result(out, 20, None) if brief and wait else out
 
 
 @_tool
@@ -1339,7 +1511,7 @@ def game_regress(map: str, suite: str, stop_on_fail: bool = False) -> dict:
         start = time.time()
         row = {"file": f.name, "errors": []}
         try:
-            r = TOOLS["game_test"](map, probe=True, probe_script_file=str(f))
+            r = TOOLS["game_test"](map, probe=True, probe_script_file=str(f), brief=False)
         except ToolError as e:   # a probe that does not compile ends only its own file
             r = {}
             row["errors"].append(f"{e.code}: {e}")
@@ -1379,7 +1551,25 @@ def game_regress(map: str, suite: str, stop_on_fail: bool = False) -> dict:
     return out
 
 
-def _finish_test(result: dict, probe: bool) -> dict:
+def _picture(data: bytes, shot: dict | None) -> bytes:
+    """A captured PNG cut to screenshot_crop and shrunk by screenshot_scale: a smaller file is a cheaper read."""
+    if not shot or (shot.get("crop") is None and shot.get("scale", 1) == 1):
+        return data
+    from PIL import Image as PILImage
+
+    with PILImage.open(io.BytesIO(data)) as im:
+        if shot.get("crop"):
+            x, y, w, h = shot["crop"]
+            im = im.crop((x, y, min(x + w, im.width), min(y + h, im.height)))
+        if shot.get("scale", 1) != 1:
+            im = im.resize((max(1, round(im.width * shot["scale"])), max(1, round(im.height * shot["scale"]))),
+                           PILImage.LANCZOS)
+        out = io.BytesIO()
+        im.save(out, "PNG")
+    return out.getvalue()
+
+
+def _finish_test(result: dict, probe: bool, shot_options: dict | None = None) -> dict:
     """The parts of a run's result that need the server: the screenshot files and the probe report."""
     series = result.get("screenshots")
     if series and not all(isinstance(shot, str) for shot in series):
@@ -1388,12 +1578,12 @@ def _finish_test(result: dict, probe: bool) -> dict:
         result["screenshots"] = []
         for i, image in enumerate(series):
             shot = folder / f"game-{result['pid']}-{i}.png"
-            shot.write_bytes(image)
+            shot.write_bytes(_picture(image, shot_options))
             result["screenshots"].append(str(shot))
     if result.get("screenshot"):
         shot = config.home() / "screenshots" / f"game-{result['pid']}.png"
         shot.parent.mkdir(parents=True, exist_ok=True)
-        shot.write_bytes(result.pop("screenshot"))
+        shot.write_bytes(_picture(result.pop("screenshot"), shot_options))
         result["screenshot"] = str(shot)
     elif "screenshot" in result:
         result["screenshot"] = None
@@ -1407,7 +1597,7 @@ def _finish_test(result: dict, probe: bool) -> dict:
             name = re.sub(r"[^A-Za-z0-9_.-]+", "_", shot["name"])[:40] or "shot"
             file = config.home() / "screenshots" / f"game-{result['pid']}-{i}-{name}.png"
             file.parent.mkdir(parents=True, exist_ok=True)
-            file.write_bytes(shot.pop("image"))
+            file.write_bytes(_picture(shot.pop("image"), shot_options))
             shot["file"] = str(file)
     if probe:
         lines = result["results"].pop(probe_ops.REPORT, None)
@@ -1449,13 +1639,21 @@ def _place_marks(result: dict) -> None:
 
 BRIEF_KEYS = ("seconds", "pid", "results", "missing", "exited_early", "crash", "cancelled", "ended", "hint",
               "login_required", "stuck_at", "dialog_shown", "map_started_after", "closed", "truncated", "screenshot",
-              "loading_screenshot", "named_screenshots", "screenshots_failed", "probe_note", "other_games", "probe_map")
+              "loading_screenshot", "named_screenshots", "screenshots_failed", "probe_note", "other_games", "probe_map",
+              "server_version", "probe_functions_file")
+
+
+RESULTS_HEAD = 20
 
 
 def _brief_result(result: dict, tail: int, grep: str | None) -> dict:
     """What a caller polls for: the result files, the verdict and where the pictures are - no logs, no message
     log, no path per picture."""
     out = {k: result[k] for k in BRIEF_KEYS if k in result}
+    # a long result file goes back as its path and first lines: Read or Grep the file for the rest
+    out["results"] = {name: lines if len(lines) <= RESULTS_HEAD else
+                      {"path": str(desktop_game._result_path(name)), "lines": len(lines), "head": lines[:RESULTS_HEAD]}
+                      for name, lines in (result.get("results") or {}).items()}
     shots = result.get("screenshots")
     if shots:
         first = Path(shots[0])
@@ -1464,6 +1662,8 @@ def _brief_result(result: dict, tail: int, grep: str | None) -> dict:
     if result.get("probe"):
         probe = {k: v for k, v in result["probe"].items()
                  if k not in ("messages", "message_to") and not k.startswith("player")}
+        if "checks" in probe:   # the verdict: how many passed, and the names of the ones that did not
+            probe.pop("checks")
         out["probe"] = _trim_partial(probe, tail, grep)
     out["brief"] = True
     return out
@@ -1494,22 +1694,23 @@ def _finish_run() -> dict | None:
     """Turn the last run's raw result (pictures as bytes, unparsed probe lines) into the tool result, once."""
     job = desktop_game.GAME.run
     if job is not None and job["result"] is not None and not job.get("finished"):
-        job["result"] = _finish_test(job["result"], job["meta"].get("probe", False))
+        job["result"] = _finish_test(job["result"], job["meta"].get("probe", False), job["meta"].get("shot"))
         job["result"].update(job["meta"].get("extra") or {})
         job["finished"] = True
     return job
 
 
 @_tool
-def game_status(tail: int = 100, grep: str | None = None, wait: float = 0, brief: bool = False) -> dict:
+def game_status(tail: int = 20, grep: str | None = None, wait: float = 0, brief: bool = True) -> dict:
     """Game processes (and which this server launched), their windows and the useful War3Log.txt lines. A game_test
     run started with wait=false is reported under run: while it goes, how long it has taken and which result files
     it has; when it ends, its whole result (probe reports included) under run.result. launcher says what a Play in
     the Battle.net app would start today. A running probe's report so far (run.partial) keeps its last `tail`
     report lines and messages, only those matching the regex `grep` when given. wait=N answers when the run ends or
-    after N seconds (300 at most), whichever is first: a poll without a sleep of your own. brief=true answers with
-    the run only: state, result files, checks, the last `tail` report lines (matching grep) and where the
-    screenshots are - no logs, no message log. Use it for every poll of a long run."""
+    after N seconds (300 at most), whichever is first: a poll without a sleep of your own. The answer is the short
+    one (brief=true): the run's state, result files (a long one as its path and first lines), failed checks, the
+    last `tail` report lines (matching grep) and where the screenshots are. brief=false adds processes, windows,
+    logs, the launcher and the message log."""
     end = time.time() + min(max(wait, 0), 300)
     while time.time() < end and (run := desktop_game.GAME.run) and run["thread"] is not None and run["thread"].is_alive():
         time.sleep(1)
@@ -1530,7 +1731,7 @@ def game_status(tail: int = 100, grep: str | None = None, wait: float = 0, brief
             run.pop("partial_note", None)
         if run and isinstance(run.get("result"), dict):
             run["result"] = _brief_result(run["result"], tail, grep)
-        return {"running": status["running"], **({"run": run} if run else {})}
+        return {"running": status.get("running", False), **({"run": run} if run else {})}
     return status
 
 

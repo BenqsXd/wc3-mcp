@@ -315,3 +315,22 @@ def test_a_script_with_an_unknown_escape_is_flagged_when_written(melee, catalog)
     result = triggers_edit(melee, catalog, [{"op": "trigger", "name": "Bar", "script": script}])
     assert any("trigger Bar" in w and "does not know" in w for w in result["warnings"])
 
+
+
+def test_one_function_of_a_script_trigger_is_read_and_replaced(warchasers, catalog):
+    from wc3mcp.ops.triggers import trigger_get, triggers_edit
+
+    script = ("globals\n    integer udg_N = 0\nendglobals\n\nfunction First takes nothing returns nothing\n"
+              "    set udg_N = 1\nendfunction\n\nfunction Second takes integer a, real b returns boolean\n"
+              "    if a > 0 then\n        return true\n    endif\n    return false\nendfunction\n")
+    triggers_edit(warchasers, catalog, [{"op": "trigger", "name": "Big", "script": script}])
+    outline = trigger_get(warchasers, catalog, "Big", outline=True)
+    assert "script" not in outline and outline["globals"] == ["integer udg_N = 0"]
+    assert [(f["name"], f["takes"], f["returns"], f["lines"]) for f in outline["functions"][:2]] == [
+        ("First", "nothing", "nothing", [5, 7]), ("Second", "integer a, real b", "boolean", [9, 14])]
+    one = trigger_get(warchasers, catalog, "Big", function="Second")
+    assert one["script"].startswith("function Second") and one["script"].endswith("endfunction") and one["lines"] == [9, 14]
+    triggers_edit(warchasers, catalog, [{"op": "script_replace", "name": "Big", "function": "First",
+                                         "new": "function First takes nothing returns nothing\n    set udg_N = 2\nendfunction"}])
+    text = trigger_get(warchasers, catalog, "Big")["script"]
+    assert "set udg_N = 2" in text and "set udg_N = 1" not in text and "function Second" in text

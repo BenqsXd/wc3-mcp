@@ -89,11 +89,44 @@ def triggers_tree(project, catalog) -> dict:
             "categories": categories, "triggers": triggers, "variables": variables}
 
 
-def trigger_get(project, catalog, name: str | None = None) -> dict:
+FUNCTION_RE = re.compile(r"(?m)^[ \t]*(?:constant[ \t]+)?function[ \t]+(\w+)[ \t]+takes[ \t]+([^\n]*?)[ \t]+returns"
+                         r"[ \t]+(\w+)[^\n]*\n(?:.*\n)*?[ \t]*endfunction[^\n]*")
+
+
+def function_span(text: str, name: str) -> tuple[int, int] | None:
+    """(start, end) of one JASS function in a script text, from its `function` line through `endfunction`."""
+    return next((m.span() for m in FUNCTION_RE.finditer(text) if m[1] == name), None)
+
+
+def _narrow(doc: dict, function: str | None, outline: bool) -> dict:
+    """A script trigger's text cut to one function, or replaced by its outline (globals, functions with line
+    ranges): a large trigger is patched without reading it whole."""
+    if "script" not in doc or (function is None and not outline):
+        return doc
+    text = doc.pop("script").replace("\r\n", "\n")
+    line = lambda offset: text.count("\n", 0, offset) + 1   # noqa: E731
+    if function is not None:
+        found = function_span(text, function)
+        if found is None:
+            raise ToolError("not_found", f"no function {function!r} in this script",
+                            hint="trigger_get outline=true lists the functions")
+        return {**doc, "function": function, "lines": [line(found[0]), line(found[1])],
+                "script": text[found[0]:found[1]]}
+    block = re.search(r"(?ms)^[ \t]*globals\b(.*?)^[ \t]*endglobals", text)
+    return {**doc, "lines": text.count("\n") + 1, "characters": len(text),
+            "globals": [g.strip() for g in block[1].splitlines() if g.strip() and not g.strip().startswith("//")]
+            if block else [],
+            "functions": [{"name": m[1], "takes": m[2], "returns": m[3], "lines": [line(m.start()), line(m.end())]}
+                          for m in FUNCTION_RE.finditer(text)]}
+
+
+def trigger_get(project, catalog, name: str | None = None, function: str | None = None,
+                outline: bool = False) -> dict:
     td = catalog.trigger_data
     tf, ct = _load(project, td)
     if name is None:
-        return {"type": "map", "name": _root(tf).name, "comment": ct.comment, "script": ct.header or ""}
+        return _narrow({"type": "map", "name": _root(tf).name, "comment": ct.comment, "script": ct.header or ""},
+                       function, outline)
     t = _find_trigger(tf, name)
     doc = {"id": t.id, "name": t.name, "category": _category_names(tf).get(t.parent), "description": t.description,
            "type": _type(t), "enabled": bool(t.enabled), "initially_on": not t.initially_off,
@@ -105,7 +138,7 @@ def trigger_get(project, catalog, name: str | None = None) -> dict:
             doc[key] = [eca_json(e) for e in t.ecas if e.kind == kind]
         variables = {v.name: v for v in tf.variables}
         doc["text"] = "\n".join(Renderer(td, catalog, variables, load_strings(project)).lines(t.ecas))
-    return doc
+    return _narrow(doc, function, outline)
 
 
 # ---- edits -----------------------------------------------------------------------------------------------------
@@ -118,7 +151,7 @@ ALLOWED = {
                 "conditions", "actions", "script", "after", "index"},
     "delete": {"what", "name"},
     "header": {"script", "comment"},
-    "script_replace": {"name", "header", "old", "new"},
+    "script_replace": {"name", "header", "old", "new", "function"},
 }
 SCRIPT_WARNING = "the map script is not regenerated yet: map_save (or script_build) rebuilds war3map.j or war3map.lua"
 # variable types callers ask for by their JASS or GUI-menu name; the editor's own name is the value
@@ -547,9 +580,12 @@ class _Edit:
 
     def op_script_replace(self, op: dict, path: str) -> None:
         """Replace one exact, unique piece of a script trigger's text or of the map header."""
-        old, new = op.get("old"), op.get("new")
-        if not isinstance(old, str) or not old or not isinstance(new, str):
-            raise ToolError("bad_op", f"{path}: old (non-empty text) and new (text) are required", hint=_HINT)
+        old, new, function = op.get("old"), op.get("new"), op.get("function")
+        if function is not None and old is not None:
+            raise ToolError("bad_op", f"{path}: give old or function, not both", hint=_HINT)
+        if (function is None and (not isinstance(old, str) or not old)) or not isinstance(new, str):
+            raise ToolError("bad_op", f"{path}: old (non-empty text) or function (a name), and new (text) are "
+                            "required", hint=_HINT)
         t = None
         if op.get("header"):
             if "name" in op:
@@ -564,6 +600,13 @@ class _Edit:
                 raise ToolError("bad_op", f"{path}: {t.name!r} is a GUI trigger; script_replace edits script text",
                                 hint="send its events, conditions and actions with a trigger op")
             where, current = f"trigger {t.name!r}", self.text.get(t.id) or ""
+        if function is not None:   # the whole function, found by name: no old text to quote
+            current = current.replace("\r\n", "\n")
+            found = function_span(current, function)
+            if found is None:
+                raise ToolError("not_found", f"{path}: no function {function!r} in {where}",
+                                hint="trigger_get outline=true lists the functions")
+            old = current[found[0]:found[1]]
         current, old, new = (x.replace("\r\n", "\n") for x in (current, old, new))
         count = current.count(old)
         if count != 1:

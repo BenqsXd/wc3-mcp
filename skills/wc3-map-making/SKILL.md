@@ -30,7 +30,7 @@ If a parameter or op named here is missing from the tool definitions you see (fo
 
 ## Reference files
 
-Read the one you need before working in that area; each is a list of facts established in real maps, the editor and the game.
+Each is a list of facts established in real maps, the editor and the game. Together they are about 33,000 tokens: **do not read a file whole.** Grep it for the tool, native or raw code you are working with, or Read the one section you need (`## ` headings, listed under the table).
 
 | File | What is in it |
 |---|---|
@@ -41,7 +41,27 @@ Read the one you need before working in that area; each is a list of facts estab
 | `references/game-behaviour.md` | heroes and experience, vision, combat, items, deaths, players and UI, workers and building |
 | `references/testing.md` | `game_test`, probes, background runs, logins, the World Editor round trip |
 
+Sections:
+
+- `references/building-a-map.md`: 1. Read the request as a map; 2. Terrain first, in layers; Carving a path network; 3. Scenery that reads as placed; 4. Objects, then the systems; 5. Check before launching the game; 6. Then the game; What to do when the user asks for "a map like X"
+- `references/game-behaviour.md`: Heroes and abilities; Vision, groups and invisibility; Combat; Items; Timers, stats and measurement; Shops and camps; Deaths; Players, dialogs and UI; Workers, training and building; Common practice (not verified by the tools)
+- `references/objects.md`: Map info; objdata_edit; Copies keep what their base has; Units, buildings and shops; Gameplay constants; Custom heroes; Items and abilities; Order strings; Reviewing a batch; What an object is worth; The string table
+- `references/terrain.md`: Coordinates and size; terrain_edit; Water and heights; Buildability; Derived files; terrain_render; Placed objects; Footprints and walls; Mirroring; Missing models; Scenery that looks placed
+- `references/testing.md`: game_test; Logins; Probe code and scenery runs; World Editor; After a game patch
+- `references/triggers.md`: Trigger ops; Function order; GUI variables; JASS pitfalls; The script API of the installed build; Custom user interface; Systems that are the same in every map; Audio
+
 ## Keeping calls cheap
+
+Every answer stays in the conversation and is paid again on each later turn, so keep bulk on disk and ask for the part you need.
+
+- `game_test` and `game_status` answer short by default: state, result files (a long one as its path and first 20 lines: Grep or Read the file), failed checks, the last report lines, and screenshots as `{dir, prefix, count, times}`. `brief=false` only when logs or the message log matter. Poll a long run with `game_status(wait=300)`.
+- Let the run judge itself: `ProbeExpect(name, condition)` per check, so the answer is `checks_passed` and the names of the failed ones instead of text to read.
+- Pictures: take the few that matter (`ProbeScreenshot("name")`, `screenshots_from`), shrink them at capture (`screenshot_crop`, `screenshot_scale=0.5`), find the right frame of a series on one `image_sheet`, and read a part with `image_crop`. `image_diff(a, b)` answers "did the look change" in text. Never read a whole series one by one.
+- When the look of an effect is a matter of taste, show two or three candidates side by side in one run and let the user choose once.
+- Large script triggers: `trigger_get outline=true` lists functions with line ranges, `trigger_get function="Name"` returns one function, and `triggers_edit` `{"op": "script_replace", "name": trigger, "function": "Name", "new": text}` replaces it by name.
+- `objdata_get modified_only=true` returns only the fields the map changes. `wc3_batch summary=true` shortens every step that worked to its verdict.
+- Answer offline what needs no game: `asset_info` (blend modes, sequences, timing), `script_validate lint=true`, `map_validate`, `map_flow`. A launch costs a minute and about 10,000 tokens.
+- `wc3_usage` at the end of a session shows which tools' answers cost the most.
 
 - `data_get` / `objdata_get` take a **list of ids** in one call and answer compactly (raw code -> value, empty fields left out); `fields` narrows further, `verbose=true` brings back names, categories and types when you need them.
 - Write generated batches to a local JSON file and pass `ops_file` instead of `ops` (`placed_edit`, `terrain_edit`, `objdata_edit`, `triggers_edit`, `elements_edit`, `info_edit`, `strings_edit`); a long trigger script can come from `script_file`.

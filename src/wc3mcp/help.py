@@ -76,6 +76,10 @@ OPS
   {"op": "delete", "what": "trigger"|"category"|"variable", "name"}
   {"op": "header", "script" | "script_file", "comment"}
   {"op": "script_replace", "name" (or "header": true), "old", "new"}   one exact piece, which must occur once
+  {"op": "script_replace", "name", "function": "Name", "new"}          a whole JASS function by its name (new is
+                                                                       the function's new text); trigger_get
+                                                                       outline=true lists them, function="Name"
+                                                                       reads one
 
 ARGUMENTS of a GUI function: a literal, {"preset": name}, {"var": name, "index"}, or {"call": name, "args": [...]}.
 Block functions take "if"/"then"/"else" (IfThenElseMultiple), "conditions" (And/OrMultiple) or "actions" (loops).
@@ -270,11 +274,15 @@ LONG RUNS
   player id, or the ids of a force. screenshot_times gives the game time of each saved picture.
   run.partial keeps the last 100 report lines and messages (game_status tail=N, grep="regex" to pick others;
   left_out counts the rest).
-  brief=true (game_status and game_test) answers with the short result: state, seconds, the result files' lines,
-  missing, exited_early, crash, hint, the probe's checks, marks and last `tail` report lines (matching grep), and
-  screenshots as {dir, prefix, count, times} (file i is <dir>/<prefix><i>.png). No logs, no message log, no
-  per-player counts. Poll a long run with game_status(wait=300, brief=true); ask without brief once when the
-  messages matter.
+  game_status and game_test answer short by default (brief=true): state, seconds, the result files' lines (a file
+  of more than 20 lines as {path, lines, head}: Read or Grep the path), missing, exited_early, crash, hint, the
+  probe's checks_passed and checks_failed, marks and last `tail` report lines (matching grep), and screenshots
+  as {dir, prefix, count, times} (file i is <dir>/<prefix><i>.png). No logs, no launch details, no message log,
+  no per-player counts. Poll a long run with game_status(wait=300); brief=false once when the messages or logs
+  matter.
+  screenshot_crop=[x, y, width, height] and screenshot_scale (0.1-1) are applied to every picture the run saves:
+  a status line or a spot on the ground at half size costs a fraction of a full frame. image_sheet puts a series
+  on one picture to find the frame that matters; image_diff says in text whether two frames differ.
   other_games (with a hint) names Warcraft III processes that were open before the run when the game exits before
   the map runs: a second game exits within seconds, and game_close only closes games this server started.
   probe.user_input lists what a person did in the game during the run: chat lines ("<player id>:<text>") and a count
