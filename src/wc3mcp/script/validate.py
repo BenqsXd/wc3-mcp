@@ -163,6 +163,28 @@ def _jasshelper(script_text, tools: Path, timeout):
     return result
 
 
+def _model_sequences(catalog):
+    """sequences_of(path) for the lint: the sequence names of a game model named in a JASS string."""
+    from ..formats import mdx
+    cache: dict[str, list[str] | None] = {}
+
+    def of(path: str) -> list[str] | None:
+        key = path.replace("\\\\", "/").replace("\\", "/").lower()
+        if key not in cache:
+            cache[key] = None
+            stem = key[:-4] if key.endswith((".mdl", ".mdx")) else key
+            try:
+                full = catalog.storage.resolve(stem + ".mdx")
+                model = mdx.parse(catalog.storage.read(full)) if full else None
+                if model is not None:
+                    cache[key] = [s["name"].split(b"\0")[0].decode("utf-8", "replace") if isinstance(s["name"], bytes)
+                                  else s["name"] for t, v in model["chunks"] if t == "SEQS" for s in v]
+            except Exception:   # noqa: BLE001 - a model that does not parse is simply not judged
+                pass
+        return cache[key]
+    return of
+
+
 def validate_jass(text: str, catalog, vjass: bool | None = None, timeout: int = 60, lint: bool = False) -> dict:
     from . import lint as linter
 
@@ -173,7 +195,7 @@ def validate_jass(text: str, catalog, vjass: bool | None = None, timeout: int = 
     except subprocess.TimeoutExpired as e:
         raise ToolError("timeout", f"script validation took longer than {timeout} s") from e
     if lint:
-        result["lint"] = linter.lint(text)
+        result["lint"] = linter.lint(text, _model_sequences(catalog))
     elif result["errors"]:
         # pjass points at the function line and every declaration after it, never at the reserved name itself
         found = linter.reserved_names(text)

@@ -1,4 +1,5 @@
 """Game data lookups: base objects with their editor fields, terrain/sound rows, asset paths."""
+import difflib
 import fnmatch
 from dataclasses import dataclass
 from functools import cached_property
@@ -246,6 +247,17 @@ class Catalog:
                     netsafe=r.get("netsafe") or "0"))
             self._fields[kind] = out
         return self._fields[kind]
+
+    def similar_fields(self, kind: str, wrong: str, limit: int = 5) -> list[str]:
+        """Fields a mistyped or guessed name may have meant ("uturn" -> "umvr (Movement - Turn Rate)"): raw codes
+        that are close, and names holding the word (also without the kind's letter in front)."""
+        metas = self.fields(kind)
+        low = wrong.lower()
+        words = [w for w in {low, low[1:]} if len(w) >= 3]
+        ids = set(difflib.get_close_matches(low, [m.id.lower() for m in metas], n=limit, cutoff=0.75))
+        hits = [m for m in metas if m.id.lower() in ids
+                or any(w in m.field.lower() or w in m.display_name.lower() for w in words)]
+        return [f"{m.id} ({m.display_name})" for m in hits[:limit]]
 
     def field(self, kind: str, obj_id: str, field_id: str) -> str | None:
         """One base value by field raw code (first level)."""
@@ -642,6 +654,9 @@ class Catalog:
         unknown = [f for f in fields if f.lower() not in matched] if fields else []
         if unknown:
             doc["unknown_fields"] = unknown
+            close = {f: self.similar_fields(kind, f) for f in unknown}
+            if any(close.values()):
+                doc["did_you_mean"] = {f: found for f, found in close.items() if found}
         # a filtered read answers only the fields asked for (the model check goes with the model field)
         if kind == "ability" and not fields:
             doc["orders"] = self.ability_orders(obj_id)

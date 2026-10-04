@@ -300,3 +300,44 @@ def test_expect_new_refuses_an_existing_id(plain_project, catalog):
     with pytest.raises(ToolError) as e:
         objdata_edit(plain_project, catalog, "unit", [op])
     assert e.value.code == "exists" and "h0ZW" in e.value.message and "'Ann'" in e.value.message
+
+
+def test_a_batch_can_delete_an_id_and_create_it_again(plain_project, catalog):
+    objdata_edit(plain_project, catalog, "unit", [{"op": "create", "base": "hfoo", "id": "h0ZW"}])
+    objdata_edit(plain_project, catalog, "unit", [{"op": "delete", "id": "h0ZW"},
+                                                  {"op": "create", "base": "hkni", "id": "h0ZW"}])
+    assert objdata_get(plain_project, catalog, "unit", "h0ZW")["base"] == "hkni"
+
+
+def test_only_what_a_generator_changed_since_its_last_run_is_applied():
+    from wc3mcp.ops.objdata import changed_ops
+
+    before = [{"op": "delete", "id": "A001", "missing_ok": True},
+              {"op": "create", "id": "A001", "base": "AHtb", "set": {"Name": "Bolt", "acdn": [9, 8], "amcs": 75}},
+              {"op": "create", "id": "A002", "base": "AHbz", "set": {"Name": "Storm"}},
+              {"op": "create", "id": "A003", "base": "AHtb", "set": {"Name": "Old"}}]
+    after = [{"op": "delete", "id": "A001", "missing_ok": True},
+             {"op": "create", "id": "A001", "base": "AHtb", "set": {"Name": "Bolt", "acdn": [9, 7]}},
+             {"op": "create", "id": "A002", "base": "AHfs", "set": {"Name": "Storm"}},
+             {"op": "create", "id": "A004", "base": "AHtb", "set": {"Name": "New"}}]
+    ops, diff = changed_ops(after, before)
+    assert ops == [{"op": "set", "id": "A001", "set": {"acdn": [9, 7]}},
+                   {"op": "delete", "id": "A002", "missing_ok": True},
+                   {"op": "create", "id": "A002", "base": "AHfs", "set": {"Name": "Storm"}},
+                   {"op": "upsert", "id": "A004", "base": "AHtb", "set": {"Name": "New"}}]
+    assert diff == {"created": ["A004"], "rebuilt": ["A002"], "changed": {"A001": ["acdn"]}, "unchanged": 0,
+                    "no_longer_in_ops": ["A003"], "dropped_fields": {"A001": ["amcs"]}}
+
+
+def test_levels_on_a_copy_of_an_item_ability_get_a_warning(plain_project, catalog):
+    out = objdata_edit(plain_project, catalog, "ability", [{"op": "create", "base": "AIsx", "id": "A0ZV",
+                                                            "set": {"alev": 5}}])
+    assert any("item ability AIsx" in w for w in out["warnings"])
+
+
+def test_an_unknown_field_names_what_was_probably_meant(plain_project, catalog):
+    doc = objdata_get(plain_project, catalog, "unit", "hfoo", ["uturn"])
+    assert doc["unknown_fields"] == ["uturn"] and any(f.startswith("umvr") for f in doc["did_you_mean"]["uturn"])
+    with pytest.raises(ToolError) as e:
+        objdata_edit(plain_project, catalog, "unit", [{"op": "set", "id": "hfoo", "set": {"uturn": 1}}])
+    assert e.value.code == "unknown_field" and any(f.startswith("umvr") for f in e.value.details["did_you_mean"])

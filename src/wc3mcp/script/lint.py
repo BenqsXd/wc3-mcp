@@ -349,11 +349,29 @@ def _r2i_products(name: str, first_line: int, body: str, text: str) -> list[dict
             and not re.search(r"(?:^|\+)\s*\d*\.\d+\s*(?:\+|$)", m.group(1).strip())]
 
 
+ONE_SHOT = re.compile(r'DestroyEffect\s*\(\s*(AddSpecialEffect\w*)\s*\(\s*"([^"]+)"')
+
+
+def _one_shot_effects(name: str, first_line: int, body: str, sequences_of) -> list[dict]:
+    """DestroyEffect(AddSpecialEffect(model)) plays the model's Death at once: right for a model with only a Birth
+    (a burst), nothing to see for a model that has a Stand (a buff, an aura, a looping effect)."""
+    out = []
+    for m in ONE_SHOT.finditer(body):
+        names = sequences_of(m[2]) or []
+        low = [n.lower() for n in names]   # a Stand without a Death is itself the burst (ThunderClapCaster)
+        if any(n.startswith("stand") for n in low) and any(n.startswith("death") for n in low):
+            out.append(_hit("effect_death", _line(body, m.start(), first_line), name,
+                            f"DestroyEffect({m[1]}(\"{m[2]}\")): this model has a Stand and a Death sequence ({', '.join(names[:4])}), "
+                            "so an effect destroyed at once shows only its Death - little or nothing. Keep the effect "
+                            "and destroy it from a timer"))
+    return out
+
+
 RULES = (_leaks, _event_after_wait, _dead_trigger, _loops, _after_destroy, _desync, _discarded_effects, _corpse_enum,
          _escapes, _big_reals, _r2i_products)
 
 
-def lint(text: str) -> list[dict]:
+def lint(text: str, sequences_of=None) -> list[dict]:
     """Every rule over a JASS script, by line. Warnings, not errors: each one names what to check."""
     from .validate import section_index   # validate imports this module for reserved_names
 
@@ -363,6 +381,8 @@ def lint(text: str) -> list[dict]:
         for rule in RULES:
             out += rule(name, first_line, body, text)
         out += _hooked_rules(name, first_line, body, hooked)
+        if sequences_of is not None:   # sequences_of(model path) -> sequence names of a game model, None if unknown
+            out += _one_shot_effects(name, first_line, body, sequences_of)
     marks = section_index(text)
     starts = [m[0] for m in marks]
     for hit in out:

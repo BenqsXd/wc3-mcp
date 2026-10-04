@@ -53,6 +53,7 @@ Exact scripted damage: send it as `ATTACK_TYPE_CHAOS` + `DAMAGE_TYPE_UNIVERSAL` 
 - `corpse_enum`: `GroupEnumUnitsIn*` returns dead units, and a `FirstOfGroup` loop that damages, orders or kills them without a life check works on corpses. Test `GetUnitState(u, UNIT_STATE_LIFE) > 0.405` in the loop or in the filter. For heroes, whose corpses can regain life, test `IsUnitType(u, UNIT_TYPE_DEAD)` instead.
 - `item_reentry`: `RemoveItem` / `UnitAddItemById` inside an item-event handler fires the item events again before the inventory settles (an unguarded recipe builds several copies). Guard it with a global flag or `DisableTrigger(GetTriggeringTrigger())` around the change.
 - `damage_action`: the handler shape above.
+- `effect_death`: `DestroyEffect(AddSpecialEffect("model"))` of a game model that has a Stand and a Death sequence. Destroyed at once, such a model plays only its Death and shows little or nothing: keep the effect and destroy it from a timer. A model with only a Birth, or a Stand without a Death, is a burst and is fine.
 
 ### Measuring in a map with scripted computer players
 

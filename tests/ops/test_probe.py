@@ -304,3 +304,13 @@ def test_a_shown_dialog_is_written_to_its_own_file_at_once():
         < shown.index("call DialogDisplay(p, d, flag)")
     lua = probe.script("lua", 5.0)
     assert probe.DIALOG.replace("\\", "\\\\") in lua and 'Preload("count=" .. wc3mcpProbe_dialogs)' in lua
+
+
+def test_probe_marks_screenshots_and_learns():
+    """ProbeMark notes game time, ProbeScreenshot also asks the runner for a picture, ProbeLearn says why not."""
+    for language in ("jass", "lua"):
+        text = probe.script(language, 10, "")
+        assert all(name in text for name in ("ProbeMark", "ProbeScreenshot", "ProbeLearn"))
+        assert "{shot}" not in text and "wc3mcp\\\\shot.txt" in text
+    out = probe.parse(["probe=ok", "mark=12.500:cast", "mark=40.000:impact", "report=x"])
+    assert out["marks"] == [{"name": "cast", "time": 12.5}, {"name": "impact", "time": 40.0}]

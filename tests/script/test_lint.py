@@ -210,3 +210,16 @@ endfunction
 """
     hits = [(h["rule"], h["function"]) for h in lint(text) if h["rule"] in ("leak", "r2i_truncates")]
     assert hits == [("leak", "Leaky"), ("r2i_truncates", "Tip")]
+
+
+def test_an_effect_with_a_stand_destroyed_at_once_is_flagged():
+    from wc3mcp.script.lint import lint
+
+    script = ('globals\nendglobals\nfunction F takes nothing returns nothing\n'
+              '    call DestroyEffect(AddSpecialEffect("Abilities\\A\\Loop.mdl", 0, 0))\n'
+              '    call DestroyEffect(AddSpecialEffectTarget("Abilities\\A\\Burst.mdl", null, "origin"))\n'
+              'endfunction\n')
+    known = {"Abilities\\A\\Loop.mdl": ["Birth", "Stand", "Death"], "Abilities\\A\\Burst.mdl": ["Birth"]}
+    hits = [h for h in lint(script, known.get) if h["rule"] == "effect_death"]
+    assert len(hits) == 1 and hits[0]["line"] == 4 and "Loop.mdl" in hits[0]["message"]
+    assert not [h for h in lint(script) if h["rule"] == "effect_death"]

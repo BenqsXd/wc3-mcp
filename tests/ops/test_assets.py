@@ -173,3 +173,18 @@ def test_model_errors(tmp_path, storage, dest, ops, code):
     with pytest.raises(ToolError) as e:
         assets.asset_edit(FOOTMAN_MODEL, {"file": str(tmp_path / dest["file"])}, ops, no_maps, storage)
     assert e.value.code == code
+
+
+def test_a_game_path_as_scripts_write_it_finds_the_file(storage):
+    facts = assets.asset_info({"game": "Units\\Human\\Footman\\Footman.mdl"}, no_maps, storage)
+    assert facts["model_name"] == "Footman" and facts["drawn_by"]["geometry"] == "geosets"
+
+
+def test_model_tracks_and_blend_modes(storage):
+    star = assets.asset_info({"game": "Abilities\\Spells\\NightElf\\Starfall\\StarfallTarget.mdl"}, no_maps, storage,
+                             "tracks")
+    assert star["drawn_by"]["material_blend"] and len(star["tracks"]) == len(star["sequences"])
+    birth = star["tracks"][0]
+    assert birth["duration"] > 0 and (birth["moves"] or birth["visibility"] or birth["events"])
+    assert all(0 <= m["lowest_at"] <= birth["duration"] for m in birth["moves"])
+    assert "tracks" not in assets.asset_info(FOOTMAN_MODEL, no_maps, storage)

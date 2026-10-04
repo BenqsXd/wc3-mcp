@@ -318,7 +318,8 @@ class Game:
     def test(self, map_path, timeout: float = 240, results: list[str] | None = None, close: bool = True,
              screenshot: bool = False, wait: bool = True, meta: dict | None = None, shots: int = 0,
              shot_every: float = 3.0, login: str = "auto", login_wait: float = USER_LOGIN_WAIT,
-             started_file: str | None = None, loading_shot: bool = False, dialog_file: str | None = None) -> dict:
+             started_file: str | None = None, loading_shot: bool = False, dialog_file: str | None = None,
+             shots_from: float = 0, shot_file: str | None = None) -> dict:
         """Run the map, blocking until it ends. wait=False instead runs it in a background thread and returns at
         once; `status()` then reports the run and holds its result when it ends. login says what a Battle.net login
         screen gets (LOGIN_MODES); started_file is a result file the map writes the moment it runs (the probe's)."""
@@ -337,7 +338,8 @@ class Game:
                "written": [], "result": None, "error": None, "thread": None, "meta": meta or {}}
         self.run = job
         options = {"shots": shots, "shot_every": shot_every, "login": login, "login_wait": login_wait,
-                   "started_file": started_file, "loading_shot": loading_shot, "dialog_file": dialog_file}
+                   "started_file": started_file, "loading_shot": loading_shot, "dialog_file": dialog_file,
+                   "shots_from": shots_from, "shot_file": shot_file}
         # the run always has its own thread: a waiting call that is interrupted loses only its answer, and the run
         # goes on to finish under game_status
         job["thread"] = threading.Thread(target=self._run, daemon=True,
@@ -405,10 +407,13 @@ class Game:
     def _test(self, job: dict, target: Path, timeout: float, results: list[str] | None, close: bool,
               screenshot: bool, shots: int = 0, shot_every: float = 3.0, login: str = "auto",
               login_wait: float = USER_LOGIN_WAIT, started_file: str | None = None,
-              loading_shot: bool = False, dialog_file: str | None = None) -> dict:
+              loading_shot: bool = False, dialog_file: str | None = None, shots_from: float = 0,
+              shot_file: str | None = None) -> dict:
         wanted = {name: _result_path(name) for name in results or []}
         marker = _result_path(started_file) if started_file else None
         dialog_path, dialog = (_result_path(dialog_file) if dialog_file else None), None
+        # the file the map rewrites to ask for a picture now (the probe's ProbeScreenshot)
+        shot_path, shot_seen, named = (_result_path(shot_file) if shot_file else None), None, []
         digest = hashlib.sha256(target.read_bytes()).hexdigest() if target.is_file() else str(target)
         waiting, self.waiting = self.waiting, None
         attached = bool(waiting and waiting[0].poll() is None and waiting[2:] == (digest, sorted(wanted)))
@@ -429,7 +434,7 @@ class Game:
         if attached:   # the same test again after the user logged in: continue in that game, no new launch
             process, launched_at = waiting[0], waiting[1]
         else:
-            for path in [*wanted.values(), *([marker] if marker else []), *([dialog_path] if dialog_path else [])]:
+            for path in [*wanted.values(), *(q for q in (marker, dialog_path, shot_path) if q)]:
                 path.unlink(missing_ok=True)  # never read a stale result from an earlier run
             process, launched_at = None, started
             if app is not None:   # the app hands the game its session: no login panel (battlenet.py)
@@ -561,7 +566,15 @@ class Game:
                 state, checked_at, focused_at = None, 0.0, 0.0
                 relaunches.append(restart)
                 continue
-            if map_since is not None and len(series) + len(missed) < shots and now - shot_at >= shot_every:
+            if shot_path and map_since is not None and shot_path.exists():
+                asked = dict(line.partition("=")[::2] for line in parse_preload(shot_path.read_text("utf-8", "replace")))
+                if asked.get("count") and asked["count"] != shot_seen:
+                    shot_seen = asked["count"]
+                    image, of = self._screenshot(process.pid)
+                    named.append({"name": asked.get("name", ""), "t": round(now - map_since, 1),
+                                  **({"image": image} if image else {"failed": of})})
+            if (map_since is not None and now - map_since >= shots_from and len(series) + len(missed) < shots
+                    and now - shot_at >= shot_every):
                 shot_at = now
                 image, of = self._screenshot(process.pid)
                 if image:
@@ -584,7 +597,7 @@ class Game:
             if not wanted and map_since is not None and len(series) + len(missed) >= shots:
                 ended = "screenshots_done" if shots else "map_started"
                 break
-            time.sleep(1)
+            time.sleep(0.2 if shot_path and map_since else 1)   # a picture asked for by the map must not wait
         if queue_since:
             grace += time.time() - queue_since
             queued += time.time() - queue_since
@@ -646,7 +659,8 @@ class Game:
             if missed:
                 result["screenshots_failed"] = missed
             result["screenshots_note"] = (
-                f"{len(series)} of {shots} screenshot(s), one every {shot_every:g} s from the moment the map ran "
+                f"{len(series)} of {shots} screenshot(s), one every {shot_every:g} s from "
+                + (f"{shots_from:g} s after " if shots_from else "") + "the moment the map ran "
                 + ("(the probe's start marker)" if marker else "(the game held the map and left its loading screen)")
                 + "; the run ends when its results are written, so a series longer than the test is cut short. "
                   "Move the camera from the map's test code (ProbeCamera) to look at a place"
@@ -654,6 +668,8 @@ class Game:
                    "a capture takes about a second, so an interval shorter than that gets fewer pictures"
                    if shot_times else "")
                 + ("" if map_since is not None else ". The map never started, so there are none"))
+        if named:
+            result["named_screenshots"] = named
         if attached:
             result["continued_game"] = True
         if not attached:
@@ -699,6 +715,13 @@ class Game:
         elif result["missing"]:
             result["hint"] = ("no result file was written: the map script failed (script_validate), the game stayed on "
                               f"a login screen, the map did not get that far before timeout, or {PAUSE_NOTE}")
+        others = [pid for pid in win.processes(EXE_NAME) if pid in before[EXE_NAME]]
+        if result["exited_early"] and map_since is None and others:
+            result["other_games"] = others
+            result["hint"] = (f"the game exited before the map ran while another Warcraft III process was open (pid "
+                              f"{', '.join(map(str, others))}): a second game exits within seconds. That process was "
+                              "not started by this run, so nothing here closes it: it is the user's own game, or one "
+                              "left over from a failed launch (close it in Task Manager)")
         if screenshot:
             shot, of = self._screenshot(process.pid)
             result["screenshot"], result["screenshot_of"] = shot, of

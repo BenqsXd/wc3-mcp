@@ -75,7 +75,92 @@ def info(model: dict) -> dict:
         "ribbon_emitters": len(items(model, "RIBB")), "event_objects": [_text(e["node"]["name"]) for e in items(model, "EVTS")],
         "cameras": [_text(c["name"]) for c in items(model, "CAMS")], "collision_shapes": len(items(model, "CLID")),
         "unknown_chunks": [t for t, value in model["chunks"] if isinstance(value, bytes)],
+        "drawn_by": _drawn_by(model),
     }
+
+
+LAYER_BLEND = ("opaque", "alpha_test", "blend", "additive", "add_alpha", "modulate", "modulate2x")
+PARTICLE_BLEND = ("blend", "additive", "modulate", "modulate2x", "alpha_key")
+ADDS_LIGHT = ("additive", "add_alpha")
+
+
+def _name_of(names: tuple, i: int) -> str:
+    return names[i] if 0 <= i < len(names) else str(i)
+
+
+def _drawn_by(model: dict) -> dict:
+    """What puts pixels on screen and how each part blends: additive parts only add light, so a model made of
+    nothing else barely shows on a bright ground (snow, sand)."""
+    materials = [[_name_of(LAYER_BLEND, layer["filter_mode"]) for layer in m["layers"]] for m in items(model, "MTLS")]
+
+    def blend(material_id: int) -> str:
+        layers = materials[material_id] if 0 <= material_id < len(materials) else []
+        return layers[0] if layers else "opaque"
+
+    geosets = [blend(g["material_id"]) for g in items(model, "GEOS")]
+    emitters = ([{"name": _text(e["node"]["name"]), "kind": "particles", "blend": _name_of(PARTICLE_BLEND, e["filter_mode"])}
+                 for e in items(model, "PRE2")]
+                + [{"name": _text(e["node"]["name"]), "kind": "ribbon", "blend": blend(e["material_id"])}
+                   for e in items(model, "RIBB")]
+                + [{"name": _text(e["node"]["name"]), "kind": "model_emitter", "path": _text(e["path"])}
+                   for e in items(model, "PREM")]
+                + [{"name": _text(e["node"]["name"]), "kind": "popcorn", "path": _text(e["path"])}
+                   for e in items(model, "CORN")])
+    blends = geosets + [e["blend"] for e in emitters if "blend" in e]
+    out = {"material_blend": materials, "geoset_blend": geosets, "emitters": emitters,
+           "geometry": "geosets" if geosets else "emitters only" if emitters else "none"}
+    if blends and all(b in ADDS_LIGHT for b in blends) and not any("path" in e for e in emitters):
+        out["note"] = ("every part is additive: it only adds light, so it barely shows on a bright ground (snow, "
+                       "sand, a white tile) and shows well on a dark one")
+    return out
+
+
+# node chunk -> its visibility track
+VISIBILITY = {"PRE2": "KP2V", "PREM": "KPEV", "RIBB": "KRVS", "LITE": "KLAV", "ATCH": "KATV", "CORN": "KPPV"}
+MOVES_SHOWN = 30
+
+
+def tracks(model: dict) -> list[dict]:
+    """Per sequence, in milliseconds from its start: event object times, when each emitter / light / geoset turns
+    visible or invisible, and which nodes move (with the moment each is lowest - an impact). The timing facts a
+    script needs to land damage or a sound with what the model shows."""
+    out = []
+    for i, s in enumerate(items(model, "SEQS")):
+        start, end = s["interval"]
+
+        def keys(track, start=start, end=end):
+            return [k for k in track["keys"] if start <= k[0] <= end] if track["global_sequence"] < 0 else []
+
+        events = [{"name": _text(e["node"]["name"]), "at": at} for e in items(model, "EVTS")
+                  if (at := [f - start for f in e.get("frames", []) if start <= f <= end])]
+        visibility = []
+        for tag, track_tag in VISIBILITY.items():
+            for obj in items(model, tag):
+                for t in obj["tracks"]:
+                    if t["tag"] == track_tag and (found := keys(t)):
+                        visibility.append({"object": _text(obj["node"]["name"]), "kind": tag,
+                                           "changes": [{"at": k[0] - start, "visible": k[1][0] > 0} for k in found]})
+        for a in items(model, "GEOA"):
+            for t in a["tracks"]:
+                if t["tag"] == "KGAO" and (found := keys(t)):
+                    visibility.append({"object": f"geoset {a['geoset_id']}", "kind": "GEOS",
+                                       "changes": [{"at": k[0] - start, "alpha": round(k[1][0], 2)} for k in found]})
+        moves = []
+        for tag in NODE_TAGS:
+            for obj in items(model, tag):
+                node = _node(obj)
+                for t in node["tracks"]:
+                    found = keys(t) if t["tag"] == "KGTR" else []
+                    zs = [k[1][2] for k in found]
+                    if any(abs(a - b) > 1 for k in found for a, b in zip(k[1], found[0][1])):
+                        moves.append({"node": _text(node["name"]), "keys": len(found), "from": found[0][0] - start,
+                                      "to": found[-1][0] - start, "lowest_at": found[zs.index(min(zs))][0] - start,
+                                      "z": [round(min(zs), 1), round(max(zs), 1)]})
+        moves.sort(key=lambda m: m["z"][0] - m["z"][1])
+        out.append({"index": i, "name": _text(s["name"]), "duration": end - start, "events": events,
+                    "visibility": visibility, "moves": moves[:MOVES_SHOWN],
+                    **({"moves_left_out": len(moves) - MOVES_SHOWN} if len(moves) > MOVES_SHOWN else {})})
+    return out
 
 
 # ---- edits -----------------------------------------------------------------------------------------------------

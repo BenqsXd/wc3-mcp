@@ -223,6 +223,17 @@ PROBES (a throwaway copy of the map, so the map itself never gets test triggers)
                                                it from probe_functions code when a long game has its answer,
                                                with probe_seconds set past the longest game (probe_script is
                                                skipped when it has not started yet)
+    ProbeMark(name)                            notes the game time of a moment -> probe.marks [{name, time}], each
+                                               with nearest_screenshot of the series and off_by seconds (the
+                                               series runs on real time, which drifts from game time)
+    ProbeScreenshot(name)                      ProbeMark plus a picture taken now: named_screenshots [{name, t,
+                                               file}], and the mark carries screenshot. The run sees the request
+                                               within 0.2 s and a capture takes about a second, so call it when
+                                               the thing to see starts, and again for a later stage. For an
+                                               effect shorter than a second, also check the result by numbers
+    ProbeLearn(hero, ability)                  SelectHeroSkill that returns whether a rank was learned and
+                                               reports why not (no skill point: a hero at level 1 has one, so
+                                               SetHeroLevel before a second skill)
     ProbeCountEvent(EVENT_..., "name")         counts a player-unit event from then on
     ProbeEventCount("name")                    reads the count
     ProbeCamera(x, y, distance, seconds)       looks at a place and waits there, for the screenshot series
@@ -232,13 +243,18 @@ PROBES (a throwaway copy of the map, so the map itself never gets test triggers)
   normal; a steady climb of one per missile or per tick is a leak (pool dummy units instead of CreateUnit/RemoveUnit:
   118 handles over 120 missiles fell to 2 over 60). The report is written at the end, so PreloadGenClear in probe
   code no longer loses ProbeReport lines.
+  The game has one Preload buffer. The probe's 30 s partial dump, its dialog marker and ProbeScreenshot each clear
+  it, so Preload lines a map collects over time for a result file of its own are lost: keep such lines in
+  variables and write the file in one go (PreloadGenClear, PreloadGenStart, the lines, PreloadGenEnd). One Preload
+  string holds about 259 characters.
 
 BACKGROUND AND PICTURES
   wait=false starts the run and returns at once; game_status then reports it under run, and its whole result under
   run.result when it ends. A second run while one is going is refused (run_active); game_close ends it.
   screenshot=true saves one PNG at the end; screenshots=N with screenshot_every seconds saves a series that starts
   the moment the map runs (a probe writes a start marker; map_started_after says when), which is how scenery gets
-  looked at in the game. A frame that could not be taken is listed in screenshots_failed with the reason. The run
+  looked at in the game. screenshots_from=S starts the series S seconds after the map runs (skip a pick phase or a
+  setup). A frame that could not be taken is listed in screenshots_failed with the reason. The run
   ends when its results are written, so put ProbeCamera stops before the last ProbeReport.
   loading_screenshot=true saves one PNG of the map's own loading screen, taken when its bar is full and it shows
   PRESS ANY KEY (before the run presses the key): loading_screenshot is the file, or loading_screenshot_failed says
@@ -254,6 +270,13 @@ LONG RUNS
   player id, or the ids of a force. screenshot_times gives the game time of each saved picture.
   run.partial keeps the last 100 report lines and messages (game_status tail=N, grep="regex" to pick others;
   left_out counts the rest).
+  brief=true (game_status and game_test) answers with the short result: state, seconds, the result files' lines,
+  missing, exited_early, crash, hint, the probe's checks, marks and last `tail` report lines (matching grep), and
+  screenshots as {dir, prefix, count, times} (file i is <dir>/<prefix><i>.png). No logs, no message log, no
+  per-player counts. Poll a long run with game_status(wait=300, brief=true); ask without brief once when the
+  messages matter.
+  other_games (with a hint) names Warcraft III processes that were open before the run when the game exits before
+  the map runs: a second game exits within seconds, and game_close only closes games this server started.
   probe.user_input lists what a person did in the game during the run: chat lines ("<player id>:<text>") and a count
   of mouse clicks by human players (JASS maps). A failed check next to it may be the person's doing: keep hands off
   the game window during probes.
@@ -707,7 +730,8 @@ def help_text(topic: str | None = None) -> dict:
 
 
 page("objdata_edit", """
-objdata_edit(path, kind, ops | ops_file, quiet=[]) - one all-or-nothing batch of object changes.
+objdata_edit(path, kind, ops | ops_file, quiet=[], previous_ops_file, apply) - one all-or-nothing batch of object
+changes.
 
 OPS
   {"op": "create", "base": "hfoo", "set": {"Name": "Guard", "HP": 500}}
@@ -728,4 +752,24 @@ FIELDS
   "step": s} or {"from": a, "to": b} (optional "levels"); a text field takes {"template": "... {Htb1} ...
   {level} ..."} filled per level from the object's own values. A button position below 0 (arpy -11) puts the
   button off the card. quiet=["extended_levels"] shortens that block of the result to a count.
+  An unknown field answers with did_you_mean: close raw codes and fields whose name holds the word.
+  A delete followed by a create of the same id in one batch rebuilds the object (from another base too).
+
+A GENERATOR RUN AGAIN (previous_ops_file)
+  A generator writes full create ops for a fresh map; applied again to a built map they would overwrite fields that
+  later passes changed. Keep the ops file of the previous run and pass it as previous_ops_file: only the difference
+  between the two runs is applied.
+    new id                          upsert with all its fields            diff.created
+    base changed                    delete + create                       diff.rebuilt
+    field value changed or added    set of those fields only              diff.changed {id: [fields]}
+    nothing changed                 no op                                 diff.unchanged (count)
+    id gone from the ops            left in the map, listed               diff.no_longer_in_ops
+    field gone from an op           left in the map, listed               diff.dropped_fields {id: [fields]}
+  Every create / upsert / set op needs an id. A "delete" right before a "create" of the same id (the rebuild
+  pattern) counts as that create. apply=false returns the reduced ops (ops) and the diff without touching the map.
+
+WARNINGS WORTH READING
+  Levels on a copy of an item ability (base AI..): a stat bonus of an item ability is applied when the ability is
+  added, and a level set from script did not change the bonus of an AIsx copy in the game. Add one ability per
+  value, or set the stat with a unit native (BlzSetUnitAttackCooldown, BlzSetUnitArmor, BlzSetUnitMaxHP).
 """)

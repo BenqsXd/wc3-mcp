@@ -765,3 +765,30 @@ def test_game_close_answers_with_a_finished_run_result(monkeypatch, tmp_path):
     out = payload(call("game_close", {}))
     json.dumps(out)
     assert out["run"]["state"] == "done" and all(isinstance(s, str) for s in out["run"]["result"]["screenshots"])
+
+
+def test_a_brief_result_drops_logs_and_messages_and_sums_up_the_screenshots(tmp_path):
+    result = {"seconds": 90.0, "pid": 7, "results": {"x.txt": ["a=1"]}, "missing": [], "exited_early": False,
+              "crash": None, "log": ["x"] * 200, "focus": {}, "screenshots": [str(tmp_path / f"game-7-{i}.png") for i in range(3)],
+              "screenshot_times": [0.0, 3.1, 6.0],
+              "probe": {"probe": "ok", "player0.units": 5, "messages": ["m"] * 50, "message_to": ["all"] * 50,
+                        "reports": [f"r{i}" for i in range(300)], "checks": {"a": True},
+                        "marks": [{"name": "cast", "time": 3.0}]}}
+    server._place_marks(result)
+    assert result["probe"]["marks"][0]["nearest_screenshot"].endswith("game-7-1.png")
+    out = server._brief_result(result, 5, None)
+    assert "log" not in out and "focus" not in out and out["results"] == {"x.txt": ["a=1"]}
+    assert out["screenshots"] == {"dir": str(tmp_path), "prefix": "game-7-", "count": 3, "times": [0.0, 3.1, 6.0]}
+    assert "messages" not in out["probe"] and "player0.units" not in out["probe"]
+    assert out["probe"]["reports"] == ["r295", "r296", "r297", "r298", "r299"] and out["probe"]["checks"] == {"a": True}
+    assert len(result["probe"]["reports"]) == 300   # the full result is untouched
+
+
+def test_a_named_screenshot_is_saved_and_tied_to_its_mark(monkeypatch, tmp_path):
+    monkeypatch.setenv("WC3MCP_HOME", str(tmp_path))
+    monkeypatch.setenv("WC3MCP_DOCUMENTS", str(tmp_path))
+    done = server._finish_test({"pid": 9, "named_screenshots": [{"name": "cast burst", "t": 4.0, "image": b"png"}],
+                                "results": {server.probe_ops.REPORT: ["probe=ok", "mark=4.000:cast burst"]}}, True)
+    shot = done["named_screenshots"][0]
+    assert shot["file"].endswith("game-9-0-cast_burst.png") and "image" not in shot
+    assert done["probe"]["marks"] == [{"name": "cast burst", "time": 4.0, "screenshot": shot["file"]}]

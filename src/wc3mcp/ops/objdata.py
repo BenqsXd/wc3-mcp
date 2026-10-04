@@ -304,8 +304,10 @@ def _field(catalog, kind: str, base: str, key, path: str):
             raise ToolError("ambiguous_field", f"{path}: {key!r} matches several fields", hint="use the raw code",
                             candidates=[f"{f.id} ({f.display_name})" for f in candidates][:20])
         if not candidates:
+            close = catalog.similar_fields(kind, key) if isinstance(key, str) else []
             raise ToolError("unknown_field", f"{path}: no {kind} field {key!r}",
-                            hint="objdata_get or data_get lists raw codes and field names")
+                            hint="objdata_get or data_get lists raw codes and field names",
+                            **({"did_you_mean": close} if close else {}))
         meta = candidates[0]
     if not catalog.applies(kind, base, meta):
         raise ToolError("field_not_applicable", f"{path}: field {meta.id} does not apply to {base}")
@@ -572,6 +574,57 @@ def _remove(files, custom: bool, key: bytes) -> None:
             om.original = [e for e in om.original if e.base_id != key]
 
 
+def changed_ops(ops: list, previous: list) -> tuple[list, dict]:
+    """A generator's ops against the ops of its previous run: only what the generator changed since, as ops for a
+    map that already holds the previous run. Fields the ops never named, and fields whose value the generator left
+    as it was, are not written - so what later passes changed in the map stays."""
+    def state(batch: list, what: str) -> tuple[dict, set, list]:
+        objects, deleted, other = {}, set(), []
+        for i, op in enumerate(batch):
+            action = op.get("op") if isinstance(op, dict) else None
+            if action in ("create", "upsert", "set"):
+                if not isinstance(op.get("id"), str):
+                    raise ToolError("bad_op", f"{what}[{i}]: comparing two runs needs an id on every op", hint=_HINT)
+                entry = objects.setdefault(op["id"], {"base": None, "set": {}})
+                entry["base"] = op.get("base", entry["base"])
+                entry["set"].update(op.get("set") or {})
+                deleted.discard(op["id"])
+            elif action == "delete" and isinstance(op.get("id"), str):
+                objects.pop(op["id"], None)   # delete then create: the generator's way to rebuild from scratch
+                deleted.add(op["id"])
+            else:
+                other.append(op)
+        return objects, deleted, other
+
+    now, deleted, other = state(ops, "ops")
+    was, was_deleted, was_other = state(previous, "previous_ops")
+    out = [op for op in other if op not in was_other]
+    out += [{"op": "delete", "id": oid, "missing_ok": True} for oid in sorted(deleted - was_deleted)]
+    summary = {"created": [], "rebuilt": [], "changed": {}, "unchanged": 0,
+               "no_longer_in_ops": sorted(set(was) - set(now) - deleted), "dropped_fields": {}}
+    for oid, entry in now.items():
+        old = was.get(oid)
+        if old is None:
+            summary["created"].append(oid)
+            out.append({"op": "upsert", "id": oid, **({"base": entry["base"]} if entry["base"] else {}),
+                        "set": entry["set"]})
+        elif entry["base"] and old["base"] and entry["base"] != old["base"]:
+            summary["rebuilt"].append(oid)
+            out += [{"op": "delete", "id": oid, "missing_ok": True},
+                    {"op": "create", "id": oid, "base": entry["base"], "set": entry["set"]}]
+        else:
+            fields = {k: v for k, v in entry["set"].items() if k not in old["set"] or old["set"][k] != v}
+            dropped = sorted(set(old["set"]) - set(entry["set"]))
+            if dropped:
+                summary["dropped_fields"][oid] = dropped
+            if fields:
+                summary["changed"][oid] = sorted(fields)
+                out.append({"op": "set", "id": oid, "set": fields})
+            else:
+                summary["unchanged"] += 1
+    return out, summary
+
+
 def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = None) -> dict:
     quiet = set(quiet or [])
     if quiet - QUIET:
@@ -685,6 +738,9 @@ def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = No
                     continue
                 custom, base_b, new_b = _locate(files, base_ids, kind, op.get("id"), path)
                 _remove(files, custom, new_b if custom else base_b)
+                if custom:   # the id is free again: a later create in the same batch may rebuild it from another base
+                    taken.discard(op["id"])
+                    touched.discard(op["id"])
             else:
                 raise ToolError("bad_op", f"{path}: unknown op {action!r}", hint=_HINT)
         except ToolError as e:
@@ -709,6 +765,14 @@ def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = No
         for oid in sorted(o for o in touched if isinstance(o, str)):
             entries = _entries(files, oid)
             base_id = entries[0][2].base_id.decode("latin-1") if entries else oid
+            levels = _merged(entries).get(("alev", 0))
+            if (levels is not None and int(levels.value) > 1 and base_id.startswith("AI")
+                    and int(_number(catalog.field(kind, base_id, "alev")) or 1) == 1):
+                warnings.append(f"{oid}: {int(levels.value)} levels on a copy of the item ability {base_id}. A stat "
+                                "bonus of an item ability is applied when the ability is added: a level set from "
+                                "script (SetUnitAbilityLevel) did not change the bonus of an AIsx copy in the game. "
+                                "Check it in a run, add one ability per value, or use the unit natives "
+                                "(BlzSetUnitAttackCooldown, BlzSetUnitArmor, BlzSetUnitMaxHP)")
             hidden = channel_hidden_ranks(catalog, base_id, _merged(entries))
             if hidden:
                 warnings.append(f"{oid}: Ncl3 (Options) has no visible bit at rank(s) {_ranks(hidden)}, so the ability "

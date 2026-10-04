@@ -83,6 +83,25 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.14
+
+- **`brief=true`** on `game_status` and `game_test`: the short result (state, result files, checks, last report
+  lines, screenshots as dir / prefix / count / times) without logs and the message log. A poll costs a few hundred
+  tokens instead of thousands.
+- **`ProbeScreenshot("name")`** takes a picture at the moment the probe code asks for it; **`ProbeMark("name")`**
+  notes the game time of a moment and the result names the nearest picture of the series;
+  **`screenshots_from=S`** starts a series late. **`ProbeLearn(hero, ability)`** says why a hero learned nothing.
+- **`asset_info`**: `drawn_by` lists how each part of a model blends and says when a model is additive only (it
+  barely shows on snow); `detail="tracks"` gives, per sequence, event times, when emitters and geosets turn
+  visible, and when moving nodes are lowest - the moment of an impact. Game paths work as scripts write them
+  (`.mdl` for `.mdx`, `.blp` for `.dds`, either slash).
+- **`objdata_edit previous_ops_file`** applies only what a generator changed since its previous run, so fields
+  later passes set in the map stay. A batch can delete an id and create it again; an unknown field answers with
+  `did_you_mean`; levels on a copy of an item ability get a warning.
+- **`script_validate lint=true`**: rule `effect_death` for `DestroyEffect(AddSpecialEffect(...))` of a model
+  that has a Stand and a Death sequence (it shows nothing).
+- **`game_test`** names another Warcraft III process (`other_games`) when the game exits before the map runs.
+
 ## What's new in 1.13
 
 - **`ProbeFinish()`** writes a probe's report at once, so a game of unknown length ends its own run instead of

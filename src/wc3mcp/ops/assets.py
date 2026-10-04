@@ -25,6 +25,16 @@ def _bad(path: str, message: str, code: str = "bad_value") -> ToolError:
 
 
 # ---- sources and destinations ----------------------------------------------------------------------------------
+# object data and scripts name a model .mdl and a texture .blp whatever the file on disk is; the game resolves these
+SAME_FILE = {"mdl": ("mdx",), "mdx": ("mdl",), "blp": ("dds", "tga"), "tga": ("dds", "blp"), "dds": ("blp", "tga")}
+
+
+def _resolve(storage, path: str) -> str | None:
+    stem, dot, ext = path.rpartition(".")
+    names = [path] + [f"{stem}.{e}" for e in SAME_FILE.get(ext.lower(), ()) if dot]
+    return next((hit for name in names if (hit := storage.resolve(name))), None)
+
+
 def load(source, project_for, storage) -> tuple[bytes, str]:
     """(bytes, name) of {"file": path}, {"map": path, "name": name} or {"game": path}."""
     if not isinstance(source, dict) or len(source.keys() - {"name"}) != 1:
@@ -40,7 +50,7 @@ def load(source, project_for, storage) -> tuple[bytes, str]:
         return project_for(source["map"]).read(source["name"]), source["name"]
     if "game" in source:
         path = str(source["game"])
-        full = path if ":" in path else storage.resolve(path.replace("\\", "/"))
+        full = path if ":" in path else _resolve(storage, path.replace("\\", "/"))
         data = storage.read(full) if full else None
         if data is None:
             raise _bad("source.game", f"no game data file {path!r}", "not_found")
@@ -200,11 +210,12 @@ def apply(image: Image.Image, ops: list, project_for, storage) -> Image.Image:
 
 
 # ---- tools -----------------------------------------------------------------------------------------------------
-def asset_info(source, project_for, storage) -> dict:
+def asset_info(source, project_for, storage, detail: str = "summary") -> dict:
     data, name = load(source, project_for, storage)
     if models.is_model(data, name):
+        model = models.read(data, name)
         return {"name": name, "size": len(data), "format": "mdx" if data[:4] == b"MDLX" else "mdl",
-                **models.info(models.read(data, name))}
+                **models.info(model), **({"tracks": models.tracks(model)} if detail == "tracks" else {})}
     try:
         return {"name": name, "size": len(data), **texture.info(data, name)}
     except FormatError as e:

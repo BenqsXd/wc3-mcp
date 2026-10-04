@@ -15,6 +15,7 @@ NAME = "wc3mcpProbe"
 REPORT = "wc3mcp\\probe.txt"
 PARTIAL = "wc3mcp\\partial.txt"   # the lines reported so far, rewritten every 30 s (JASS maps)
 STARTED = "wc3mcp\\started.txt"   # written the moment the map runs: game_test starts its screenshot series there
+SHOT = "wc3mcp\\shot.txt"   # written by ProbeScreenshot(name): game_test takes a picture when it changes
 DIALOG = "wc3mcp\\dialog.txt"   # written the moment the map shows a dialog (a single-player game then pauses)
 MAX_MESSAGES = 50
 # JASS maps: the probe copy routes BJDebugMsg and the text display functions through these, which keep the text for
@@ -33,6 +34,7 @@ JASS_GLOBALS = """    string array wc3mcpProbe_messages
     real wc3mcpProbe_dialogFirst = 0.0
     boolean wc3mcpProbe_userRan = false
     boolean wc3mcpProbe_written = false
+    integer wc3mcpProbe_shots = 0
 """
 JASS_MESSAGES = """
 function wc3mcpProbe_Line takes string s returns nothing
@@ -378,6 +380,8 @@ end
 # ProbeStartAI(player, "human.ai") gives an empty slot a melee AI so a run has an opponent, and
 # ProbeGold(player, gold, lumber) pays for what the test wants built;
 # ProbeFinish() writes the report at once (a long game that ends by itself), ProbeBool(b) is "true"/"false";
+# ProbeMark(name) notes the game time of a moment, ProbeScreenshot(name) also has game_test take a picture then,
+# ProbeLearn(hero, abil) is SelectHeroSkill that reports why nothing was learned;
 # ProbeCountEvent(playerunitevent, name) counts that event from then on, ProbeEventCount(name) reads the count;
 # probe_functions (the caller's own functions) come right before Trig_wc3mcpProbe_User
 JASS_USER = """function wc3mcpProbe_Counted takes nothing returns nothing
@@ -442,6 +446,37 @@ function ProbeBool takes boolean b returns string
         return "true"
     endif
     return "false"
+endfunction
+
+// the game time of a named moment, in the result under marks (with the nearest picture of a screenshot series)
+function ProbeMark takes string name returns nothing
+    call wc3mcpProbe_Line("mark=" + R2S(TimerGetElapsed(wc3mcpProbe_clock)) + ":" + name)
+endfunction
+
+// asks game_test for a picture now (it watches this file), and marks the moment
+function ProbeScreenshot takes string name returns nothing
+    set wc3mcpProbe_shots = wc3mcpProbe_shots + 1
+    call ProbeMark(name)
+    call PreloadGenClear()
+    call PreloadGenStart()
+    call Preload("count=" + I2S(wc3mcpProbe_shots))
+    call Preload("name=" + name)
+    call PreloadGenEnd("{shot}")
+endfunction
+
+// SelectHeroSkill that says why nothing was learned (it fails without a word)
+function ProbeLearn takes unit hero, integer abil returns boolean
+    local integer before = GetUnitAbilityLevel(hero, abil)
+    if GetHeroSkillPoints(hero) <= 0 then
+        call ProbeReport("ProbeLearn " + GetUnitName(hero) + ": no skill point (a hero has one a level: SetHeroLevel first)")
+        return false
+    endif
+    call SelectHeroSkill(hero, abil)
+    if GetUnitAbilityLevel(hero, abil) > before then
+        return true
+    endif
+    call ProbeReport("ProbeLearn " + GetUnitName(hero) + ": not learned - the ability is not in the hero's list, is at its top rank, or its next rank needs a higher hero level")
+    return false
 endfunction
 
 // writes the report now instead of at probe_seconds (probe_script is skipped when it has not started yet)
@@ -510,6 +545,34 @@ function ProbeBool(b)
     return tostring(b and true or false)
 end
 
+wc3mcpProbe_shots = 0
+
+function ProbeMark(name)
+    wc3mcpProbe_Line("mark=" .. string.format("%.3f", wc3mcpProbe_clock and TimerGetElapsed(wc3mcpProbe_clock) or 0) .. ":" .. tostring(name))
+end
+
+function ProbeScreenshot(name)
+    wc3mcpProbe_shots = wc3mcpProbe_shots + 1
+    ProbeMark(name)
+    PreloadGenClear()
+    PreloadGenStart()
+    Preload("count=" .. wc3mcpProbe_shots)
+    Preload("name=" .. tostring(name))
+    PreloadGenEnd("{shot}")
+end
+
+function ProbeLearn(hero, abil)
+    local before = GetUnitAbilityLevel(hero, abil)
+    if GetHeroSkillPoints(hero) <= 0 then
+        ProbeReport("ProbeLearn " .. GetUnitName(hero) .. ": no skill point (a hero has one a level: SetHeroLevel first)")
+        return false
+    end
+    SelectHeroSkill(hero, abil)
+    if GetUnitAbilityLevel(hero, abil) > before then return true end
+    ProbeReport("ProbeLearn " .. GetUnitName(hero) .. ": not learned - the ability is not in the hero's list, is at its top rank, or its next rank needs a higher hero level")
+    return false
+end
+
 function ProbeFinish()
     wc3mcpProbe_userRan = true
     Trig_{name}_Actions()
@@ -553,7 +616,8 @@ def script(language: str, seconds: float, user: str | None = None, functions: st
     init_fn = "" if init is None else (f"function Trig_{NAME}_Init()\n{_indent(init)}end\n\n" if lua else
                                        f"function Trig_{NAME}_Init takes nothing returns nothing\n{_indent(init)}"
                                        "endfunction\n\n")
-    return ((LUA_USER if lua else JASS_USER).replace("{name}", NAME).replace("{functions}", own)
+    return ((LUA_USER if lua else JASS_USER).replace("{name}", NAME).replace("{shot}", SHOT.replace("\\", "\\\\"))
+            .replace("{functions}", own)
             .replace("{init}", init_fn).replace("{body}", _indent(user)) + text)
 
 
@@ -659,6 +723,9 @@ def parse(lines: list[str]) -> dict:
             out.setdefault("ai", []).append(value)
         elif key == "script.started" and sep:   # game seconds at which the probe script began
             out["script_started"] = float(value)
+        elif key == "mark" and sep:   # "<game seconds>:<name>" of ProbeMark / ProbeScreenshot
+            at, _, name = value.partition(":")
+            out.setdefault("marks", []).append({"name": name, "time": round(float(at), 2)})
         elif key == "check" and sep:
             verdict, _, name = value.partition(":")
             out.setdefault("checks", {})[name] = verdict == "pass"

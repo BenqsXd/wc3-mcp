@@ -710,17 +710,28 @@ def objdata_get(path: str, kind: ObjectKind, id: str | list[str], fields: list[s
 
 @_tool
 def objdata_edit(path: str, kind: ObjectKind, ops: list[dict] | None = None, balance: str | None = "Custom_V1",
-                 ops_file: str | None = None, quiet: list[str] | None = None) -> dict:
+                 ops_file: str | None = None, quiet: list[str] | None = None,
+                 previous_ops_file: str | None = None, apply: bool = True) -> dict:
     """Create and change objects in one all-or-nothing batch. Ops: {"op": "create", "base": "hfoo", "set":
     {"Name": "Guard", "HP": 500}} (id optional; a custom base copies it with all its changes), {"op": "set", "id":
     "h000", "set": {...}} (per-level fields take level keys), {"op": "reset", "id", "fields"}, {"op": "delete", "id"}
-    (missing_ok), {"op": "upsert", "id", "base", "set"} (creates or sets: result upserted; renamed [{id, was, now}]
-    when it changed a name; expect_new=true refuses a taken id, code exists). Fields: raw codes, field names or display
-    names. A per-level field also takes a list, {"from", "step"} or {"from", "to"}; a text field takes {"template":
-    "... {Htb1} ... {level} ..."}. ops_file reads the ops from a local JSON file; quiet=["extended_levels"] shortens
-    that block. wc3_help("objdata_edit") has the details."""
-    return objdata_ops.objdata_edit(_project(path), _catalog("enUS", balance, True), kind, _ops(ops, ops_file),
-                                    quiet)
+    (missing_ok), {"op": "upsert", "id", "base", "set"} (creates or sets; expect_new=true refuses a taken id).
+    Fields: raw codes, field names or display names. A per-level field also takes a list, {"from", "step"} or
+    {"from", "to"}; a text field takes {"template": "... {Htb1} ... {level} ..."}. ops_file reads the ops from a
+    local JSON file. previous_ops_file (a generator's previous run) applies only what changed since, so fields
+    later passes set in the map stay (result diff; apply=false returns the reduced ops instead).
+    quiet=["extended_levels"] shortens that block. wc3_help("objdata_edit") has the details."""
+    batch = _ops(ops, ops_file)
+    if previous_ops_file is None:
+        if not apply:
+            raise ToolError("bad_value", "apply=false goes with previous_ops_file", path="apply")
+        return objdata_ops.objdata_edit(_project(path), _catalog("enUS", balance, True), kind, batch, quiet)
+    batch, diff = objdata_ops.changed_ops(batch, _ops(None, previous_ops_file))
+    if not apply:
+        return {"applied": False, "ops": batch, "diff": diff}
+    out = objdata_ops.objdata_edit(_project(path), _catalog("enUS", balance, True), kind, batch, quiet) if batch \
+        else {"changed": False, "created": [], "warnings": []}
+    return {**out, "diff": diff}
 
 
 @_tool
@@ -1012,8 +1023,8 @@ def script_validate(path: str, lint: bool = False) -> dict:
     and boolexprs, event data read after a TriggerSleepAction, a trigger with an action but no event, a loop without
     exitwhen or over the operation limit, a handle used after it was destroyed, a local or parameter named after a
     JASS type, game state changed inside a GetLocalPlayer() block (a multiplayer desync), real literals of 2^31 or
-    more (the game does not hold them), R2I of a product without + 0.5, and string escapes JASS does not know. They are heuristics, so
-    each names what to check; a firing rule is usually a game run saved."""
+    more, R2I of a product without + 0.5, string escapes JASS does not know, and an effect destroyed at once whose
+    model shows nothing that way. They are heuristics: each names what to check."""
     return script_ops.script_validate(_project(path), _catalog("enUS", "Custom_V1", True), lint=lint)
 
 
@@ -1034,11 +1045,14 @@ def _storage_for_assets():
 
 
 @_tool
-def asset_info(source: dict) -> dict:
+def asset_info(source: dict, detail: Literal["summary", "tracks"] = "summary") -> dict:
     """Facts about a texture (BLP1, DDS, TGA, PNG, JPEG: format, size, mip levels, compression, alpha) or a model (MDX,
-    MDL: sequences with intervals, textures, geosets, bones, attachments, emitters, extent). source is {"file": path},
-    {"map": open map path, "name": file in the map} or {"game": game data path}."""
-    return assets_ops.asset_info(source, _project, _storage_for_assets())
+    MDL: sequences with intervals, textures, geosets, bones, attachments, emitters, extent; drawn_by says how each
+    part blends, with a note when the model is additive only and so barely shows on snow). detail="tracks" adds, per
+    sequence in milliseconds from its start, the event object times, when emitters and geosets turn visible, and
+    which nodes move with the moment each is lowest (an impact). source is {"file": path}, {"map": open map path,
+    "name": file in the map} or {"game": game data path} (.mdl finds the .mdx, .blp the .dds; either slash)."""
+    return assets_ops.asset_info(source, _project, _storage_for_assets(), detail)
 
 
 @_tool
@@ -1256,15 +1270,17 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
               probe_functions: str | None = None, wait: bool = True, screenshots: int = 0,
               screenshot_every: float = 3.0, login: Literal["auto", "battlenet", "wait", "stop"] = "auto",
               login_wait: float = 120, probe_init: str | None = None,
-              probe_functions_file: str | None = None, loading_screenshot: bool = False) -> dict:
+              probe_functions_file: str | None = None, loading_screenshot: bool = False,
+              screenshots_from: float = 0, brief: bool = False) -> dict:
     """Run a map in Warcraft III (windowed) and collect what it reports. results: files the map writes with
     PreloadGenEnd; the run ends when all exist. probe=true runs a throwaway copy that reports the state at
     probe_seconds; probe_script / probe_functions / probe_init (at map init) with ProbeReport, ProbeExpect,
-    ProbeCountEvent, ProbeCamera and ProbeSkipDialogs make it a test (*_file variants read local files). Protected maps
-    can be probed too. screenshots=N / screenshot_every take pictures once the map runs; loading_screenshot=true one of
-    the loading screen. wait=false runs in the background: game_status shows progress, partial reports and the
-    result. login="auto" (default) starts the game through the Battle.net app, so no login screen and no credentials;
-    "wait"/"stop" start it directly. wc3_help("game_test") has the helpers, login, loading-screen keys and pitfalls."""
+    ProbeScreenshot, ProbeCamera and ProbeSkipDialogs make it a test (*_file variants read local files). Protected maps
+    can be probed too. screenshots=N / screenshot_every / screenshots_from take pictures once the map runs;
+    loading_screenshot=true one of the loading screen. wait=false runs in the background: game_status shows progress
+    and the result. brief=true answers with the short result (no logs, no messages). login="auto" (default) starts
+    the game through the Battle.net app, so no login screen; "wait"/"stop" start it directly. wc3_help("game_test")
+    has the helpers, login, loading-screen keys and pitfalls."""
     if probe_functions is not None and probe_functions_file is not None:
         raise ToolError("bad_value", "give probe_functions or probe_functions_file, not both")
     if probe_functions is not None and "\n" not in probe_functions and probe_functions.strip().lower().endswith(
@@ -1300,10 +1316,12 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
                                     shot_every=screenshot_every, login=login, login_wait=login_wait,
                                     started_file=probe_ops.STARTED if probe else None,
                                     dialog_file=probe_ops.DIALOG if probe else None,
-                                    loading_shot=loading_screenshot)
+                                    loading_shot=loading_screenshot, shots_from=screenshots_from,
+                                    shot_file=probe_ops.SHOT if probe else None)
     if wait and desktop_game.GAME.run is not None:
         desktop_game.GAME.run["finished"] = True   # game_status must not finish this result a second time
-    return {**(_finish_test(result, probe) if wait else result), **extra}
+    out = {**(_finish_test(result, probe) if wait else result), **extra}
+    return _brief_result(out, 100, None) if brief and wait else out
 
 
 @_tool
@@ -1384,6 +1402,13 @@ def _finish_test(result: dict, probe: bool) -> dict:
         shot.parent.mkdir(parents=True, exist_ok=True)
         shot.write_bytes(result["loading_screenshot"])
         result["loading_screenshot"] = str(shot)
+    for i, shot in enumerate(result.get("named_screenshots") or []):   # asked for by ProbeScreenshot(name)
+        if "image" in shot:
+            name = re.sub(r"[^A-Za-z0-9_.-]+", "_", shot["name"])[:40] or "shot"
+            file = config.home() / "screenshots" / f"game-{result['pid']}-{i}-{name}.png"
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(shot.pop("image"))
+            shot["file"] = str(file)
     if probe:
         lines = result["results"].pop(probe_ops.REPORT, None)
         result["probe"] = probe_ops.parse(lines) if lines is not None else None
@@ -1401,10 +1426,47 @@ def _finish_test(result: dict, probe: bool) -> dict:
                     if len(late.get(key) or []) > len(result["probe"].get(key) or []):
                         result["probe"][key] = late[key]
                         result["probe"]["merged_from_partial"] = True
+        _place_marks(result)
         if result["probe"] is None and not result.get("login_required") and not result.get("stuck_at"):
             result["hint"] = ("the probed copy never reported: the game did not reach the map, it ended before "
                               f"probe_seconds, or {desktop_game.PAUSE_NOTE}")
     return result
+
+
+def _place_marks(result: dict) -> None:
+    """Each ProbeMark gets the picture that shows it: the one ProbeScreenshot asked for under that name, else the
+    nearest of the series (times of the series are real seconds, a mark's are game seconds: they drift apart)."""
+    marks = (result.get("probe") or {}).get("marks") or []
+    asked = {shot["name"]: shot["file"] for shot in result.get("named_screenshots") or [] if "file" in shot}
+    series, times = result.get("screenshots") or [], result.get("screenshot_times") or []
+    for mark in marks:
+        if mark["name"] in asked:
+            mark["screenshot"] = asked[mark["name"]]
+        elif times and len(series) == len(times):
+            i = min(range(len(times)), key=lambda k: abs(times[k] - mark["time"]))
+            mark["nearest_screenshot"], mark["off_by"] = series[i], round(times[i] - mark["time"], 1)
+
+
+BRIEF_KEYS = ("seconds", "pid", "results", "missing", "exited_early", "crash", "cancelled", "ended", "hint",
+              "login_required", "stuck_at", "dialog_shown", "map_started_after", "closed", "truncated", "screenshot",
+              "loading_screenshot", "named_screenshots", "screenshots_failed", "probe_note", "other_games", "probe_map")
+
+
+def _brief_result(result: dict, tail: int, grep: str | None) -> dict:
+    """What a caller polls for: the result files, the verdict and where the pictures are - no logs, no message
+    log, no path per picture."""
+    out = {k: result[k] for k in BRIEF_KEYS if k in result}
+    shots = result.get("screenshots")
+    if shots:
+        first = Path(shots[0])
+        out["screenshots"] = {"dir": str(first.parent), "prefix": first.name.rsplit("-", 1)[0] + "-",
+                              "count": len(shots), "times": result.get("screenshot_times")}
+    if result.get("probe"):
+        probe = {k: v for k, v in result["probe"].items()
+                 if k not in ("messages", "message_to") and not k.startswith("player")}
+        out["probe"] = _trim_partial(probe, tail, grep)
+    out["brief"] = True
+    return out
 
 
 def _trim_partial(partial: dict, tail: int, grep: str | None) -> dict:
@@ -1439,13 +1501,15 @@ def _finish_run() -> dict | None:
 
 
 @_tool
-def game_status(tail: int = 100, grep: str | None = None, wait: float = 0) -> dict:
+def game_status(tail: int = 100, grep: str | None = None, wait: float = 0, brief: bool = False) -> dict:
     """Game processes (and which this server launched), their windows and the useful War3Log.txt lines. A game_test
     run started with wait=false is reported under run: while it goes, how long it has taken and which result files
     it has; when it ends, its whole result (probe reports included) under run.result. launcher says what a Play in
     the Battle.net app would start today. A running probe's report so far (run.partial) keeps its last `tail`
     report lines and messages, only those matching the regex `grep` when given. wait=N answers when the run ends or
-    after N seconds (300 at most), whichever is first: a poll without a sleep of your own."""
+    after N seconds (300 at most), whichever is first: a poll without a sleep of your own. brief=true answers with
+    the run only: state, result files, checks, the last `tail` report lines (matching grep) and where the
+    screenshots are - no logs, no message log. Use it for every poll of a long run."""
     end = time.time() + min(max(wait, 0), 300)
     while time.time() < end and (run := desktop_game.GAME.run) and run["thread"] is not None and run["thread"].is_alive():
         time.sleep(1)
@@ -1459,6 +1523,14 @@ def game_status(tail: int = 100, grep: str | None = None, wait: float = 0) -> di
             run["partial"] = _trim_partial(probe_ops.parse(lines), tail, grep)
             run["partial_note"] = ("what the probe reported so far (rewritten every 30 s of game time; JASS maps); "
                                    "game_close ends the run early when this already answers")
+    if brief:
+        if run and "partial" in run:
+            run["partial"].pop("messages", None)
+            run["partial"].pop("message_to", None)
+            run.pop("partial_note", None)
+        if run and isinstance(run.get("result"), dict):
+            run["result"] = _brief_result(run["result"], tail, grep)
+        return {"running": status["running"], **({"run": run} if run else {})}
     return status
 
 
