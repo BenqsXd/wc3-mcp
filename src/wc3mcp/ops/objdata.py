@@ -278,7 +278,8 @@ _HINT = ('ops: {"op": "create", "base": "hfoo", "set": {"Name": "Guard"}}, {"op"
          '{"uhpm": 500}}, {"op": "upsert", "id": "h000", "base": "hfoo", "set": {...}}, {"op": "reset", "id": "h000", '
          '"fields": ["uhpm"]}, {"op": "delete", "id": "h000"}')
 OP_KEYS = {"create": {"op", "base", "id", "set"}, "set": {"op", "id", "set"}, "reset": {"op", "id", "fields"},
-           "delete": {"op", "id", "missing_ok"}, "upsert": {"op", "base", "id", "set", "expect_new"}}
+           "delete": {"op", "id", "missing_ok"}, "upsert": {"op", "base", "id", "set", "expect_new"},
+           "fill_levels": {"op", "id"}}
 QUIET = {"extended_levels"}
 # button positions below 0 put a button off the card: the long-standing way to hide one, and the game accepts it
 BUTTON_FIELDS = frozenset({"abpx", "abpy", "arpx", "arpy", "ubpx", "ubpy", "gbpx", "gbpy"})
@@ -484,6 +485,33 @@ def _extend_levels(files, catalog, kind: str, custom: bool, base: bytes, new: by
             "fields": sorted(written)}
 
 
+def _fill_levels(files, catalog, kind: str, custom: bool, base: bytes, new: bytes, strings, path: str) -> dict | None:
+    """Every rank above the base object's level count gets every per-level field: a field the map stores at some
+    ranks takes the nearest stored rank below, the rest the base's last value. A rank the map does not store reads
+    the base object's data in the game, whatever the ranks below hold."""
+    field = LEVEL_FIELDS.get(kind)
+    if field is None:
+        return None
+    stock = max(1, int(_number(catalog.field(kind, base.decode("latin-1"), field)) or 1))
+    top = _level_count(files, catalog, kind, custom, base, new)
+    metas = {f.id: f for f in catalog.fields(kind)}
+    mods = _merged([(om, custom, _entry_in(om, custom, base, new)) for om in files])
+    written = []
+    for rid in sorted({r for (r, level) in mods if level >= 1}):
+        last = None
+        for level in range(1, top + 1):
+            mod = mods.get((rid, level))
+            if mod is not None:
+                last = mod
+            elif level > stock and last is not None and rid in metas:
+                _set(files, kind, custom, base, new, metas[rid], level, last.var_type, last.value, strings)
+                if rid not in written:
+                    written.append(rid)
+    rest = _extend_levels(files, catalog, kind, custom, base, new, stock, strings, path)
+    fields = sorted(set(written) | set(rest["fields"] if rest else []))
+    return {"id": (new if custom else base).decode("latin-1"), "levels": f"{stock + 1}..{top}", "fields": fields} if fields and top > stock else None
+
+
 def _clear(files, custom: bool, base: bytes, new: bytes, meta, level: int) -> None:
     """Drop the map's own value for a field, so the object uses the base object's again (null, as `reset` does)."""
     rid = meta.id.encode("latin-1")
@@ -635,7 +663,7 @@ def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = No
     wts_before = strings.serialize()
     base_ids = set(catalog.ids(kind))
     taken = base_ids | {_key(e, True) for om in files for e in om.custom}
-    created, extended = [], []
+    created, extended, filled = [], [], []
     warnings: list[str] = []
     touched: set[str] = set()
     upserted: dict[str, str] = {}
@@ -719,6 +747,11 @@ def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = No
                 for om in files:
                     _entry_in(om, custom, base_b, new_b)
                 extended += _set_many(files, catalog, kind, custom, base_b, new_b, op.get("set"), strings, path)
+            elif action == "fill_levels":
+                custom, base_b, new_b = _locate(files, base_ids, kind, op.get("id"), path)
+                done = _fill_levels(files, catalog, kind, custom, base_b, new_b, strings, path)
+                if done:
+                    filled.append(done)
             elif action == "reset":
                 custom, base_b, new_b = _locate(files, base_ids, kind, op.get("id"), path)
                 keys = op.get("fields")
@@ -815,6 +848,8 @@ def objdata_edit(project, catalog, kind: str, ops: list, quiet: list | None = No
     for r in renamed:
         warnings.append(f"{r['id']}: upsert renamed {r['was']!r} to {r['now']!r}; if another generator owns this id "
                         "it is now overwritten (use expect_new: true to refuse an id that already exists)")
+    if filled:
+        out["filled_levels"] = filled
     if upserted:
         out["upserted"] = upserted
     if renamed:

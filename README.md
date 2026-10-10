@@ -83,6 +83,19 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.16
+
+- **`map_validate` `levels_hole`** (error): a per-level field stored at some ranks but not at every rank above the
+  base object's level count - the game reads the base object's data there. **`objdata_edit` `fill_levels`** fills
+  the ranks.
+- **`timeout` counts from the moment the map runs**; a slow launch (up to 300 s) no longer fails a run.
+- **A run whose map never started carries `last_screen`**, the game window as last seen, so a failed login is
+  told from a map that does not load. An empty `Battle.net.config` is named in the error.
+- **Short answers, shorter**: `game_close` answers like `game_status`; a trimmed report keeps its first 5 lines
+  as well as its last, and the whole report is in `probe.report_file`; long `camera`, `marks` and
+  `named_screenshots` lists come back as counts.
+- **`triggers_edit`** lists under `existing` the variables an `existing_ok` op found already there.
+
 ## What's new in 1.15
 
 Cheaper sessions: an answer stays in the conversation and is paid again on every later turn, so bulk stays on disk.

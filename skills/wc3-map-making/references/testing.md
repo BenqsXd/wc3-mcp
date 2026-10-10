@@ -96,3 +96,13 @@
 - `ProbeLearn(hero, ability)` is `SelectHeroSkill` that returns whether a rank was learned and reports why not. A hero at level 1 has one skill point: `SetHeroLevel` before a second skill.
 - The game has one Preload buffer. The probe's partial dump every 30 s, its dialog marker and `ProbeScreenshot` each clear it, so Preload lines a map collects over time for a result file of its own are lost. Keep such lines in variables and write the whole file in one go.
 - A game that exits within seconds of its launch, before the map runs, usually met another Warcraft III process: the result names it under `other_games`. `game_close` closes only games this server started, so the user (or Task Manager) closes that one.
+- `timeout` counts from the moment the map runs. A launch through the Battle.net app took 54 s, 132 s and 236 s for the same map within ten minutes; the launch has up to 300 s of its own before the map runs.
+- A run whose map never started carries `last_screen`: the game window as last seen. A login panel or an error box with a LOGIN button there means Blizzard's login failed - tell the user and stop retrying; it says nothing about the map. After a game patch the Battle.net app may be logged out, and a script build that fails with "not BLTE" means the server's game-data index is from before the patch: reconnect the server.
+- A probe whose work is done before `probe_seconds` keeps the run going until then: end it with `ProbeFinish()`.
+- Report the set-up checks first and keep loops quiet: the short answer keeps the first 5 and the last `tail` report lines (`left_out` counts the rest), and `probe.report_file` holds every line.
+- `ProbeReport` is the dependable way to get text out of a run; one run's own `PreloadGenEnd` file did not appear although its script ran to the end.
+- A background run's pictures are written to disk when `game_status`, `game_test` or `game_close` reports the finished run, not while it goes.
+- `game_close` answers short as `game_status` does (`brief=false` for the whole result).
+- Now and then a launch stands frozen before the map initialises (the window lost the foreground while loading): the same probe runs through on the next launch. One such run is not a map defect.
+- A picture asked for with `ProbeScreenshot` lags the script by up to a second: slow a projectile down in the probe to see it in flight, and use open ground (trees hide effects and bend walking paths).
+- Do not pause a test target: a unit ordered to attack a paused unit shoots once and then walks into contact, and `PauseUnit` takes a unit out of its player's selection. `SetUnitMoveSpeed(u, 0)` keeps a target still.

@@ -1,6 +1,6 @@
 {
   "name": "wc3-mcp",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "description": "Make Warcraft III maps, campaigns, AI and assets with an AI agent, and drive the World Editor and the game.",
   "contextFileName": "AGENTS.md",
   "mcpServers": {

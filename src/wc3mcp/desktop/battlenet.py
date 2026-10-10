@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from .. import config
+from ..errors import ToolError
 from . import win
 
 UID, PRODUCT = "w3", "W3"
@@ -97,7 +98,12 @@ def ours(args: str | None = None) -> bool:
 
 def _write_args(args: str) -> None:
     path = config_path()
-    data = json.loads(path.read_text("utf-8")) if path.is_file() else {}
+    try:
+        data = json.loads(path.read_text("utf-8")) if path.is_file() else {}
+    except ValueError as e:
+        raise ToolError("bad_file", f"{path} is empty or not JSON ({e}), so the launch options cannot be stored",
+                        hint="start the Battle.net app once (it writes the file again), then run this again; "
+                             "login='wait' starts the game without the app") from e
     data.setdefault("Games", {}).setdefault(UID, {})["AdditionalLaunchArguments"] = args
     path.write_text(json.dumps(data, indent=4), encoding="utf-8")
 

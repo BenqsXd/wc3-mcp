@@ -341,3 +341,17 @@ def test_an_unknown_field_names_what_was_probably_meant(plain_project, catalog):
     with pytest.raises(ToolError) as e:
         objdata_edit(plain_project, catalog, "unit", [{"op": "set", "id": "hfoo", "set": {"uturn": 1}}])
     assert e.value.code == "unknown_field" and any(f.startswith("umvr") for f in e.value.details["did_you_mean"])
+
+
+def test_ranks_above_the_base_are_filled_and_a_hole_is_an_error(plain_project, catalog):
+    from wc3mcp.ops.script import map_validate
+
+    objdata_edit(plain_project, catalog, "ability", [{"op": "create", "base": "ANcl", "id": "A0ZU",
+                                                      "set": {"alev": 5, "Ncl1": [1, 1, 1, 1, 1]}}])
+    objdata_edit(plain_project, catalog, "ability", [{"op": "set", "id": "A0ZU", "set": {"Ncl1": {"5": None}}}])
+    found = [e for e in map_validate(plain_project, catalog)["errors"] if e["check"] == "levels_hole"]
+    assert len(found) == 1 and "A0ZU" in found[0]["message"] and "fill_levels" in found[0]["message"]
+    out = objdata_edit(plain_project, catalog, "ability", [{"op": "fill_levels", "id": "A0ZU"}])
+    assert out["filled_levels"][0]["id"] == "A0ZU" and "Ncl1" in out["filled_levels"][0]["fields"]
+    assert objdata_get(plain_project, catalog, "ability", "A0ZU", ["Ncl1"])["fields"]["Ncl1"]["values"][4] == 1
+    assert not [e for e in map_validate(plain_project, catalog)["errors"] if e["check"] == "levels_hole"]

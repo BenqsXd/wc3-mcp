@@ -256,6 +256,7 @@ class _Edit:
         self.before = (wtg.serialize(self.tf), wct.serialize(self.ct))
         self.text = {t.id: s for t, s in zip(_triggers(self.tf), self.ct.texts)}
         self.created: list[str] = []
+        self.existing: list[dict] = []   # variables an op declared with existing_ok that were there already
         self.warnings: list[str] = []
         self.touched_scripts: set = set()   # text triggers this batch wrote
         self.scripts: dict[str, str] = {}   # scripts submitted in this batch, for validate=true
@@ -297,6 +298,8 @@ class _Edit:
             raise ToolError("name_taken", f"{path}: variable {v.name!r} exists as {shape}"
                             + (f", used by {', '.join(users[:5])}" if users else ""),
                             hint="pick another name; to really change it, delete it first or rename it (new_name)")
+        if "type" in op and op.get("existing_ok"):   # said out loud all the same: a clash is silent otherwise
+            self.existing.append({"name": v.name, "type": shape, **({"used_by": users[:5]} if users else {})})
         if "type" in op and not op.get("existing_ok"):   # a declaration, not a change to the variable
             self.warnings.append(f"{path}: variable {v.name} already exists ({shape})"
                                  + (f", used by {', '.join(users[:5])}" if users else "")
@@ -640,7 +643,12 @@ class _Edit:
         changed = (data, text) != self.before
         if changed:
             self.warnings.append(SCRIPT_WARNING)
-        return {"changed": changed, "created": self.created, "warnings": self.warnings}
+        out = {"changed": changed, "created": self.created, "warnings": self.warnings}
+        if self.existing:
+            out["existing"] = self.existing
+            out["existing_note"] = ("these variables were there already and were left as they are (existing_ok): a "
+                                    "name meant to be new here is shared with whatever uses it")
+        return out
 
 
 def _validate(project, catalog, scripts: dict) -> dict:

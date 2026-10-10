@@ -223,6 +223,7 @@ PROBES (a throwaway copy of the map, so the map itself never gets test triggers)
     ProbeReport(text)                          -> probe.reports, any length
     ProbeExpect(name, condition)               -> probe.checks, checks_failed, checks_passed
     ProbeBool(condition)                       "true" / "false" for a report line (JASS has no B2S)
+    A probe that never calls ProbeFinish() keeps the run going until probe_seconds, although its work is done.
     ProbeFinish()                              writes the report now and ends a run that waits only for it: call
                                                it from probe_functions code when a long game has its answer,
                                                with probe_seconds set past the longest game (probe_script is
@@ -280,6 +281,12 @@ LONG RUNS
   as {dir, prefix, count, times} (file i is <dir>/<prefix><i>.png). No logs, no launch details, no message log,
   no per-player counts. Poll a long run with game_status(wait=300); brief=false once when the messages or logs
   matter.
+  The short answer keeps the first 5 and the last `tail` report lines; probe.report_file holds all of them.
+  camera, marks and named_screenshots of more than 10 entries come back as a count with the last few. game_close
+  answers the same way. A background run's pictures are written when the finished run is reported.
+  timeout counts from the moment the map runs; the launch before it has up to 300 s of its own. A run whose map
+  never started carries last_screen (the game window as last seen): a login panel or an error box there means
+  Blizzard's login failed, not the map.
   screenshot_crop=[x, y, width, height] and screenshot_scale (0.1-1) are applied to every picture the run saves:
   a status line or a spot on the ground at half size costs a fraction of a full frame. image_sheet puts a series
   on one picture to find the frame that matters; image_diff says in text whether two frames differ.
@@ -749,6 +756,10 @@ OPS
     per-level fields take level keys; stock ids such as hgtw work too.
   {"op": "reset", "id": "h000", "fields": ["uhpm"]}
   {"op": "delete", "id": "h000"}              "missing_ok": true skips an id that is gone.
+  {"op": "fill_levels", "id": "A000"}         every rank above the base object's level count gets every
+    per-level field: one stored at some ranks takes the nearest stored rank below, the others the base's last
+    value (result filled_levels). A rank the map does not store reads the base object's data in the game;
+    map_validate reports such holes as levels_hole.
   {"op": "upsert", "id": "h000", "base": "hfoo", "set": {...}}
     creates when missing, sets when there (result: upserted). An upsert onto an id that exists with another base
     refuses (base_mismatch). One that changes an existing object's name reports renamed [{id, was, now}] and a

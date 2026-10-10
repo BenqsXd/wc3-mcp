@@ -558,6 +558,22 @@ class _V:
                              f"ability {oid}: {rid} is written at levels {sorted(written)} but not at "
                              f"{objdata_ops._ranks(gaps)}, which keep the stock value of {base} (alev {top} is above "
                              f"its {stock}); set every level")
+            # a rank above the base's own count has nothing of the map's to read there: the game takes the base
+            # object's data instead (a Channel copy then channels for the stock 180 s with the hero's orders off)
+            holes = {}
+            for rid in sorted({r for (r, level) in merged if level >= 1}):
+                missing = [lv for lv in range(stock + 1, top + 1) if (rid, lv) not in merged]
+                if missing:
+                    holes[rid] = missing
+            if holes:
+                first = next(iter(holes))
+                self.add(True, "levels_hole", "war3map.w3a",
+                         f"ability {oid}: {len(holes)} per-level field(s) are stored at some ranks but not at every "
+                         f"rank above {base}'s own {stock} ({first} lacks {objdata_ops._ranks(holes[first])}"
+                         + (f"; also {', '.join(list(holes)[1:6])}" if len(holes) > 1 else "")
+                         + "). The game reads the base object's data there, whatever the ranks below say. A World "
+                           "Editor save can drop values equal to a default, which makes such holes. Fix: objdata_edit "
+                           f'{{"op": "fill_levels", "id": "{oid}"}}')
 
     def check_waygates(self):
         """A waygate whose destination region holds the gate itself sends a unit back onto the gate."""

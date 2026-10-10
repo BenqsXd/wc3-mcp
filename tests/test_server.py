@@ -701,8 +701,8 @@ def test_game_status_keeps_a_long_partial_report_small():
     partial = {"reports": [f"event {i}" for i in range(1000)] + ["death 7"],
                "messages": ["a", "b", "death c"], "message_to": ["all", "0", "3"]}
     out = server._trim_partial(partial, 5, None)
-    assert out["reports"] == ["event 996", "event 997", "event 998", "event 999", "death 7"]
-    assert out["left_out"] == {"reports": 996} and out["messages"] == ["a", "b", "death c"]
+    assert out["reports"] == [f"event {i}" for i in range(5)] + ["event 996", "event 997", "event 998", "event 999", "death 7"]
+    assert out["left_out"] == {"reports": 991} and out["messages"] == ["a", "b", "death c"]
     out = server._trim_partial({"reports": ["x", "death 1"], "messages": ["a", "death c"],
                                 "message_to": ["all", "3"]}, 100, "death")
     assert out["reports"] == ["death 1"] and out["messages"] == ["death c"] and out["message_to"] == ["3"]
@@ -780,7 +780,7 @@ def test_a_brief_result_drops_logs_and_messages_and_sums_up_the_screenshots(tmp_
     assert "log" not in out and "focus" not in out and out["results"] == {"x.txt": ["a=1"]}
     assert out["screenshots"] == {"dir": str(tmp_path), "prefix": "game-7-", "count": 3, "times": [0.0, 3.1, 6.0]}
     assert "messages" not in out["probe"] and "player0.units" not in out["probe"]
-    assert out["probe"]["reports"] == ["r295", "r296", "r297", "r298", "r299"] and "checks" not in out["probe"]
+    assert out["probe"]["reports"] == ["r0", "r1", "r2", "r3", "r4", "r295", "r296", "r297", "r298", "r299"] and "checks" not in out["probe"]
     assert len(result["probe"]["reports"]) == 300   # the full result is untouched
 
 
@@ -848,3 +848,12 @@ def test_a_batch_summary_keeps_the_verdict():
     assert out == {"changed": True, "warnings": {"count": 2, "first": "w" * 200}, "created": {"count": 0},
                    "summarised": True}
     assert server._step_summary({"changed": False}) == {"changed": False}
+
+
+def test_a_trimmed_report_keeps_its_first_lines_too():
+    out = server._trim_partial({"reports": [f"r{i}" for i in range(100)]}, 3, None)
+    assert out["reports"] == ["r0", "r1", "r2", "r3", "r4", "r97", "r98", "r99"] and out["left_out"] == {"reports": 92}
+    brief = server._brief_result({"probe": {"reports": [], "camera": [f"{i},0" for i in range(50)]},
+                                  "named_screenshots": [{"name": f"n{i}", "file": f"d/game-1-{i}-n{i}.png"} for i in range(30)]}, 5, None)
+    assert brief["probe"]["camera"] == {"count": 50, "last": ["47,0", "48,0", "49,0"]}
+    assert brief["named_screenshots"]["count"] == 30 and brief["named_screenshots"]["dir"] == "d"

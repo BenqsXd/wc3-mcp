@@ -1587,6 +1587,11 @@ def _finish_test(result: dict, probe: bool, shot_options: dict | None = None) ->
         result["screenshot"] = str(shot)
     elif "screenshot" in result:
         result["screenshot"] = None
+    if result.get("last_screen"):
+        shot = config.home() / "screenshots" / f"game-{result['pid']}-last.png"
+        shot.parent.mkdir(parents=True, exist_ok=True)
+        shot.write_bytes(result["last_screen"])
+        result["last_screen"] = str(shot)
     if result.get("loading_screenshot"):
         shot = config.home() / "screenshots" / f"game-{result['pid']}-loading.png"
         shot.parent.mkdir(parents=True, exist_ok=True)
@@ -1617,6 +1622,12 @@ def _finish_test(result: dict, probe: bool, shot_options: dict | None = None) ->
                         result["probe"][key] = late[key]
                         result["probe"]["merged_from_partial"] = True
         _place_marks(result)
+        reports = (result["probe"] or {}).get("reports") or []
+        if len(reports) > RESULTS_HEAD:   # the whole report on disk: a short answer keeps only its ends
+            file = config.home() / "reports" / f"game-{result.get('pid', 0)}.txt"
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_text(chr(10).join(reports), "utf-8")
+            result["probe"]["report_file"] = str(file)
         if result["probe"] is None and not result.get("login_required") and not result.get("stuck_at"):
             result["hint"] = ("the probed copy never reported: the game did not reach the map, it ended before "
                               f"probe_seconds, or {desktop_game.PAUSE_NOTE}")
@@ -1640,10 +1651,11 @@ def _place_marks(result: dict) -> None:
 BRIEF_KEYS = ("seconds", "pid", "results", "missing", "exited_early", "crash", "cancelled", "ended", "hint",
               "login_required", "stuck_at", "dialog_shown", "map_started_after", "closed", "truncated", "screenshot",
               "loading_screenshot", "named_screenshots", "screenshots_failed", "probe_note", "other_games", "probe_map",
-              "server_version", "probe_functions_file")
+              "server_version", "probe_functions_file", "last_screen")
 
 
 RESULTS_HEAD = 20
+BRIEF_LIST = 10
 
 
 def _brief_result(result: dict, tail: int, grep: str | None) -> dict:
@@ -1664,14 +1676,26 @@ def _brief_result(result: dict, tail: int, grep: str | None) -> dict:
                  if k not in ("messages", "message_to") and not k.startswith("player")}
         if "checks" in probe:   # the verdict: how many passed, and the names of the ones that did not
             probe.pop("checks")
+        for key in ("camera", "marks"):   # one entry a second or a call: a long run has hundreds
+            if len(probe.get(key) or []) > BRIEF_LIST:
+                probe[key] = {"count": len(probe[key]), "last": probe[key][-3:]}
         out["probe"] = _trim_partial(probe, tail, grep)
+    named = out.get("named_screenshots") or []
+    if len(named) > BRIEF_LIST:
+        files = [shot["file"] for shot in named if "file" in shot]
+        out["named_screenshots"] = {"count": len(named), "dir": str(Path(files[0]).parent) if files else None,
+                                    "first": named[0], "last": named[-1],
+                                    "note": "files are game-<pid>-<index>-<name>.png in dir; image_sheet shows many"}
     out["brief"] = True
     return out
 
 
+REPORT_HEAD = 5
+
+
 def _trim_partial(partial: dict, tail: int, grep: str | None) -> dict:
-    """A long probe reports thousands of lines: keep the last `tail` report lines and messages (those matching grep)
-    and say how many were left out."""
+    """A long probe reports thousands of lines: keep the first REPORT_HEAD and the last `tail` report lines (with
+    grep: the last `tail` that match) and the last `tail` messages, and say how many were left out."""
     try:
         match = re.compile(grep).search if grep else (lambda text: True)
     except re.error as e:
@@ -1679,7 +1703,10 @@ def _trim_partial(partial: dict, tail: int, grep: str | None) -> dict:
     left_out = {}
     for key, paired in (("reports", None), ("messages", "message_to")):
         rows = partial.get(key) or []
-        keep = [i for i, text in enumerate(rows) if match(text)][-tail:] if tail > 0 else []
+        hits = [i for i, text in enumerate(rows) if match(text)]
+        keep = hits[-tail:] if tail > 0 else []
+        if key == "reports" and tail > 0 and not grep:   # the opening lines are the set-up checks: keep them too
+            keep = sorted(set(hits[:REPORT_HEAD]) | set(keep))
         if len(keep) < len(rows):
             left_out[key] = len(rows) - len(keep)
             partial[key] = [rows[i] for i in keep]
@@ -1726,6 +1753,9 @@ def game_status(tail: int = 20, grep: str | None = None, wait: float = 0, brief:
                                    "game_close ends the run early when this already answers")
     if brief:
         if run and "partial" in run:
+            if len(run["partial"].get("camera") or []) > BRIEF_LIST:
+                run["partial"]["camera"] = {"count": len(run["partial"]["camera"]), "last": run["partial"]["camera"][-3:]}
+            run["partial"]["file"] = str(desktop_game._result_path(probe_ops.PARTIAL))
             run["partial"].pop("messages", None)
             run["partial"].pop("message_to", None)
             run.pop("partial_note", None)
@@ -1736,12 +1766,15 @@ def game_status(tail: int = 20, grep: str | None = None, wait: float = 0, brief:
 
 
 @_tool
-def game_close() -> dict:
+def game_close(tail: int = 20, grep: str | None = None, brief: bool = True) -> dict:
     """Close game processes launched by game_test (never other game sessions), and put the Battle.net app's launch
-    options back when a run left them pointing at a test map (result: launcher)."""
+    options back when a run left them pointing at a test map (result: launcher). A background run it ends is
+    answered under run, short as in game_status (tail, grep); brief=false gives the whole result."""
     out = desktop_game.GAME.close()
     if _finish_run() is not None:   # a run it ended holds screenshots as bytes until finished: not JSON
         out["run"] = desktop_game.GAME.run_status()
+        if brief and isinstance(out["run"].get("result"), dict):
+            out["run"]["result"] = _brief_result(out["run"]["result"], tail, grep)
     return out
 
 

@@ -2,6 +2,7 @@
 (PreloadGenEnd into Documents\\Warcraft III\\CustomMapData), keep the useful War3Log.txt lines, close the game.
 Only processes started here are ever closed."""
 import hashlib
+import io
 import re
 import subprocess
 import threading
@@ -29,6 +30,7 @@ PRELOAD_LIMIT = 255
 # user has to log in
 LOGIN_WAIT = 30
 LOGIN_SETTLE = 10        # seconds of login panel before anything is done about it: a remembered login signs in first
+LAUNCH_WAIT = 300        # seconds a launch may take before the map runs, whatever the run's timeout
 USER_LOGIN_WAIT = 120    # how long a run waits for the user to log in by hand (login="wait", or auto after Battle.net)
 # how the game is started, which decides whether it meets the Battle.net login panel at all: "auto" (default) and
 # "battlenet" start it through the Battle.net desktop app, which hands it the app's own session (see battlenet.py);
@@ -458,11 +460,18 @@ class Game:
         shot_at, series, missed, shot_times = 0.0, [], [], []
         loading_taken, loading_image, loading_of = False, None, ""
         grace = 0.0   # time spent on login screens: it does not count against the timeout
+        last_view = None   # the last look at the game window: what a run that never reached the map stood at
         while process.poll() is None and not self.cancelled:
             now = time.time()
             waiting_since = login_since or queue_since
-            if now - started >= timeout + grace + (now - waiting_since if waiting_since else 0):
-                break   # time at a login screen or in the queue never counts against the timeout
+            # the timeout is the map's own time: it counts from the moment the map runs. Until then the launch has
+            # LAUNCH_WAIT (the same map started after 54 s and after 236 s within ten minutes), and time at a login
+            # screen or in the queue counts against neither
+            if map_since is not None:
+                if now - map_since >= timeout:
+                    break
+            elif now - started >= max(timeout, LAUNCH_WAIT) + grace + (now - waiting_since if waiting_since else 0):
+                break
             if opened_since is None and holds(loaded):
                 opened_since = now
             # the map runs: the probe's start marker is there, or (no marker) the game holds the map file and has
@@ -504,7 +513,9 @@ class Game:
                 in_front = win32gui.GetForegroundWindow() == window
                 checked_at = now
                 try:
-                    state = screen_state(win.client_image(window) if in_front else win.client_capture(window))
+                    view = win.client_image(window) if in_front else win.client_capture(window)
+                    state = screen_state(view)
+                    last_view = view or last_view
                 except (win32gui.error, OSError):
                     state = None
                 if state == "press_key":
@@ -620,6 +631,10 @@ class Game:
             result["login_seconds"] = round(grace, 1)
         if map_since is not None:
             result["map_started_after"] = round(map_since - started, 1)
+        elif last_view is not None:   # the game may be gone by now: this is the only picture there will be
+            picture = io.BytesIO()
+            last_view.convert("RGB").save(picture, "PNG")
+            result["last_screen"] = picture.getvalue()
         if keys or blind_keys:
             result["loading_screen"] = {
                 "prompt_seen": bool(keys), "keys": keys, "blind_keys": blind_keys,
@@ -715,6 +730,11 @@ class Game:
         elif result["missing"]:
             result["hint"] = ("no result file was written: the map script failed (script_validate), the game stayed on "
                               f"a login screen, the map did not get that far before timeout, or {PAUSE_NOTE}")
+        if "last_screen" in result and not result.get("login_required") and not result.get("stuck_at"):
+            result["hint"] = ("the map never started. last_screen is the game window as last seen: a login panel or "
+                              "an error box with a LOGIN button means Blizzard's login failed (nothing about the "
+                              "map) - tell the user and do not run again until they have logged in; a loading "
+                              "screen or the main menu means the map did not load (script_validate, map_validate)")
         others = [pid for pid in win.processes(EXE_NAME) if pid in before[EXE_NAME]]
         if result["exited_early"] and map_since is None and others:
             result["other_games"] = others

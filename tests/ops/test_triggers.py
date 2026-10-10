@@ -334,3 +334,12 @@ def test_one_function_of_a_script_trigger_is_read_and_replaced(warchasers, catal
                                          "new": "function First takes nothing returns nothing\n    set udg_N = 2\nendfunction"}])
     text = trigger_get(warchasers, catalog, "Big")["script"]
     assert "set udg_N = 2" in text and "set udg_N = 1" not in text and "function Second" in text
+
+
+def test_a_variable_that_was_there_already_is_named(warchasers, catalog):
+    from wc3mcp.ops.triggers import triggers_edit
+
+    triggers_edit(warchasers, catalog, [{"op": "variable", "name": "SharedN", "type": "integer"}])
+    out = triggers_edit(warchasers, catalog, [{"op": "variable", "name": "SharedN", "type": "integer", "existing_ok": True},
+                                              {"op": "variable", "name": "FreshN", "type": "integer", "existing_ok": True}])
+    assert out["created"] == ["FreshN"] and [e["name"] for e in out["existing"]] == ["SharedN"]
