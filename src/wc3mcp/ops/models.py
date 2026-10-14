@@ -109,6 +109,9 @@ def _drawn_by(model: dict) -> dict:
     blends = geosets + [e["blend"] for e in emitters if "blend" in e]
     out = {"material_blend": materials, "geoset_blend": geosets, "emitters": emitters,
            "geometry": "geosets" if geosets else "emitters only" if emitters else "none"}
+    if not geosets and emitters:
+        out["size_note"] = ("an emitter-only model has no extent of its own (it reads 0): measure how wide it draws in "
+                            "a game screenshot against units a known distance apart")
     if blends and all(b in ADDS_LIGHT for b in blends) and not any("path" in e for e in emitters):
         out["note"] = ("every part is additive: it only adds light, so it barely shows on a bright ground (snow, "
                        "sand, a white tile) and shows well on a dark one")

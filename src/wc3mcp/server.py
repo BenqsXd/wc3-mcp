@@ -384,7 +384,7 @@ def wc3_batch(calls: list[dict], stop_on_error: bool = True, summary: bool = Fal
                 break
     if summary:
         for step in results:
-            if step["ok"]:
+            if step["ok"] and step["tool"] not in ("game_test", "game_status", "game_close"):
                 step["result"] = _step_summary(step["result"])
     return {"count": len(results), "failed": failed, "ran": len(results), "of": len(plan), "results": results}
 
@@ -1436,7 +1436,7 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
               login_wait: float = 120, probe_init: str | None = None,
               probe_functions_file: str | None = None, loading_screenshot: bool = False,
               screenshots_from: float = 0, brief: bool = True, screenshot_scale: float = 1.0,
-              screenshot_crop: list[int] | None = None) -> dict:
+              screenshot_crop: list[int] | None = None, tail: int = 20) -> dict:
     """Run a map in Warcraft III (windowed) and collect what it reports. results: files the map writes with
     PreloadGenEnd; the run ends when all exist. probe=true runs a throwaway copy that reports the state at
     probe_seconds; probe_script / probe_functions / probe_init (at map init) with ProbeReport, ProbeExpect,
@@ -1444,7 +1444,7 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
     can be probed too. screenshots=N / screenshot_every / screenshots_from take pictures once the map runs;
     screenshot_crop [x, y, width, height] and screenshot_scale (0.1-1) shrink every saved picture. wait=false runs
     in the background: game_status shows progress and the result. The answer is the short one; brief=false adds
-    logs, messages and launch details. login="auto" starts the game through the Battle.net app, so no login
+    logs, messages and launch details; tail sets how many last report lines it keeps. login="auto" starts the game through the Battle.net app, so no login
     screen; "wait"/"stop" start it directly. wc3_help("game_test") has the helpers, login and pitfalls."""
     if not 0.1 <= screenshot_scale <= 1:
         raise ToolError("bad_value", "screenshot_scale must be 0.1 to 1", path="screenshot_scale")
@@ -1493,7 +1493,7 @@ def game_test(path: str, timeout: float = 240, results: list[str] | None = None,
     if wait and desktop_game.GAME.run is not None:
         desktop_game.GAME.run["finished"] = True   # game_status must not finish this result a second time
     out = {**(_finish_test(result, probe, shot) if wait else result), **extra}
-    return _brief_result(out, 20, None) if brief and wait else out
+    return _brief_result(out, tail, None) if brief and wait else out
 
 
 @_tool

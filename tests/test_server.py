@@ -857,3 +857,10 @@ def test_a_trimmed_report_keeps_its_first_lines_too():
                                   "named_screenshots": [{"name": f"n{i}", "file": f"d/game-1-{i}-n{i}.png"} for i in range(30)]}, 5, None)
     assert brief["probe"]["camera"] == {"count": 50, "last": ["47,0", "48,0", "49,0"]}
     assert brief["named_screenshots"]["count"] == 30 and brief["named_screenshots"]["dir"] == "d"
+
+
+def test_a_batch_summary_leaves_a_game_run_as_it_answered(monkeypatch):
+    long = {"seconds": 60, "probe": {"reports": [f"r{i}" for i in range(40)]}, "results": {}}
+    monkeypatch.setitem(server.TOOLS, "game_status", lambda **kw: long)
+    out = server.TOOLS["wc3_batch"]([{"tool": "game_status", "args": {}}], summary=True)
+    assert out["results"][0]["result"] is long

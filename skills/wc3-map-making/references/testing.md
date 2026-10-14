@@ -104,5 +104,6 @@
 - A background run's pictures are written to disk when `game_status`, `game_test` or `game_close` reports the finished run, not while it goes.
 - `game_close` answers short as `game_status` does (`brief=false` for the whole result).
 - Now and then a launch stands frozen before the map initialises (the window lost the foreground while loading): the same probe runs through on the next launch. One such run is not a map defect.
-- A picture asked for with `ProbeScreenshot` lags the script by up to a second: slow a projectile down in the probe to see it in flight, and use open ground (trees hide effects and bend walking paths).
+- A picture asked for with `ProbeScreenshot` lands about 0.5-0.6 s after the script line, so a missile that flies 0.5 s is never caught: launch a slow copy (a few units a step) and take the picture 1.5 s later. Use open ground: trees hide effects and bend walking paths.
+- The short answer keeps the last `tail` report lines (20 by default; `game_test tail=N` keeps more) after the first 5: keep a probe's report count low, or read `probe.report_file`. A `game_test` inside `wc3_batch summary=true` keeps its own short answer.
 - Do not pause a test target: a unit ordered to attack a paused unit shoots once and then walks into contact, and `PauseUnit` takes a unit out of its player's selection. `SetUnitMoveSpeed(u, 0)` keeps a target still.

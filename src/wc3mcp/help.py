@@ -232,10 +232,11 @@ PROBES (a throwaway copy of the map, so the map itself never gets test triggers)
                                                with nearest_screenshot of the series and off_by seconds (the
                                                series runs on real time, which drifts from game time)
     ProbeScreenshot(name)                      ProbeMark plus a picture taken now: named_screenshots [{name, t,
-                                               file}], and the mark carries screenshot. The run sees the request
-                                               within 0.2 s and a capture takes about a second, so call it when
-                                               the thing to see starts, and again for a later stage. For an
-                                               effect shorter than a second, also check the result by numbers
+                                               file}], and the mark carries screenshot. The picture lands about
+                                               0.5-0.6 s after the call, so a missile that flies 0.5 s is never
+                                               caught: launch a slow copy (a few units a step) and ask 1.5 s
+                                               later. For an effect shorter than a second, also check the
+                                               result by numbers
     ProbeLearn(hero, ability)                  SelectHeroSkill that returns whether a rank was learned and
                                                reports why not (no skill point: a hero at level 1 has one, so
                                                SetHeroLevel before a second skill)

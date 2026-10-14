@@ -83,6 +83,15 @@ All settings are optional environment variables:
 
 The game install is never modified. Maps are edited in working copies; `map_save` backs up the original before replacing it.
 
+## What's new in 1.17
+
+- **`game_test tail=N`** keeps more report lines in the short answer.
+- **`wc3_batch summary=true`** leaves `game_test`, `game_status` and `game_close` steps as they answered, so probe
+  reports are not cut away.
+- **`asset_info`** says when a model is emitters only and so has no extent to read its size from.
+- Skill: Engineering Upgrade's buff and hidden geosets, attached effects and unit scale / alpha, looping of common
+  spell models, `ProbeScreenshot` timing.
+
 ## What's new in 1.16
 
 - **`map_validate` `levels_hole`** (error): a per-level field stored at some ranks but not at every rank above the
